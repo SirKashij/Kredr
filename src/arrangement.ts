@@ -7,6 +7,8 @@
 
 export interface Tab {
   id: string;
+  /** Gesetzt, wenn in diesem Terminal ein Agent gestartet wurde. */
+  agent?: true;
 }
 
 /** Eine Gruppe: ein Teilstück des Hauptbereichs mit eigener Tab-Leiste. */
@@ -70,24 +72,29 @@ function groupOfTab(arrangement: Arrangement, tabId: string): Group | undefined 
   return groupsOf(arrangement).find((group) => group.tabs.some((tab) => tab.id === tabId));
 }
 
+function newTab(nextId: number, agent: boolean): Tab {
+  return agent ? { id: `t${nextId}`, agent: true } : { id: `t${nextId}` };
+}
+
 /** Eine neue Gruppe mit einem neuen Tab; sie verbraucht zwei Kennungen. */
-function newGroup(nextId: number): Group {
-  const tab: Tab = { id: `t${nextId}` };
+function newGroup(nextId: number, agent = false): Group {
+  const tab = newTab(nextId, agent);
   return { kind: "group", id: `g${nextId + 1}`, tabs: [tab], activeTab: tab.id };
 }
 
 /**
  * Öffnet einen neuen Tab in der fokussierten Gruppe und zeigt ihn an. Ohne
  * Gruppen entsteht die erste; hat keine Gruppe den Fokus, nimmt ihn die erste.
+ * Mit `agent` ist es ein Terminal, in dem ein Agent startet.
  */
-export function openTab(arrangement: Arrangement): Arrangement {
+export function openTab(arrangement: Arrangement, agent = false): Arrangement {
   const { root, nextId } = arrangement;
   if (!root) {
-    const group = newGroup(nextId);
+    const group = newGroup(nextId, agent);
     return { ...arrangement, root: group, focusedGroup: group.id, nextId: nextId + 2 };
   }
   const target = focusedGroupOf(arrangement) ?? groupsOf(arrangement)[0];
-  const tab: Tab = { id: `t${nextId}` };
+  const tab = newTab(nextId, agent);
   return {
     ...arrangement,
     root: replaceGroup(root, target.id, (group) => ({
