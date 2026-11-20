@@ -125,3 +125,10 @@ export function rowsOf(tree: ExplorerTree): Row[] {
   visit("", 0);
   return rows;
 }
+
+/** Klappt alle Ordner über dem Pfad auf, damit seine Zeile sichtbar wird. */
+export function revealPath(tree: ExplorerTree, path: string): ExplorerTree {
+  const expanded = new Set(tree.expanded);
+  for (let folder = parentOf(path); folder !== ""; folder = parentOf(folder)) expanded.add(folder);
+  return expanded.size === tree.expanded.size ? tree : { ...tree, expanded };
+}
