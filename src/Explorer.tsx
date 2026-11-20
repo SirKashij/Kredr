@@ -18,6 +18,7 @@ import {
   foldersToReload,
   parentOf,
   receiveListing,
+  revealPath,
   renameInTree,
   rowsOf,
   rowsWithEdit,
@@ -26,6 +27,7 @@ import {
   type Row,
 } from "./explorerTree";
 import { fileIcon } from "./fileIcons";
+import { isOutsideProject } from "./filePath";
 import {
   absolutePath,
   copyText,
@@ -50,6 +52,10 @@ interface ExplorerProps {
   hidden: boolean;
   /** Öffnet ein Terminal im Ordner mit diesem vollen Pfad, mit `agent` samt einem Agenten. */
   onOpenTerminalIn: (folder: string, agent: boolean) => void;
+  /** Die Datei des sichtbaren Tabs der fokussierten Gruppe; sie wird hervorgehoben. */
+  activeFile: string | null;
+  /** Öffnet die Datei als Dateiansicht, mit `preview` als Vorschau-Tab. */
+  onOpenFile: (path: string, preview: boolean) => void;
 }
 
 /**
@@ -57,7 +63,13 @@ interface ExplorerProps {
  * gelesen, und gezeichnet wird nur der sichtbare Ausschnitt: So bleibt auch
  * ein Ordner mit zehntausenden Einträgen flüssig.
  */
-export function Explorer({ project, hidden, onOpenTerminalIn }: ExplorerProps) {
+export function Explorer({
+  project,
+  hidden,
+  onOpenTerminalIn,
+  activeFile,
+  onOpenFile,
+}: ExplorerProps) {
   const t = useT();
   const [tree, setTree] = useState(emptyTree);
   const [selected, setSelected] = useState<string | null>(null);
@@ -135,9 +147,34 @@ export function Explorer({ project, hidden, onOpenTerminalIn }: ExplorerProps) {
     }
   }, [editRow]);
 
+  // Die Datei des aktiven Tabs wird ausgewählt und ihre Ordner klappen auf.
+  // Dateien außerhalb des Projekts stehen nicht im Baum.
+  const revealing = useRef<string | null>(null);
+  useEffect(() => {
+    if (activeFile === null || isOutsideProject(activeFile)) return;
+    setSelected(activeFile);
+    setTree((current) => revealPath(current, activeFile));
+    revealing.current = activeFile;
+  }, [activeFile]);
+
+  // Sobald ihre Zeile geladen ist, rückt sie einmal in den sichtbaren Ausschnitt.
+  useEffect(() => {
+    const path = revealing.current;
+    if (path === null || hidden) return;
+    const index = rows.findIndex((row) => row.path.toLowerCase() === path.toLowerCase());
+    if (index < 0) return;
+    revealing.current = null;
+    const element = viewport.current!;
+    const top = index * ROW_HEIGHT;
+    if (top < element.scrollTop || top + ROW_HEIGHT > element.scrollTop + element.clientHeight) {
+      element.scrollTop = Math.max(0, top - element.clientHeight / 2);
+    }
+  }, [rows, hidden, activeFile]);
+
   function select(row: Row) {
     setSelected(row.path);
     if (row.kind === "folder") setTree((current) => toggleFolder(current, row.path));
+    else onOpenFile(row.path, true);
   }
 
   function startEdit(next: Edit) {
@@ -334,6 +371,7 @@ export function Explorer({ project, hidden, onOpenTerminalIn }: ExplorerProps) {
                 className={row.path === selected ? "tree-row sel" : "tree-row"}
                 style={{ paddingLeft: 8 + row.depth * 12 }}
                 onClick={() => select(row)}
+                onDoubleClick={() => row.kind === "file" && onOpenFile(row.path, false)}
                 onContextMenu={(event) => openMenu(event, row)}
               >
                 <RowIcon row={row} />

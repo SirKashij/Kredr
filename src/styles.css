@@ -955,3 +955,107 @@ button {
   align-items: center;
   gap: 6px;
 }
+
+/* Dateiansicht */
+.file-view {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Der Behälter von Monaco. */
+.file-editor {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  /* Eingaben und Markieren wie in jedem Textfeld. */
+  user-select: text;
+}
+
+/* Hinweis statt Inhalt: binäre, übergroße oder fehlende Datei. */
+.file-notice {
+  margin: auto;
+  padding: 24px;
+  max-width: 480px;
+  text-align: center;
+  color: var(--dim);
+  user-select: text;
+}
+
+.file-notice p {
+  margin: 0 0 12px;
+}
+
+/* Warnung über dem Inhalt: Konflikt mit einer Änderung von außen, gelöschte Datei. */
+.file-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #e8a33d;
+  background: #e8a33d1f;
+  color: #fff;
+}
+
+.file-banner span {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-banner .btn {
+  flex: none;
+  padding: 3px 10px;
+}
+
+/* Tabs von Dateiansichten */
+.tab-icon.glyph {
+  font:
+    700 9px/16px "Cascadia Mono",
+    Consolas,
+    monospace;
+  letter-spacing: -0.5px;
+}
+
+.tab-icon.file {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+}
+
+/* Ein Vorschau-Tab ist kursiv, eine gelöschte Datei durchgestrichen (wie in VS Code). */
+.tab-label.preview {
+  font-style: italic;
+}
+
+.tab-label.deleted {
+  text-decoration: line-through;
+  color: #f48771;
+}
+
+/* Ungespeicherte Änderungen: ein Punkt an der Stelle des Schließen-Knopfs. */
+.tab-dirty {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+
+.tab-dirty::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.tab:hover .tab-dirty,
+.tab:has(.tab-dirty):not(:hover) .tab-close {
+  display: none;
+}

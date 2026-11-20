@@ -148,6 +148,11 @@ export function expandFolder(tree: ExplorerTree, folder: string): ExplorerTree {
   return expanded.size === tree.expanded.size ? tree : { ...tree, expanded };
 }
 
+/** Klappt alle Ordner über dem Pfad auf, damit seine Zeile sichtbar wird. */
+export function revealPath(tree: ExplorerTree, path: string): ExplorerTree {
+  return expandFolder(tree, parentOf(path));
+}
+
 /**
  * Die Zeilen samt der laufenden Namenseingabe. Ein neuer Eintrag bekommt eine
  * eigene Zeile ohne Namen in seinem Ordner: ein Ordner ganz oben, eine Datei

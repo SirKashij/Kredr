@@ -1,8 +1,9 @@
-//! Projektdateien: liest Ordnerinhalte und meldet Änderungen im
+//! Projektdateien: liest Ordnerinhalte, liest und schreibt Dateien und meldet Änderungen im
 //! Projektordner als entprellte, zusammengefasste Ereignisse.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, Weak};
@@ -64,6 +65,66 @@ pub fn list_folder(folder: &Path) -> Result<Vec<Entry>, ProjectFilesError> {
         });
     }
     Ok(entries)
+}
+
+/// Größere Dateien lädt die Dateiansicht nicht.
+pub const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024;
+
+/// Was beim Lesen einer Datei herauskommt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum FileContent {
+    /// Der Inhalt als UTF-8-Text, Byte für Byte wie auf der Festplatte
+    /// (Zeilenenden und eine Byte-Order-Mark bleiben erhalten).
+    Text { text: String },
+    /// Kein UTF-8-Text; der Inhalt wird nicht geliefert.
+    Binary,
+    /// Größer als [`MAX_FILE_SIZE`]; der Inhalt wurde nicht gelesen.
+    TooLarge { size: u64 },
+    /// Die Datei gibt es nicht (mehr).
+    Missing,
+}
+
+/// Liest eine Datei für die Dateiansicht. Binäre, übergroße und fehlende
+/// Dateien sind kein Fehler, sondern ein eigenes Ergebnis.
+pub fn read_file(path: &Path) -> Result<FileContent, ProjectFilesError> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(FileContent::Missing),
+        Err(e) => return Err(error(e)),
+    };
+    if metadata.is_dir() {
+        return Err(error("is a folder"));
+    }
+    if metadata.len() > MAX_FILE_SIZE {
+        return Ok(FileContent::TooLarge {
+            size: metadata.len(),
+        });
+    }
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        // Zwischen Prüfung und Lesen gelöscht.
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(FileContent::Missing),
+        Err(e) => return Err(error(e)),
+    };
+    // Die Datei kann seit der Prüfung gewachsen sein.
+    if bytes.len() as u64 > MAX_FILE_SIZE {
+        return Ok(FileContent::TooLarge {
+            size: bytes.len() as u64,
+        });
+    }
+    if bytes.contains(&0) {
+        return Ok(FileContent::Binary);
+    }
+    Ok(match String::from_utf8(bytes) {
+        Ok(text) => FileContent::Text { text },
+        Err(_) => FileContent::Binary,
+    })
+}
+
+/// Schreibt `text` als neuen Inhalt der Datei und legt sie an, wenn sie fehlt.
+pub fn write_file(path: &Path, text: &str) -> Result<(), ProjectFilesError> {
+    std::fs::write(path, text).map_err(error)
 }
 
 /// So lange werden Änderungen gesammelt, bevor sie als ein Ereignis

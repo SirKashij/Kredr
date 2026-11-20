@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { confirm, open } from "@tauri-apps/plugin-dialog";
+import { confirm, message, open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { ActivityBar, type View } from "./ActivityBar";
 import { AgentStatuses } from "./agentStatus";
@@ -15,17 +15,23 @@ import {
   focusedGroupOf,
   focusGroupAt,
   focusGroupToward,
+  isTerminal,
+  openContent,
   openTab,
   openTabIn,
   splitGroup,
   tabsOf,
   type Arrangement,
 } from "./arrangement";
+import { fileName, fullPath, opensExternally, toProjectPath } from "./filePath";
+import { saveFile } from "./FileView";
 import { useT } from "./i18n/i18n";
 import { isModifierKey, resolveKey, type Command } from "./keybindings";
 import { MainArea } from "./MainArea";
+import { OpenFiles, type FilePosition } from "./openFiles";
 import { openFileExternally, openUrl } from "./openExternally";
 import { projectName } from "./project";
+import { watchProjectFiles } from "./projectFiles";
 import { Sidebar } from "./Sidebar";
 import { StartPage } from "./StartPage";
 import { RunningTerminals } from "./runningTerminals";
@@ -33,6 +39,14 @@ import { useSettings } from "./settings";
 import { SettingsPage } from "./SettingsPage";
 import { availableShells, type Shell } from "./settingsStore";
 import { shellLabel } from "./tabLabel";
+
+/** Eine Datei, die als Dateiansicht geöffnet werden soll. */
+export interface FileRequest extends Partial<FilePosition> {
+  /** Voller Pfad oder relativ zum Projektordner. */
+  path: string;
+  /** Als Vorschau-Tab, den die nächste Vorschau ersetzt; sonst dauerhaft. */
+  preview?: boolean;
+}
 
 export function App() {
   const t = useT();
@@ -55,13 +69,13 @@ export function App() {
         {
           translate: () => translate.current,
           openUrl,
-          // Bis es die Dateiansicht gibt, öffnen Dateipfade aus dem Terminal
-          // im Windows-Standardprogramm. Die Dateiansicht hängt sich hier ein.
-          openFile: openFileExternally,
+          // Dateipfade aus dem Terminal öffnen sich in der Dateiansicht.
+          openFile: (target) => openFileRequest.current(target),
         },
         statuses,
       ),
   );
+  const [files] = useState(() => new OpenFiles());
   /** Die Shells, die es auf diesem Rechner gibt; PowerShell immer. */
   const [shells, setShells] = useState<Shell[]>(["powershell"]);
   // Eine geänderte Standard-Shell gilt für das nächste neue Terminal.
@@ -107,6 +121,34 @@ export function App() {
     terminals.retain(new Set(tabsOf(arrangement).map((tab) => tab.id)));
   }, [arrangement, terminals]);
 
+  // Ebenso die offenen Dateien der Dateiansichten.
+  useEffect(() => {
+    files.retain(tabsOf(arrangement).flatMap((tab) => (tab.content ? [tab.content.path] : [])));
+  }, [arrangement, files]);
+
+  // Ändert ein Agent eine offene Datei, lädt ihre Dateiansicht neu.
+  useEffect(() => {
+    if (project) return watchProjectFiles(project, (changes) => files.projectChanged(changes));
+  }, [project, files]);
+
+  // Das Fenster schließt mit ungespeicherten Änderungen erst nach Rückfrage.
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
+      if (!files.anyDirty()) return;
+      const t = translate.current;
+      const discard = await confirm(t("file.closeWindowConfirm.message"), {
+        title: t("file.closeConfirm.title"),
+        kind: "warning",
+        okLabel: t("file.closeWindowConfirm.ok"),
+        cancelLabel: t("dialog.cancel"),
+      });
+      if (!discard) event.preventDefault();
+    });
+    return () => {
+      unlisten.then((stop) => stop());
+    };
+  }, [files]);
+
   useEffect(() => {
     terminals.setFont(settings.fontFamily, settings.fontSize);
   }, [terminals, settings.fontFamily, settings.fontSize]);
@@ -128,7 +170,59 @@ export function App() {
     refocusTerminal();
   }
 
+  /**
+   * Öffnet eine Datei als Dateiansicht im Hauptbereich, wahlweise an einer
+   * Stelle und als Vorschau. Der eine Weg für Explorer, Dateipfade im
+   * Terminal, Suche und „Datei per Namen öffnen“.
+   */
+  function openFile({ path, preview = false, line, ...position }: FileRequest) {
+    if (!project) return;
+    const file = toProjectPath(project, path);
+    // PDFs und Office-Dateien gehören ins Windows-Standardprogramm; nur die
+    // Vorschau beim Durchklicken startet kein anderes Programm.
+    if (!preview && opensExternally(file)) {
+      return openFileExternally({ path: fullPath(project, file) });
+    }
+    const open = (current: Arrangement) =>
+      openContent(current, { kind: "file", path: file }, preview);
+    if (preview) {
+      // Die Vorschau zeigt die Datei nur; die Tastatur bleibt, wo sie ist.
+      setArrangement((current) => settle(open(current)));
+      setSettingsOpen(false);
+    } else {
+      files.get(project, file).wantFocus();
+      update(open);
+    }
+    if (line !== undefined) files.get(project, file).reveal({ line, ...position });
+  }
+
+  const openFileRequest = useRef(openFile);
+  openFileRequest.current = openFile;
+
+  /** Fragt bei ungespeicherten Änderungen nach; `false` heißt: Der Tab bleibt offen. */
+  async function confirmCloseFile(path: string): Promise<boolean> {
+    const file = files.find(path);
+    if (!file?.state.dirty) return true;
+    const name = fileName(path);
+    const save = t("file.closeConfirm.save");
+    const discard = t("file.closeConfirm.discard");
+    const choice = await message(t("file.closeConfirm.message", { name }), {
+      title: t("file.closeConfirm.title"),
+      kind: "warning",
+      buttons: { yes: save, no: discard, cancel: t("dialog.cancel") },
+    });
+    if (choice === save) {
+      return saveFile(file, (details) => t("file.saveFailed", { name, details }));
+    }
+    return choice === discard;
+  }
+
   async function closeTerminal(tabId: string) {
+    const content = tabsOf(arrangement).find((tab) => tab.id === tabId)?.content;
+    if (content?.kind === "file" && !(await confirmCloseFile(content.path))) {
+      refocusTerminal();
+      return;
+    }
     if (await terminals.find(tabId)?.hasChildProcess()) {
       const confirmed = await confirm(t("terminal.closeConfirm.message"), {
         title: t("terminal.closeConfirm.title"),
@@ -214,6 +308,8 @@ export function App() {
   const focusedGroup = focusedGroupOf(arrangement);
   /** Der sichtbare Tab der fokussierten Gruppe. */
   const activeTab = focusedGroup?.tabs.find((tab) => tab.id === focusedGroup.activeTab);
+  /** Die Datei des sichtbaren Tabs der fokussierten Gruppe. */
+  const activeFile = activeTab?.content?.path ?? null;
 
   async function openFolder() {
     const folder = await open({ directory: true, title: t("dialog.openFolderTitle") });
@@ -240,6 +336,8 @@ export function App() {
           visible={sidebarVisible}
           project={project}
           arrangement={arrangement}
+          activeFile={activeFile}
+          onOpenFile={(path, preview) => openFile({ path, preview })}
           statuses={statuses}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
           onNewAgent={project ? () => update(newAgent) : undefined}
@@ -255,6 +353,7 @@ export function App() {
             <MainArea
               arrangement={arrangement}
               terminals={terminals}
+              files={files}
               cwd={project}
               shells={shells}
               focusRequest={focusRequest}
@@ -279,7 +378,9 @@ export function App() {
       <footer className="status">
         <span>{project ? projectName(project) : t("status.noProject")}</span>
         <AgentCounters statuses={statuses} />
-        {activeTab && <span className="right">{shellLabel(activeTab.shell, t)}</span>}
+        {activeTab && isTerminal(activeTab) && (
+          <span className="right">{shellLabel(activeTab.shell, t)}</span>
+        )}
       </footer>
     </>
   );

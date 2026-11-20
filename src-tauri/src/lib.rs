@@ -17,7 +17,9 @@ use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Emitter, Manager, State};
 
 use agent_status::{AgentStatus, StatusUpdate};
-use project_files::{Entry, FileOperationError, ProjectChanges, ProjectWatcher, Subscription};
+use project_files::{
+    Entry, FileContent, FileOperationError, ProjectChanges, ProjectWatcher, Subscription,
+};
 use settings::{Settings, SettingsStore, Shell};
 use terminal::{Terminal, TerminalEvent, TerminalOptions};
 
@@ -265,6 +267,19 @@ fn project_files_list(project: PathBuf, folder: String) -> Result<Vec<Entry>, St
     project_files::list_folder(&project.join(folder)).map_err(|e| e.to_string())
 }
 
+/// Liest eine Datei für die Dateiansicht. `path` ist relativ zum
+/// Projektordner; ein voller Pfad (Datei außerhalb des Projekts) gilt unverändert.
+#[tauri::command(async)]
+fn project_files_read(project: PathBuf, path: String) -> Result<FileContent, String> {
+    project_files::read_file(&project.join(path)).map_err(|e| e.to_string())
+}
+
+/// Schreibt den Inhalt einer Datei; `path` wie bei `project_files_read`.
+#[tauri::command(async)]
+fn project_files_write(project: PathBuf, path: String, text: String) -> Result<(), String> {
+    project_files::write_file(&project.join(path), &text).map_err(|e| e.to_string())
+}
+
 /// Legt im Ordner `folder` des Projekts eine leere Datei an.
 #[tauri::command(async)]
 fn project_files_create_file(
@@ -439,6 +454,8 @@ pub fn run() {
             settings_set,
             available_shells,
             project_files_list,
+            project_files_read,
+            project_files_write,
             project_files_create_file,
             project_files_create_folder,
             project_files_rename,

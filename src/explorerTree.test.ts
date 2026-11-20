@@ -6,6 +6,7 @@ import {
   foldersToLoad,
   foldersToReload,
   receiveListing,
+  revealPath,
   renameInTree,
   rowsOf,
   rowsWithEdit,
@@ -186,6 +187,26 @@ test("ein Ordner mit gleichem Namensanfang bleibt beim Löschen seines Nachbarn 
   tree = receiveListing(tree, "", [folder("src-tauri")]);
 
   expect(shown(tree)).toEqual(["src-tauri", "  Cargo.toml"]);
+});
+
+test("eine Datei aufzudecken klappt alle Ordner über ihr auf", () => {
+  const tree = projectWith([folder("src"), file("README.md")]);
+
+  const revealed = revealPath(tree, "src/ui/App.tsx");
+
+  // Die Inhalte der aufgeklappten Ordner werden der Reihe nach geladen.
+  expect(foldersToLoad(revealed)).toEqual(["src"]);
+  const withSrc = receiveListing(revealed, "src", [folder("ui")]);
+  expect(foldersToLoad(withSrc)).toEqual(["src/ui"]);
+  const loaded = receiveListing(withSrc, "src/ui", [file("App.tsx")]);
+  expect(shown(loaded)).toEqual(["src", "  ui", "    App.tsx", "README.md"]);
+});
+
+test("eine sichtbare Datei aufzudecken ändert den Baum nicht", () => {
+  const tree = expandWith(projectWith([folder("src")]), "src", [file("a.ts")]);
+
+  expect(revealPath(tree, "src/a.ts")).toBe(tree);
+  expect(revealPath(tree, "README.md")).toBe(tree);
 });
 
 /** Die Zeilen samt Namenseingabe; die Eingabezeile ist mit `>` markiert. */
