@@ -1,0 +1,39 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Kredr",
+  "version": "0.1.0",
+  "identifier": "io.github.sirkashij.kredr",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Kredr",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 640,
+        "minHeight": 400,
+        "theme": "Dark",
+        "backgroundColor": "#1f1f1f"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["German", "English"]
+      }
+    }
+  }
+}

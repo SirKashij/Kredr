@@ -1,0 +1,18 @@
+{
+  "activity.agents": "Agenten",
+  "activity.explorer": "Explorer",
+  "activity.search": "Suche",
+  "activity.versionControl": "Versionskontrolle",
+  "activity.settings": "Einstellungen",
+  "sidebar.terminals": "Terminals",
+  "sidebar.noTerminals": "Noch kein Terminal geöffnet.",
+  "sidebar.notAvailable": "Diese Ansicht folgt in einem späteren Schritt.",
+  "welcome.text": "Öffne einen Ordner als Projekt, um loszulegen.",
+  "welcome.openFolder": "Ordner öffnen",
+  "dialog.openFolderTitle": "Ordner als Projekt öffnen",
+  "terminal.powershell": "PowerShell",
+  "terminal.exited": "Der Prozess wurde beendet.",
+  "terminal.startFailed": "Das Terminal konnte nicht gestartet werden: {details}",
+  "status.noProject": "Kein Projekt geöffnet",
+  "window.title": "{project} — Kredr"
+}

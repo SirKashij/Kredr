@@ -13,3 +13,11 @@ Die fünf Standard-Labels (`needs-triage`, `needs-info`, `ready-for-agent`, `rea
 ### Domain docs
 
 Single-context: ein `GLOSSARY.md` und `docs/adr/` im Hauptverzeichnis. See `docs/agents/domain.md`.
+
+## Befehle
+
+- Entwicklung starten: `npm run tauri dev`
+- Typprüfung der Oberfläche: `npm run typecheck`
+- Tests der Oberfläche: `npm test`
+- Tests des Kerns (starten echte PowerShell): `cargo test` in `src-tauri/`
+- Installer bauen: `npm run tauri build` (Ergebnis in `src-tauri/target/release/bundle/nsis/`)
