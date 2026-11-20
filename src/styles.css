@@ -841,6 +841,13 @@ button {
   max-width: 100px;
 }
 
+.setting input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
 .setting input:focus,
 .setting select:focus {
   outline: 1px solid var(--accent);
