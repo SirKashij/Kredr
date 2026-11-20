@@ -48,6 +48,8 @@ interface MainAreaProps {
   focusRequest: number;
   /** Wendet eine Operation auf die Aufteilung an. */
   update: (change: (arrangement: Arrangement) => Arrangement) => void;
+  /** Öffnet eine Datei dauerhaft als Tab, etwa das Ziel eines Links der Markdown-Vorschau. */
+  onOpenFile: (path: string) => void;
   /** Schließt ein Terminal, bei laufendem Kindprozess nach Rückfrage. */
   onCloseTab: (tabId: string) => void;
   /** Gibt dem Terminal die Tastatureingaben zurück, ohne die Aufteilung zu ändern. */
@@ -404,6 +406,8 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
           focused={group.id === arrangement.focusedGroup && renaming === null}
           focusRequest={shared.focusRequest}
           onKeep={() => update((current) => keepTab(current, activeTab.id))}
+          update={update}
+          onOpenFile={shared.onOpenFile}
         />
       ) : (
         <TerminalView

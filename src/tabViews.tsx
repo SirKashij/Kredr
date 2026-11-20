@@ -1,8 +1,12 @@
-import type { Tab, TabContent } from "./arrangement";
+import { lazy, Suspense } from "react";
+import { holdsFileText, type Arrangement, type Tab, type TabContent } from "./arrangement";
 import { fileIcon } from "./fileIcons";
 import { fileName } from "./filePath";
 import { FileView, useOpenFiles } from "./FileView";
+import { useT } from "./i18n/i18n";
+import { ImageView } from "./ImageView";
 import type { OpenFiles } from "./openFiles";
+import { ViewSwitch } from "./ViewSwitch";
 
 /**
  * Darstellung der Tabs, die kein Terminal sind. Eine neue Tab-Art braucht
@@ -10,18 +14,27 @@ import type { OpenFiles } from "./openFiles";
  * Tab-Leiste) und in `ContentTabBody` (die Fläche darunter).
  */
 
+// Die Markdown-Vorschau bringt Parser und Prüfung mit; beides lädt erst mit der ersten Vorschau.
+const MarkdownPreview = lazy(() =>
+  import("./MarkdownPreview").then((module) => ({ default: module.MarkdownPreview })),
+);
+
 /** Ein Tab mit eigenem Inhalt. */
 export type ContentTab = Tab & { content: TabContent };
 
 /** Symbol und Beschriftung eines Tabs in der Tab-Leiste. */
 export function ContentTabFace({ tab, files }: { tab: ContentTab; files: OpenFiles }) {
   useOpenFiles(files);
+  const t = useT();
   const { content } = tab;
   switch (content.kind) {
-    case "file": {
+    case "file":
+    case "markdown":
+    case "image": {
       const name = fileName(content.path);
       const icon = fileIcon(name);
-      const state = files.find(content.path)?.state;
+      // Ein Bild hat keinen Text und damit weder ungespeicherte Änderungen noch einen Zustand.
+      const state = holdsFileText(content) ? files.find(content.path)?.state : undefined;
       const classes = ["tab-label", tab.preview && "preview", state?.deleted && "deleted"];
       return (
         <>
@@ -35,7 +48,7 @@ export function ContentTabFace({ tab, files }: { tab: ContentTab; files: OpenFil
             </svg>
           )}
           <span className={classes.filter(Boolean).join(" ")} title={content.path}>
-            {name}
+            {content.kind === "markdown" ? t("markdown.tabLabel", { name }) : name}
           </span>
           {state?.dirty && <span className="tab-dirty" />}
         </>
@@ -52,6 +65,8 @@ export function ContentTabBody({
   focused,
   focusRequest,
   onKeep,
+  update,
+  onOpenFile,
 }: {
   tab: ContentTab;
   files: OpenFiles;
@@ -61,21 +76,55 @@ export function ContentTabBody({
   focusRequest: number;
   /** Macht aus dem Vorschau-Tab einen dauerhaften. */
   onKeep: () => void;
+  /** Wendet eine Operation auf die Aufteilung an. */
+  update: (change: (arrangement: Arrangement) => Arrangement) => void;
+  /** Öffnet eine Datei dauerhaft als Tab. */
+  onOpenFile: (path: string) => void;
 }) {
   const { content } = tab;
   switch (content.kind) {
     case "file":
       return (
-        <FileView
-          // Jede Datei bekommt ihre eigene Ansicht, auch wenn die Vorschau den Tab weiterverwendet.
-          key={content.path}
-          files={files}
-          project={project}
-          path={content.path}
-          focused={focused}
-          focusRequest={focusRequest}
-          onEdited={() => tab.preview && onKeep()}
-        />
+        <ViewSwitch tab={tab} update={update}>
+          <FileView
+            // Jede Datei bekommt ihre eigene Ansicht, auch wenn die Vorschau den Tab weiterverwendet.
+            key={content.path}
+            files={files}
+            project={project}
+            path={content.path}
+            focused={focused}
+            focusRequest={focusRequest}
+            onEdited={() => tab.preview && onKeep()}
+          />
+        </ViewSwitch>
+      );
+    case "markdown":
+      return (
+        <ViewSwitch tab={tab} update={update}>
+          <Suspense fallback={<div className="file-view" />}>
+            <MarkdownPreview
+              key={content.path}
+              files={files}
+              project={project}
+              path={content.path}
+              focused={focused}
+              focusRequest={focusRequest}
+              onOpenFile={onOpenFile}
+            />
+          </Suspense>
+        </ViewSwitch>
+      );
+    case "image":
+      return (
+        <ViewSwitch tab={tab} update={update}>
+          <ImageView
+            key={content.path}
+            project={project}
+            path={content.path}
+            focused={focused}
+            focusRequest={focusRequest}
+          />
+        </ViewSwitch>
       );
   }
 }
