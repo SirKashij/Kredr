@@ -47,7 +47,17 @@ export const views: { id: View; label: MessageKey }[] = [
   { id: "versionControl", label: "activity.versionControl" },
 ];
 
-export function ActivityBar({ view, onSelect }: { view: View; onSelect: (view: View) => void }) {
+export function ActivityBar({
+  view,
+  onSelect,
+  settingsOpen,
+  onToggleSettings,
+}: {
+  view: View;
+  onSelect: (view: View) => void;
+  settingsOpen: boolean;
+  onToggleSettings: () => void;
+}) {
   const t = useT();
   return (
     <nav className="actbar">
@@ -64,8 +74,13 @@ export function ActivityBar({ view, onSelect }: { view: View; onSelect: (view: V
         </button>
       ))}
       <div className="spacer" />
-      {/* Die Einstellungsseite folgt in einem eigenen Schritt. */}
-      <button title={t("activity.settings")} aria-label={t("activity.settings")} disabled>
+      <button
+        className={settingsOpen ? "on" : ""}
+        title={t("activity.settingsTooltip")}
+        aria-label={t("activity.settings")}
+        aria-pressed={settingsOpen}
+        onClick={onToggleSettings}
+      >
         <svg viewBox="0 0 24 24">{icons.settings}</svg>
       </button>
     </nav>

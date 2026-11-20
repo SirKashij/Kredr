@@ -2,6 +2,7 @@ pub mod agent;
 pub mod arrangement_store;
 pub mod project_windows;
 mod projects;
+pub mod settings;
 pub mod terminal;
 
 use std::collections::HashMap;
@@ -10,8 +11,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
+use settings::{Settings, SettingsStore, Shell};
 use terminal::{Terminal, TerminalEvent, TerminalOptions};
 
 /// Die laufenden Terminals, nach Kennung.
@@ -52,11 +54,10 @@ impl Terminals {
     }
 }
 
-/// Der Agent-Startbefehl aus den Einstellungen des Kerns. Solange es das
-/// Modul Einstellungen noch nicht gibt, ist das der Standardwert; danach
-/// liest nur diese Funktion den gespeicherten Wert.
-fn agent_start_command() -> String {
-    agent::DEFAULT_START_COMMAND.to_owned()
+/// Der Agent-Startbefehl aus den Einstellungen des Kerns. Er wird bei jedem
+/// Start frisch gelesen, damit eine Änderung sofort gilt.
+fn agent_start_command(settings: &SettingsStore) -> String {
+    settings.get().agent_command
 }
 
 #[derive(serde::Serialize)]
@@ -73,6 +74,7 @@ struct OpenedTerminal {
 fn terminal_open(
     window: tauri::Window,
     terminals: State<'_, Terminals>,
+    settings: State<'_, SettingsStore>,
     cwd: PathBuf,
     cols: u16,
     rows: u16,
@@ -80,7 +82,7 @@ fn terminal_open(
     on_output: Channel<InvokeResponseBody>,
     on_exit: Channel<()>,
 ) -> Result<OpenedTerminal, String> {
-    let mut start_command = agent.then(agent_start_command);
+    let mut start_command = agent.then(|| agent_start_command(&settings));
     let search_path = std::env::var_os("PATH").unwrap_or_default();
     let missing_agent_program = start_command
         .as_deref()
@@ -155,6 +157,24 @@ fn terminal_close(terminals: State<'_, Terminals>, id: u32) -> Result<(), String
     Ok(())
 }
 
+#[tauri::command]
+fn settings_get(settings: State<'_, SettingsStore>) -> Settings {
+    settings.get()
+}
+
+/// Speichert die Einstellungen; alle Fenster erfahren davon über das
+/// Ereignis `settings-changed`.
+#[tauri::command]
+fn settings_set(settings: State<'_, SettingsStore>, value: Settings) -> Result<Settings, String> {
+    settings.set(value).map_err(|e| e.to_string())
+}
+
+/// Die Shells, die die Einstellungsseite zur Wahl stellt.
+#[tauri::command]
+fn available_shells() -> Vec<Shell> {
+    settings::available_shells()
+}
+
 pub fn run() {
     let mut builder = tauri::Builder::default();
     // Ein einziger Prozess verwaltet alle Fenster. Die Entwicklungsfassung
@@ -168,7 +188,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Terminals::default())
         .manage(project_windows::ProjectWindows::default())
-        .setup(|app| Ok(projects::start(app.handle())?))
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let settings = SettingsStore::open(app.path().app_data_dir()?, move |settings| {
+                // Scheitert das Senden, ist kein Fenster mehr offen.
+                let _ = handle.emit("settings-changed", settings);
+            });
+            app.manage(settings);
+            projects::start(app.handle())?;
+            Ok(())
+        })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
                 projects::window_closed(window);
@@ -181,6 +210,9 @@ pub fn run() {
             terminal_resize,
             terminal_has_child_process,
             terminal_close,
+            settings_get,
+            settings_set,
+            available_shells,
             projects::window_project,
             projects::recent_projects,
             projects::forget_project,

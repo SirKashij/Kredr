@@ -123,6 +123,13 @@ export class RunningTerminal {
     this.xterm.focus();
   }
 
+  /** Stellt Schriftart und Schriftgröße um; Spalten und Zeilen passen sich an. */
+  setFont(fontFamily: string, fontSize: number) {
+    this.xterm.options.fontFamily = fontFamily;
+    this.xterm.options.fontSize = fontSize;
+    if (this.started) this.fit();
+  }
+
   /** Ob in der Shell gerade ein Programm läuft, etwa ein Agent. */
   async hasChildProcess(): Promise<boolean> {
     if (this.id === null) return false;
@@ -201,6 +208,7 @@ export class RunningTerminal {
 /** Die laufenden Terminals eines Fensters, nach der Kennung ihres Tabs. */
 export class RunningTerminals {
   private readonly terminals = new Map<string, RunningTerminal>();
+  private font: { family: string; size: number } | null = null;
 
   constructor(private readonly translate: () => Translate) {}
 
@@ -212,9 +220,16 @@ export class RunningTerminals {
     let terminal = this.terminals.get(tabId);
     if (!terminal) {
       terminal = new RunningTerminal(cwd, agent, this.translate);
+      if (this.font) terminal.setFont(this.font.family, this.font.size);
       this.terminals.set(tabId, terminal);
     }
     return terminal;
+  }
+
+  /** Schrift aus den Einstellungen: gilt sofort für alle laufenden und für neue Terminals. */
+  setFont(family: string, size: number) {
+    this.font = { family, size };
+    for (const terminal of this.terminals.values()) terminal.setFont(family, size);
   }
 
   find(tabId: string): RunningTerminal | undefined {
