@@ -1,6 +1,13 @@
+import { useRef, useState, type PointerEvent } from "react";
 import { views, type View } from "./ActivityBar";
 import { focusedGroupOf, tabsOf, type Arrangement, type Tab } from "./arrangement";
+import { Explorer } from "./Explorer";
 import { useT } from "./i18n/i18n";
+
+/** Zwischen diesen Breiten lässt sich die Seitenleiste ziehen (in Pixeln). */
+const MIN_WIDTH = 170;
+/** So viel Breite bleibt dem Hauptbereich mindestens. */
+const MIN_MAIN_WIDTH = 300;
 
 interface AgentsViewProps {
   arrangement: Arrangement;
@@ -12,19 +19,52 @@ interface AgentsViewProps {
   onNewTerminal?: () => void;
 }
 
-export function Sidebar({ view, ...agents }: { view: View } & AgentsViewProps) {
+interface SidebarProps extends AgentsViewProps {
+  view: View;
+  /** Ob die Seitenleiste eingeblendet ist. Ausgeblendet behält sie ihren Zustand. */
+  visible: boolean;
+  /** Der Ordner des Projekts dieses Fensters. */
+  project: string | null;
+}
+
+export function Sidebar({ view, visible, project, ...agents }: SidebarProps) {
   const t = useT();
+  const [width, setWidth] = useState(280);
+  const sidebar = useRef<HTMLElement>(null);
   const title = views.find(({ id }) => id === view)!.label;
+  const showsExplorer = view === "explorer" && project !== null;
+
+  function resize(event: PointerEvent<HTMLDivElement>) {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const left = sidebar.current!.getBoundingClientRect().left;
+    const widest = Math.max(MIN_WIDTH, window.innerWidth - left - MIN_MAIN_WIDTH);
+    setWidth(Math.min(widest, Math.max(MIN_WIDTH, event.clientX - left)));
+  }
+
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" ref={sidebar} hidden={!visible} style={{ width }}>
       <div className="side-title">{t(title)}</div>
-      <div className="side-body">
+      <div className="side-body" hidden={showsExplorer}>
         {view === "agents" ? (
           <AgentsView {...agents} />
         ) : (
-          <p className="hint">{t("sidebar.notAvailable")}</p>
+          <p className="hint">
+            {t(view === "explorer" ? "status.noProject" : "sidebar.notAvailable")}
+          </p>
         )}
       </div>
+      {/* Der Explorer bleibt bestehen, damit er beim Wechsel der Ansicht nichts neu lesen muss. */}
+      {project !== null && <Explorer key={project} project={project} hidden={!showsExplorer} />}
+      <div
+        className="sash"
+        role="separator"
+        aria-orientation="vertical"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={resize}
+      />
     </aside>
   );
 }

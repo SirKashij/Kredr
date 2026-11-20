@@ -1,6 +1,8 @@
 {
   "activity.agents": "Agents",
   "activity.explorer": "Explorer",
+  "activity.explorerTooltip": "Explorer (Ctrl+Shift+E)",
+  "explorer.empty": "This folder is empty.",
   "activity.search": "Search",
   "activity.versionControl": "Version Control",
   "activity.settings": "Settings",
