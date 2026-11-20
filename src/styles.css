@@ -318,6 +318,20 @@ button {
   border-top-color: var(--accent);
 }
 
+.tab.dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+/* Zeigt während des Ziehens, wo der Tab landet: eine Fläche oder ein Strich in der Tab-Leiste. */
+.drop-marker {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  border: 1px solid var(--accent);
+}
+
 .tab-close {
   visibility: hidden;
 }

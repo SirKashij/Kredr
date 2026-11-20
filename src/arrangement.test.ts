@@ -10,8 +10,10 @@ import {
   focusGroupToward,
   groupsOf,
   moveDivider,
+  moveTab,
   openTab,
   splitGroup,
+  tabsOf,
   type Arrangement,
   type Group,
   type Split,
@@ -296,4 +298,131 @@ test("ein neuer Tab geht nie verloren, auch wenn keine gültige Gruppe den Fokus
 
   expect(groupsOf(opened)[0].tabs).toHaveLength(2);
   expect(opened.focusedGroup).toBe(a.id);
+});
+
+/** Zwei Gruppen nebeneinander: links a mit den Tabs a1, a2 (sichtbar), a3; rechts b mit b1. */
+function twoGroups() {
+  const three = openTab(openTab(single));
+  const tabbed = activateTab(three, groupsOf(three)[0].tabs[1].id);
+  const arrangement = splitGroup(tabbed, groupsOf(tabbed)[0].id, "right");
+  const [a, b] = groupsOf(arrangement);
+  const [a1, a2, a3] = a.tabs;
+  return { arrangement, a, b, a1, a2, a3, b1: b.tabs[0] };
+}
+
+test("ein Tab zieht in eine andere Gruppe um, wird dort sichtbar und nimmt den Fokus mit", () => {
+  const { arrangement, a, b, a1, a2, a3, b1 } = twoGroups();
+  const focusedLeft = focusGroup(arrangement, a.id);
+
+  const moved = moveTab(focusedLeft, a2.id, { groupId: b.id, index: 0 });
+
+  const [left, right] = groupsOf(moved);
+  // In der alten Gruppe rückt der rechte Nachbar nach.
+  expect(left).toMatchObject({ id: a.id, tabs: [a1, a3], activeTab: a3.id });
+  expect(right).toMatchObject({ id: b.id, tabs: [a2, b1], activeTab: a2.id });
+  expect(moved.focusedGroup).toBe(b.id);
+  // Die Aufteilung davor bleibt, wie sie war.
+  expect(groupsOf(focusedLeft)[0].tabs).toEqual([a1, a2, a3]);
+});
+
+test("Tabs lassen sich innerhalb ihrer Gruppe umsortieren", () => {
+  const { arrangement, a, a1, a2, a3 } = twoGroups();
+  const order = (moved: Arrangement) => groupsOf(moved)[0].tabs;
+
+  // Die Stelle zählt die Lücken der Tab-Leiste, wie sie vor dem Verschieben aussieht.
+  expect(order(moveTab(arrangement, a1.id, { groupId: a.id, index: 3 }))).toEqual([a2, a3, a1]);
+  expect(order(moveTab(arrangement, a1.id, { groupId: a.id, index: 2 }))).toEqual([a2, a1, a3]);
+  expect(order(moveTab(arrangement, a3.id, { groupId: a.id, index: 0 }))).toEqual([a3, a1, a2]);
+  // Die Lücken links und rechts des Tabs selbst lassen ihn, wo er ist.
+  expect(order(moveTab(arrangement, a2.id, { groupId: a.id, index: 1 }))).toEqual([a1, a2, a3]);
+  expect(order(moveTab(arrangement, a2.id, { groupId: a.id, index: 2 }))).toEqual([a1, a2, a3]);
+
+  const moved = moveTab(arrangement, a1.id, { groupId: a.id, index: 3 });
+  expect(groupsOf(moved)[0].activeTab).toBe(a1.id);
+  expect(moved.focusedGroup).toBe(a.id);
+});
+
+test("zieht der letzte Tab einer Gruppe um, verschwindet sie; die Nachbarn füllen den Platz", () => {
+  const { arrangement, a, b, c } = threeSideBySide();
+  // a 25 %, c 25 %, b 50 %
+
+  const moved = moveTab(arrangement, c.tabs[0].id, { groupId: b.id, index: 1 });
+
+  expect(groupsOf(moved).map((group) => group.id)).toEqual([a.id, b.id]);
+  expect(groupsOf(moved)[1]).toMatchObject({
+    tabs: [b.tabs[0], c.tabs[0]],
+    activeTab: c.tabs[0].id,
+  });
+  const sizes = (moved.root as Split).sizes;
+  expect(sizes[0]).toBeCloseTo(1 / 3);
+  expect(sizes[1]).toBeCloseTo(2 / 3);
+  expect(moved.focusedGroup).toBe(b.id);
+
+  // Bleibt nur eine Gruppe, tritt sie an die Stelle der Teilung.
+  const { arrangement: two, a: left, b1 } = twoGroups();
+  const alone = moveTab(two, b1.id, { groupId: left.id, index: 0 });
+  expect(alone.root).toMatchObject({ kind: "group", id: left.id });
+  expect((alone.root as Group).tabs).toHaveLength(4);
+});
+
+test("am Rand einer Gruppe bildet der Tab eine neue Gruppe auf dieser Seite", () => {
+  const { arrangement, a, b, a1, a2, a3, b1 } = twoGroups();
+
+  const below = moveTab(arrangement, a2.id, { groupId: b.id, side: "down" });
+
+  const added = groupsOf(below)[2];
+  expect(added).toMatchObject({ tabs: [a2], activeTab: a2.id });
+  expect(new Set(groupsOf(below).map((group) => group.id)).size).toBe(3);
+  expect(below.focusedGroup).toBe(added.id);
+  expect(below.root).toMatchObject({
+    axis: "row",
+    sizes: [0.5, 0.5],
+    children: [
+      { id: a.id, tabs: [a1, a3], activeTab: a3.id },
+      { axis: "column", sizes: [0.5, 0.5], children: [{ id: b.id }, { id: added.id }] },
+    ],
+  });
+
+  const above = moveTab(arrangement, a2.id, { groupId: b.id, side: "up" });
+  expect(groupsOf(above).map((group) => group.tabs)).toEqual([[a1, a3], [a2], [b1]]);
+
+  // In Richtung der umgebenden Teilung reiht sich die neue Gruppe ein.
+  const right = moveTab(arrangement, a2.id, { groupId: b.id, side: "right" });
+  expect(right.root).toMatchObject({ axis: "row", sizes: [0.5, 0.25, 0.25] });
+  expect(groupsOf(right).map((group) => group.tabs)).toEqual([[a1, a3], [b1], [a2]]);
+
+  // Auch am Rand der eigenen Gruppe.
+  const left = moveTab(arrangement, a2.id, { groupId: a.id, side: "left" });
+  expect(left.root).toMatchObject({ axis: "row", sizes: [0.25, 0.25, 0.5] });
+  expect(groupsOf(left).map((group) => group.tabs)).toEqual([[a2], [a1, a3], [b1]]);
+
+  // Neue Kennungen stoßen später nicht mit alten zusammen.
+  const ids = [...groupsOf(openTab(below)), ...tabsOf(openTab(below))].map((item) => item.id);
+  expect(new Set(ids).size).toBe(ids.length);
+});
+
+test("der letzte Tab einer Gruppe bildet am Rand einer anderen eine neue; die alte verschwindet", () => {
+  const { arrangement, a, b, c } = threeSideBySide();
+
+  const moved = moveTab(arrangement, c.tabs[0].id, { groupId: a.id, side: "down" });
+
+  const added = groupsOf(moved)[1];
+  expect(moved.root).toMatchObject({
+    axis: "row",
+    children: [{ axis: "column", children: [{ id: a.id }, { tabs: c.tabs }] }, { id: b.id }],
+  });
+  expect(moved.focusedGroup).toBe(added.id);
+});
+
+test("ein Tab ohne gültiges Ziel bleibt, wo er ist", () => {
+  const { arrangement, a, b, b1, a1 } = twoGroups();
+
+  expect(moveTab(arrangement, "fehlt", { groupId: b.id, index: 0 })).toBe(arrangement);
+  expect(moveTab(arrangement, a1.id, { groupId: "fehlt", index: 0 })).toBe(arrangement);
+  expect(moveTab(arrangement, a1.id, { groupId: "fehlt", side: "left" })).toBe(arrangement);
+  // Der einzige Tab einer Gruppe kann an deren Rand keine neue Gruppe bilden.
+  expect(moveTab(arrangement, b1.id, { groupId: b.id, side: "left" })).toBe(arrangement);
+  // Eine Stelle jenseits der Tab-Leiste meint ihr Ende.
+  const far = moveTab(arrangement, b1.id, { groupId: a.id, index: 99 });
+  expect((far.root as Group).tabs.at(-1)).toEqual(b1);
 });

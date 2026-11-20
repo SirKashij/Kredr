@@ -21,6 +21,7 @@ import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { useT } from "./i18n/i18n";
 import type { RunningTerminals } from "./runningTerminals";
 import { TerminalView } from "./TerminalView";
+import { useTabDrag, type TabDrag } from "./useTabDrag";
 
 /** Schmaler lässt sich eine Gruppe mit der Trennlinie nicht ziehen (in Pixeln). */
 const MIN_GROUP_SIZE = 80;
@@ -41,7 +42,7 @@ interface MainAreaProps {
 }
 
 /** Was jeder Teil des Baums braucht. */
-type Shared = MainAreaProps & { onOpenMenu: (menu: Menu) => void };
+type Shared = MainAreaProps & { onOpenMenu: (menu: Menu) => void; tabDrag: Omit<TabDrag, "drop"> };
 
 interface Menu {
   x: number;
@@ -78,9 +79,21 @@ function Icon({ name }: { name: keyof typeof icons }) {
 export function MainArea(props: MainAreaProps) {
   const [menu, setMenu] = useState<Menu | null>(null);
   const { root } = props.arrangement;
+  const { drop, ...tabDrag } = useTabDrag(props.arrangement, props.update, props.onRefocus);
   return (
     <>
-      {root && <NodeView node={root} {...props} onOpenMenu={setMenu} />}
+      {root && <NodeView node={root} {...props} onOpenMenu={setMenu} tabDrag={tabDrag} />}
+      {drop && (
+        <div
+          className="drop-marker"
+          style={{
+            left: drop.marker.left,
+            top: drop.marker.top,
+            width: drop.marker.right - drop.marker.left,
+            height: drop.marker.bottom - drop.marker.top,
+          }}
+        />
+      )}
       {menu && (
         <ContextMenu
           {...menu}
@@ -143,7 +156,7 @@ function SplitView({ split, ...shared }: Shared & { split: Split }) {
 
 function GroupView({ group, ...shared }: Shared & { group: Group }) {
   const t = useT();
-  const { arrangement, update, onCloseTab, onOpenMenu } = shared;
+  const { arrangement, update, onCloseTab, onOpenMenu, tabDrag } = shared;
 
   const newTerminal = () => update((current) => openTab(focusGroup(current, group.id)));
   const splitRight = () => update((current) => splitGroup(current, group.id, "right"));
@@ -164,6 +177,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
   return (
     <section
       className={group.id === arrangement.focusedGroup ? "group focused" : "group"}
+      data-group={group.id}
       onPointerDownCapture={() => update((current) => focusGroup(current, group.id))}
     >
       <div className="tabs" onContextMenu={(event) => openMenu(event)}>
@@ -173,8 +187,19 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
               key={tab.id}
               role="tab"
               aria-selected={tab.id === group.activeTab}
-              className={tab.id === group.activeTab ? "tab on" : "tab"}
-              onClick={() => update((current) => activateTab(current, tab.id))}
+              className={[
+                "tab",
+                tab.id === group.activeTab && "on",
+                tab.id === tabDrag.tabId && "dragging",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              data-tab={tab.id}
+              {...tabDrag.handlers(tab.id)}
+              onClick={() => {
+                // Das Loslassen nach dem Ziehen ist kein Klick auf den Tab.
+                if (!tabDrag.justEndedDrag()) update((current) => activateTab(current, tab.id));
+              }}
               onAuxClick={(event) => {
                 // Mittelklick schließt wie in VS Code.
                 if (event.button === 1) onCloseTab(tab.id);
