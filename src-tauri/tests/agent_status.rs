@@ -331,8 +331,10 @@ fn mehrere_agenten_melden_an_ihr_eigenes_terminal() {
     let second = TestAgent::start(&status, 2);
     assert_ne!(first.settings, second.settings);
 
-    // Beide arbeiten im selben Projekt: Ihre Meldungen gleichen sich bis auf
-    // die Adresse, an die sie gehen.
+    // Ob im selben Projekt oder in verschiedenen Fenstern: Die Meldungen
+    // zweier Agenten gleichen sich bis auf die Adresse, an die sie gehen.
+    // Alle Fenster teilen sich einen Empfänger, jedes Terminal hat darin
+    // seine eigene Kennung.
     first.report("UserPromptSubmit", json!({ "prompt": "Los" }));
     second.report("UserPromptSubmit", json!({ "prompt": "Los" }));
     second.report("Stop", json!({ "last_assistant_message": "Erledigt." }));
@@ -344,13 +346,14 @@ fn mehrere_agenten_melden_an_ihr_eigenes_terminal() {
 }
 
 #[test]
-fn agenten_verschiedener_fenster_bleiben_getrennt() {
-    // Fenster in eigenen Kredr-Prozessen haben je einen eigenen Empfänger;
-    // ihre Terminal-Kennungen können sich gleichen.
-    let window_a = AgentStatus::start(runtime_folder("fenster-a")).unwrap();
-    let window_b = AgentStatus::start(runtime_folder("fenster-b")).unwrap();
-    let agent_a = TestAgent::start(&window_a, 1);
-    let agent_b = TestAgent::start(&window_b, 1);
+fn agenten_verschiedener_kredr_prozesse_bleiben_getrennt() {
+    // Zwei Kredr-Prozesse, etwa die Entwicklungsfassung neben der
+    // installierten, haben je einen eigenen Empfänger; ihre
+    // Terminal-Kennungen können sich gleichen.
+    let process_a = AgentStatus::start(runtime_folder("prozess-a")).unwrap();
+    let process_b = AgentStatus::start(runtime_folder("prozess-b")).unwrap();
+    let agent_a = TestAgent::start(&process_a, 1);
+    let agent_b = TestAgent::start(&process_b, 1);
 
     agent_b.report("UserPromptSubmit", json!({ "prompt": "Los" }));
 

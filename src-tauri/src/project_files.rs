@@ -1,0 +1,227 @@
+//! Projektdateien: liest Ordnerinhalte und meldet Änderungen im
+//! Projektordner als entprellte, zusammengefasste Ereignisse.
+
+use std::collections::{BTreeSet, HashMap};
+use std::fmt;
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex, Weak};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EntryKind {
+    Folder,
+    File,
+}
+
+/// Ein Eintrag eines Ordners.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Entry {
+    pub name: String,
+    pub kind: EntryKind,
+}
+
+#[derive(Debug)]
+pub struct ProjectFilesError(String);
+
+impl fmt::Display for ProjectFilesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ProjectFilesError {}
+
+fn error(source: impl fmt::Display) -> ProjectFilesError {
+    ProjectFilesError(source.to_string())
+}
+
+/// Liest die Einträge genau eines Ordners, ohne Unterordner zu betreten und
+/// ohne festgelegte Reihenfolge. Verknüpfungen auf Ordner zählen als Ordner.
+pub fn list_folder(folder: &Path) -> Result<Vec<Entry>, ProjectFilesError> {
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(folder).map_err(error)? {
+        let entry = entry.map_err(error)?;
+        // Unter Windows kommt die Art mit dem Verzeichniseintrag; nur
+        // Verknüpfungen kosten einen weiteren Zugriff.
+        let is_folder = match entry.file_type() {
+            Ok(kind) if kind.is_symlink() => entry.path().is_dir(),
+            Ok(kind) => kind.is_dir(),
+            Err(_) => false,
+        };
+        entries.push(Entry {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            kind: if is_folder {
+                EntryKind::Folder
+            } else {
+                EntryKind::File
+            },
+        });
+    }
+    Ok(entries)
+}
+
+/// So lange werden Änderungen gesammelt, bevor sie als ein Ereignis
+/// weitergehen. Kurz genug, dass eine neue Datei ohne spürbare Verzögerung
+/// erscheint; lang genug, dass ein Agent, der hunderte Dateien schreibt, nur
+/// wenige Ereignisse auslöst.
+const CHANGE_WINDOW: Duration = Duration::from_millis(150);
+/// Mehr einzelne Pfade trägt ein Ereignis nicht; darüber heißt es nur noch
+/// „alles neu lesen“.
+const MAX_PATHS: usize = 2000;
+
+/// Was sich im Projektordner innerhalb eines Zeitfensters geändert hat.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ProjectChanges {
+    /// Angelegte, geänderte, umbenannte (alter und neuer Name) und gelöschte
+    /// Dateien und Ordner, je einmal; relativ zum Projektordner und mit `/`
+    /// getrennt, etwa `src/ui/App.tsx`.
+    pub paths: Vec<String>,
+    /// Es ist mehr passiert, als einzeln gemeldet werden kann. `paths` ist
+    /// dann leer; wer zuhört, liest seinen Stand vollständig neu.
+    pub rescan: bool,
+}
+
+type Subscriber = Box<dyn Fn(&ProjectChanges) + Send>;
+type Subscribers = Mutex<HashMap<u64, Subscriber>>;
+
+/// Beobachtet einen Projektordner samt Unterordnern. Alle Abonnenten hängen
+/// am selben Ereignisstrom. Wird der Beobachter verworfen, endet der Strom.
+pub struct ProjectWatcher {
+    subscribers: Arc<Subscribers>,
+    next_id: AtomicU64,
+    /// Hält die Beobachtung des Betriebssystems am Leben.
+    _watcher: RecommendedWatcher,
+}
+
+impl ProjectWatcher {
+    pub fn start(project: &Path) -> Result<ProjectWatcher, ProjectFilesError> {
+        let (sender, events) = mpsc::channel::<notify::Result<notify::Event>>();
+        let mut watcher = notify::recommended_watcher(sender).map_err(error)?;
+        watcher
+            .watch(project, RecursiveMode::Recursive)
+            .map_err(error)?;
+
+        let subscribers = Arc::new(Subscribers::default());
+        let listeners = subscribers.clone();
+        let project = project.to_path_buf();
+        // Endet von selbst, sobald der Beobachter verworfen ist.
+        thread::spawn(move || {
+            while let Ok(first) = events.recv() {
+                let mut batch = Batch::default();
+                batch.add(&project, first);
+                let deadline = Instant::now() + CHANGE_WINDOW;
+                loop {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    match events.recv_timeout(remaining) {
+                        Ok(event) => batch.add(&project, event),
+                        Err(_) => break,
+                    }
+                }
+                let Some(changes) = batch.finish() else {
+                    continue;
+                };
+                if let Ok(listeners) = listeners.lock() {
+                    for listener in listeners.values() {
+                        listener(&changes);
+                    }
+                }
+            }
+        });
+
+        Ok(ProjectWatcher {
+            subscribers,
+            next_id: AtomicU64::new(0),
+            _watcher: watcher,
+        })
+    }
+
+    /// Abonniert den Ereignisstrom. `on_change` wird der Reihe nach aus
+    /// einem Hintergrund-Thread aufgerufen, höchstens einmal je Zeitfenster,
+    /// und sollte schnell zurückkehren. Das Abonnement endet, sobald der
+    /// Rückgabewert verworfen wird; danach kommt kein Aufruf mehr.
+    pub fn subscribe(&self, on_change: impl Fn(&ProjectChanges) + Send + 'static) -> Subscription {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut subscribers) = self.subscribers.lock() {
+            subscribers.insert(id, Box::new(on_change));
+        }
+        Subscription {
+            id,
+            subscribers: Arc::downgrade(&self.subscribers),
+        }
+    }
+}
+
+/// Ein Abonnement des Ereignisstroms; es endet, wenn es verworfen wird.
+pub struct Subscription {
+    id: u64,
+    subscribers: Weak<Subscribers>,
+}
+
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        if let Some(subscribers) = self.subscribers.upgrade() {
+            if let Ok(mut subscribers) = subscribers.lock() {
+                subscribers.remove(&self.id);
+            }
+        }
+    }
+}
+
+/// Die Änderungen eines Zeitfensters, ohne Doppelte.
+#[derive(Default)]
+struct Batch {
+    paths: BTreeSet<String>,
+    rescan: bool,
+}
+
+impl Batch {
+    fn add(&mut self, project: &Path, event: notify::Result<notify::Event>) {
+        let Ok(event) = event else {
+            // Was bei einem Fehler der Beobachtung verloren ging, ist unbekannt.
+            self.rescan = true;
+            return;
+        };
+        if event.need_rescan() {
+            self.rescan = true;
+        }
+        // Bloßes Lesen ändert nichts.
+        if matches!(event.kind, EventKind::Access(_)) || self.rescan {
+            return;
+        }
+        for path in &event.paths {
+            match path.strip_prefix(project) {
+                Ok(relative) if relative.as_os_str().is_empty() => {}
+                Ok(relative) => {
+                    self.paths
+                        .insert(relative.to_string_lossy().replace('\\', "/"));
+                }
+                Err(_) => self.rescan = true,
+            }
+        }
+        if self.paths.len() > MAX_PATHS {
+            self.rescan = true;
+        }
+    }
+
+    fn finish(self) -> Option<ProjectChanges> {
+        if self.rescan {
+            return Some(ProjectChanges {
+                paths: Vec::new(),
+                rescan: true,
+            });
+        }
+        if self.paths.is_empty() {
+            return None;
+        }
+        Some(ProjectChanges {
+            paths: self.paths.into_iter().collect(),
+            rescan: false,
+        })
+    }
+}

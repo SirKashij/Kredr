@@ -41,6 +41,11 @@ body {
   flex-direction: column;
 }
 
+/* Ausgeblendetes bleibt bestehen und behÃ¤lt seinen Zustand. */
+[hidden] {
+  display: none !important;
+}
+
 button {
   font: inherit;
   color: inherit;
@@ -122,6 +127,7 @@ button {
 
 /* Seitenleiste */
 .sidebar {
+  position: relative;
   width: 280px;
   flex: none;
   background: var(--side);
@@ -152,6 +158,87 @@ button {
 .hint {
   margin: 4px 16px;
   color: var(--dim);
+}
+
+/* GreifflÃ¤che am rechten Rand, mit der sich die Breite der Seitenleiste ziehen lÃ¤sst. */
+.sash {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  right: -4px;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.sash:hover,
+.sash:active {
+  background: linear-gradient(to right, transparent 3px, var(--accent) 3px 5px, transparent 5px);
+}
+
+/* Explorer */
+.tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Die HÃ¶he muss zu ROW_HEIGHT in Explorer.tsx passen. */
+.tree-row {
+  height: 22px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tree-row:hover {
+  background: #2a2d2e;
+}
+
+.tree-row.sel {
+  background: var(--sel);
+  color: #fff;
+}
+
+.tree-twist,
+.tree-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: var(--dim);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tree-twist {
+  margin-right: -4px;
+}
+
+.tree-twist.open {
+  transform: rotate(90deg);
+}
+
+.tree-icon.folder {
+  stroke: #dcb67a;
+}
+
+.tree-icon.glyph {
+  font:
+    700 9px/16px "Cascadia Mono",
+    Consolas,
+    monospace;
+  text-align: center;
+  letter-spacing: -0.5px;
+}
+
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cards {
@@ -278,6 +365,7 @@ button {
   flex: 1;
   min-width: 0;
   display: flex;
+  position: relative;
 }
 
 /* Eine Teilung legt ihre Teilstücke neben- (row) oder untereinander (column). */
@@ -521,6 +609,109 @@ button {
   margin: 0;
 }
 
+/* Startseite */
+.start {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  padding: 48px 24px;
+}
+
+.start-column {
+  width: 100%;
+  max-width: 560px;
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.start-hint {
+  margin: 0;
+  color: var(--dim);
+}
+
+.recent {
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.recent li {
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+}
+
+.recent li:hover {
+  background: #ffffff0f;
+}
+
+.recent-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.recent-name {
+  color: #fff;
+  font-weight: 600;
+}
+
+.recent-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dim);
+}
+
+/* Ein Projekt, dessen Ordner fehlt, lässt sich nicht öffnen, nur entfernen. */
+.recent .missing .recent-open {
+  cursor: default;
+}
+
+.recent .missing .recent-name,
+.recent .missing .recent-path {
+  color: var(--dim);
+  text-decoration: line-through;
+}
+
+.recent-missing {
+  flex: none;
+  color: #cca700;
+}
+
+.recent-remove {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  padding: 3px;
+  border-radius: 4px;
+  color: var(--dim);
+  visibility: hidden;
+}
+
+.recent li:hover .recent-remove,
+.recent .missing .recent-remove,
+.recent-remove:focus-visible {
+  visibility: visible;
+}
+
+.recent-remove:hover {
+  color: var(--text);
+  background: #ffffff1a;
+}
+
 .btn {
   background: var(--accent);
   color: #fff;
@@ -544,6 +735,98 @@ button {
 .btn:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+/* Einstellungsseite: liegt über dem Hauptbereich. */
+.settings {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  outline: none;
+}
+
+.settings-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 20px 24px 8px;
+}
+
+.settings-head h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 400;
+  color: #fff;
+}
+
+.settings-head button {
+  width: 26px;
+  height: 26px;
+  padding: 4px;
+  border-radius: 4px;
+  color: var(--dim);
+}
+
+.settings-head button:hover {
+  color: var(--text);
+  background: #ffffff1a;
+}
+
+.settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 24px 24px;
+}
+
+.setting {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 0;
+}
+
+.setting-label {
+  font-weight: 600;
+  color: #fff;
+}
+
+.setting-hint {
+  color: var(--dim);
+  margin-bottom: 4px;
+}
+
+.setting input,
+.setting select {
+  font: inherit;
+  color: var(--text);
+  background: #313131;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  padding: 4px 8px;
+  width: 100%;
+  max-width: 420px;
+}
+
+.setting input[type="number"] {
+  max-width: 100px;
+}
+
+.setting input:focus,
+.setting select:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 /* Statusleiste */

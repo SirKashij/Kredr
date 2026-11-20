@@ -1,16 +1,23 @@
 pub mod agent;
 pub mod agent_status;
+pub mod arrangement_store;
+pub mod project_files;
+pub mod project_windows;
+mod projects;
+pub mod settings;
 pub mod terminal;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 
 use agent_status::{AgentStatus, StatusUpdate};
+use project_files::{Entry, ProjectChanges, ProjectWatcher, Subscription};
+use settings::{Settings, SettingsStore, Shell};
 use terminal::{Terminal, TerminalEvent, TerminalOptions};
 
 /// Die laufenden Terminals, nach Kennung.
@@ -18,9 +25,29 @@ use terminal::{Terminal, TerminalEvent, TerminalOptions};
 struct Terminals {
     next_id: AtomicU32,
     open: Mutex<HashMap<u32, Arc<Terminal>>>,
+    /// Zu welchem Fenster ein Terminal gehört.
+    owners: Mutex<HashMap<u32, String>>,
 }
 
 impl Terminals {
+    /// Beendet die Terminals eines geschlossenen Fensters; der Prozess läuft
+    /// für die übrigen Fenster weiter.
+    fn close_all_of(&self, window: &str) {
+        let Ok(mut owners) = self.owners.lock() else {
+            return;
+        };
+        let Ok(mut open) = self.open.lock() else {
+            return;
+        };
+        owners.retain(|id, owner| {
+            let keep = owner != window;
+            if !keep {
+                open.remove(id);
+            }
+            keep
+        });
+    }
+
     /// Liefert das Terminal, ohne die Sperre über alle Terminals zu halten:
     /// eine Shell, die ihre Eingabe nicht liest, bremst so keine andere.
     fn get(&self, id: u32) -> Result<Arc<Terminal>, String> {
@@ -31,11 +58,10 @@ impl Terminals {
     }
 }
 
-/// Der Agent-Startbefehl aus den Einstellungen des Kerns. Solange es das
-/// Modul Einstellungen noch nicht gibt, ist das der Standardwert; danach
-/// liest nur diese Funktion den gespeicherten Wert.
-fn agent_start_command() -> String {
-    agent::DEFAULT_START_COMMAND.to_owned()
+/// Der Agent-Startbefehl aus den Einstellungen des Kerns. Er wird bei jedem
+/// Start frisch gelesen, damit eine Änderung sofort gilt.
+fn agent_start_command(settings: &SettingsStore) -> String {
+    settings.get().agent_command
 }
 
 #[derive(serde::Serialize)]
@@ -56,8 +82,10 @@ type AgentStatusReceiver = Option<Arc<AgentStatus>>;
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn terminal_open(
+    window: tauri::Window,
     terminals: State<'_, Terminals>,
     agent_status: State<'_, AgentStatusReceiver>,
+    settings: State<'_, SettingsStore>,
     cwd: PathBuf,
     cols: u16,
     rows: u16,
@@ -67,7 +95,7 @@ fn terminal_open(
     on_agent_status: Channel<StatusUpdate>,
 ) -> Result<OpenedTerminal, String> {
     let id = terminals.next_id.fetch_add(1, Ordering::Relaxed);
-    let mut start_command = agent.then(agent_start_command);
+    let mut start_command = agent.then(|| agent_start_command(&settings));
     let search_path = std::env::var_os("PATH").unwrap_or_default();
     let missing_agent_program = start_command
         .as_deref()
@@ -82,12 +110,12 @@ fn terminal_open(
         .clone()
         .filter(|_| start_command.is_some());
     if let (Some(status), Some(command)) = (&status, &mut start_command) {
-        let settings = status.register(id, move |update| {
+        let settings_file = status.register(id, move |update| {
             // Hier beginnt jede Reaktion des Kerns auf einen Statuswechsel.
             let _ = on_agent_status.send(update);
         });
-        if let Ok(settings) = settings {
-            *command = agent::with_status_settings(command, &settings);
+        if let Ok(settings_file) = settings_file {
+            *command = agent::with_status_settings(command, &settings_file);
         }
     }
     let options = TerminalOptions {
@@ -121,6 +149,9 @@ fn terminal_open(
         .lock()
         .map_err(|e| e.to_string())?
         .insert(id, Arc::new(terminal));
+    if let Ok(mut owners) = terminals.owners.lock() {
+        owners.insert(id, window.label().to_string());
+    }
     Ok(OpenedTerminal {
         id,
         missing_agent_program,
@@ -165,36 +196,141 @@ fn terminal_close(
         .lock()
         .map_err(|e| e.to_string())?
         .remove(&id);
+    if let Ok(mut owners) = terminals.owners.lock() {
+        owners.remove(&id);
+    }
     Ok(())
 }
 
-/// Der Ordner, der beim Start als Projekt geöffnet wird: das erste
-/// Programmargument, wenn es ein Ordner ist (`kredr <Ordner>`).
-#[tauri::command]
-fn initial_project() -> Option<PathBuf> {
-    let folder = PathBuf::from(std::env::args_os().nth(1)?);
-    if !folder.is_dir() {
-        return None;
+/// Die Beobachter der geöffneten Projekte und die Abonnements der Fenster.
+/// Je Projektordner gibt es einen Beobachter; an ihm hängen Oberfläche und Kern.
+#[derive(Default)]
+struct ProjectWatchers {
+    next_id: AtomicU32,
+    watchers: Mutex<HashMap<PathBuf, Arc<ProjectWatcher>>>,
+    subscriptions: Mutex<HashMap<u32, Subscription>>,
+}
+
+impl ProjectWatchers {
+    /// Liefert den Beobachter des Projekts und startet ihn beim ersten Mal.
+    fn for_project(&self, project: &Path) -> Result<Arc<ProjectWatcher>, String> {
+        let mut watchers = self.watchers.lock().map_err(|e| e.to_string())?;
+        if let Some(watcher) = watchers.get(project) {
+            return Ok(watcher.clone());
+        }
+        let watcher = Arc::new(ProjectWatcher::start(project).map_err(|e| e.to_string())?);
+        watchers.insert(project.to_path_buf(), watcher.clone());
+        Ok(watcher)
     }
-    std::path::absolute(folder).ok()
+}
+
+/// Die Einträge eines Ordners im Projekt; `folder` ist relativ zum
+/// Projektordner und für diesen selbst leer. Läuft abseits des
+/// Haupt-Threads, damit auch ein sehr großer Ordner das Fenster nicht anhält.
+#[tauri::command(async)]
+fn project_files_list(project: PathBuf, folder: String) -> Result<Vec<Entry>, String> {
+    project_files::list_folder(&project.join(folder)).map_err(|e| e.to_string())
+}
+
+/// Abonniert den Ereignisstrom des Projekts und liefert die Kennung des Abonnements.
+#[tauri::command]
+fn project_files_watch(
+    watchers: State<'_, ProjectWatchers>,
+    project: PathBuf,
+    on_change: Channel<ProjectChanges>,
+) -> Result<u32, String> {
+    let subscription = watchers.for_project(&project)?.subscribe(move |changes| {
+        // Scheitert das Senden, ist das Fenster bereits geschlossen.
+        let _ = on_change.send(changes.clone());
+    });
+    let id = watchers.next_id.fetch_add(1, Ordering::Relaxed);
+    watchers
+        .subscriptions
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(id, subscription);
+    Ok(id)
+}
+
+#[tauri::command]
+fn project_files_unwatch(watchers: State<'_, ProjectWatchers>, id: u32) -> Result<(), String> {
+    watchers
+        .subscriptions
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&id);
+    Ok(())
+}
+
+#[tauri::command]
+fn settings_get(settings: State<'_, SettingsStore>) -> Settings {
+    settings.get()
+}
+
+/// Speichert die Einstellungen; alle Fenster erfahren davon über das
+/// Ereignis `settings-changed`.
+#[tauri::command]
+fn settings_set(settings: State<'_, SettingsStore>, value: Settings) -> Result<Settings, String> {
+    settings.set(value).map_err(|e| e.to_string())
+}
+
+/// Die Shells, die die Einstellungsseite zur Wahl stellt.
+#[tauri::command]
+fn available_shells() -> Vec<Shell> {
+    settings::available_shells()
 }
 
 pub fn run() {
-    // Jeder Kredr-Prozess hat seinen eigenen Laufzeitordner für die
-    // Konfigurationen seiner Agenten.
+    // Der Empfänger für den Agentenstatus aller Fenster; sein Laufzeitordner
+    // gehört diesem Kredr-Prozess.
     let runtime_dir = std::env::temp_dir().join(format!("kredr-{}", std::process::id()));
     let agent_status: AgentStatusReceiver = AgentStatus::start(runtime_dir).ok().map(Arc::new);
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // Ein einziger Prozess verwaltet alle Fenster. Die Entwicklungsfassung
+    // nimmt daran nicht teil, damit sie neben einem installierten Kredr läuft.
+    if !cfg!(debug_assertions) {
+        builder = builder.plugin(tauri_plugin_single_instance::init(
+            projects::open_from_second_instance,
+        ));
+    }
+    builder
         .plugin(tauri_plugin_dialog::init())
         .manage(Terminals::default())
         .manage(agent_status)
+        .manage(ProjectWatchers::default())
+        .manage(project_windows::ProjectWindows::default())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let settings = SettingsStore::open(app.path().app_data_dir()?, move |settings| {
+                // Scheitert das Senden, ist kein Fenster mehr offen.
+                let _ = handle.emit("settings-changed", settings);
+            });
+            app.manage(settings);
+            projects::start(app.handle())?;
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                projects::window_closed(window);
+                window.state::<Terminals>().close_all_of(window.label());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             terminal_open,
             terminal_write,
             terminal_resize,
             terminal_has_child_process,
             terminal_close,
-            initial_project,
+            settings_get,
+            settings_set,
+            available_shells,
+            project_files_list,
+            project_files_watch,
+            project_files_unwatch,
+            projects::window_project,
+            projects::recent_projects,
+            projects::forget_project,
+            projects::open_project,
         ])
         .run(tauri::generate_context!())
         .expect("Kredr konnte nicht gestartet werden");

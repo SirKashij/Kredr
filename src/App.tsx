@@ -24,11 +24,17 @@ import { isModifierKey, resolveKey, type Command } from "./keybindings";
 import { MainArea } from "./MainArea";
 import { projectName } from "./project";
 import { Sidebar } from "./Sidebar";
+import { StartPage } from "./StartPage";
 import { RunningTerminals } from "./runningTerminals";
+import { useSettings } from "./settings";
+import { SettingsPage } from "./SettingsPage";
 
 export function App() {
   const t = useT();
+  const { settings } = useSettings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<View>("agents");
+  const [sidebarVisible, setSidebarVisible] = useState(true);
   /** Der Ordner des Projekts dieses Fensters. */
   const [project, setProject] = useState<string | null>(null);
   const [arrangement, setArrangement] = useState(emptyArrangement);
@@ -41,9 +47,16 @@ export function App() {
   const [terminals] = useState(() => new RunningTerminals(() => translate.current, statuses));
 
   useEffect(() => {
-    invoke<string | null>("initial_project").then((folder) => {
+    invoke<string | null>("window_project").then((folder) => {
       if (folder) setProject((current) => current ?? folder);
     });
+    // Ein weiterer Start von Kredr kann einem Fenster auf der Startseite ein Projekt geben.
+    const unlisten = getCurrentWindow().listen<string>("project-opened", (event) =>
+      setProject(event.payload),
+    );
+    return () => {
+      unlisten.then((stop) => stop());
+    };
   }, []);
 
   useEffect(() => {
@@ -61,6 +74,10 @@ export function App() {
     terminals.retain(new Set(tabsOf(arrangement).map((tab) => tab.id)));
   }, [arrangement, terminals]);
 
+  useEffect(() => {
+    terminals.setFont(settings.fontFamily, settings.fontSize);
+  }, [terminals, settings.fontFamily, settings.fontSize]);
+
   /** Gibt dem sichtbaren Terminal der fokussierten Gruppe die Tastatureingaben zurück. */
   function refocusTerminal() {
     setFocusRequest((count) => count + 1);
@@ -68,6 +85,13 @@ export function App() {
 
   function update(change: (arrangement: Arrangement) => Arrangement) {
     setArrangement(change);
+    // Wer die Aufteilung bedient, will sie sehen.
+    setSettingsOpen(false);
+    refocusTerminal();
+  }
+
+  function closeSettings() {
+    setSettingsOpen(false);
     refocusTerminal();
   }
 
@@ -87,10 +111,18 @@ export function App() {
     update((current) => closeTab(current, tabId));
   }
 
+  /** Zeigt eine Ansicht; ein Klick auf die bereits gezeigte blendet die Seitenleiste aus. */
+  function selectView(next: View) {
+    setSidebarVisible(next !== view || !sidebarVisible);
+    setView(next);
+  }
   /** „Neuer Agent“: öffnet ein Terminal, in dem sofort der Agent startet. */
   const newAgent = (current: Arrangement) => openTab(current, true);
 
   function run(command: Command) {
+    if (command.kind === "openSettings") return setSettingsOpen(true);
+    // Alle übrigen Befehle bedienen die Aufteilung eines Projekts.
+    if (!project) return;
     const focused = focusedGroupOf(arrangement);
     switch (command.kind) {
       case "newTerminal":
@@ -116,6 +148,11 @@ export function App() {
         return update((current) => activateAdjacentTab(current, 1));
       case "previousTab":
         return update((current) => activateAdjacentTab(current, -1));
+      case "showExplorer":
+        setView("explorer");
+        return setSidebarVisible(true);
+      case "toggleSidebar":
+        return setSidebarVisible((visible) => !visible);
       case "closeTab":
         if (focused) closeTerminal(focused.activeTab);
     }
@@ -125,7 +162,6 @@ export function App() {
 
   // Die Kürzel gelten im ganzen Fenster und greifen, bevor das Terminal die Taste sieht.
   useEffect(() => {
-    if (!project) return;
     let chord = false;
     const onKeyDown = (event: KeyboardEvent) => {
       if (isModifierKey(event.keyCode)) return;
@@ -140,19 +176,32 @@ export function App() {
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [project]);
+  }, []);
 
   async function openFolder() {
     const folder = await open({ directory: true, title: t("dialog.openFolderTitle") });
-    if (folder) setProject(folder);
+    if (folder) await openProject(folder);
+  }
+
+  async function openProject(folder: string) {
+    // Ist das Projekt schon in einem anderen Fenster offen, kommt jenes nach vorn.
+    if (await invoke<boolean>("open_project", { path: folder })) setProject(folder);
   }
 
   return (
     <>
       <div className="workbench">
-        <ActivityBar view={view} onSelect={setView} statuses={statuses} />
+        <ActivityBar
+          view={sidebarVisible ? view : null}
+          onSelect={selectView}
+          settingsOpen={settingsOpen}
+          statuses={statuses}
+          onToggleSettings={() => (settingsOpen ? closeSettings() : setSettingsOpen(true))}
+        />
         <Sidebar
           view={view}
+          visible={sidebarVisible}
+          project={project}
           arrangement={arrangement}
           statuses={statuses}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
@@ -161,12 +210,7 @@ export function App() {
         />
         <main className="main">
           {!project ? (
-            <div className="welcome">
-              <p>{t("welcome.text")}</p>
-              <button className="btn" onClick={openFolder}>
-                {t("welcome.openFolder")}
-              </button>
-            </div>
+            <StartPage onOpen={openProject} onOpenFolder={openFolder} />
           ) : arrangement.root ? (
             <MainArea
               arrangement={arrangement}
@@ -188,6 +232,7 @@ export function App() {
               </button>
             </div>
           )}
+          {settingsOpen && <SettingsPage onClose={closeSettings} />}
         </main>
       </div>
       <footer className="status">
