@@ -47,13 +47,18 @@ export const views: { id: View; label: MessageKey; tooltip?: MessageKey }[] = [
   { id: "versionControl", label: "activity.versionControl" },
 ];
 
-interface ActivityBarProps {
+export function ActivityBar({
+  view,
+  onSelect,
+  settingsOpen,
+  onToggleSettings,
+}: {
   /** Die gezeigte Ansicht; `null`, solange die Seitenleiste ausgeblendet ist. */
   view: View | null;
   onSelect: (view: View) => void;
-}
-
-export function ActivityBar({ view, onSelect }: ActivityBarProps) {
+  settingsOpen: boolean;
+  onToggleSettings: () => void;
+}) {
   const t = useT();
   return (
     <nav className="actbar">
@@ -70,8 +75,13 @@ export function ActivityBar({ view, onSelect }: ActivityBarProps) {
         </button>
       ))}
       <div className="spacer" />
-      {/* Die Einstellungsseite folgt in einem eigenen Schritt. */}
-      <button title={t("activity.settings")} aria-label={t("activity.settings")} disabled>
+      <button
+        className={settingsOpen ? "on" : ""}
+        title={t("activity.settingsTooltip")}
+        aria-label={t("activity.settings")}
+        aria-pressed={settingsOpen}
+        onClick={onToggleSettings}
+      >
         <svg viewBox="0 0 24 24">{icons.settings}</svg>
       </button>
     </nav>

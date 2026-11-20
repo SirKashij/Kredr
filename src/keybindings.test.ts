@@ -5,8 +5,20 @@ function key(keyCode: number, modifiers: Partial<KeyStroke> = {}): KeyStroke {
   return { keyCode, ctrlKey: false, shiftKey: false, altKey: false, ...modifiers };
 }
 
-const E = 69;
+const A = 65;
 const B = 66;
+const E = 69;
+
+test("Strg+Umschalt+A startet einen neuen Agenten", () => {
+  expect(resolveKey(key(A, { ctrlKey: true, shiftKey: true }), false)).toEqual({
+    kind: "newAgent",
+  });
+});
+
+test("ohne Umschalt oder mit AltGr bleibt A eine gewöhnliche Taste", () => {
+  expect(resolveKey(key(A, { ctrlKey: true }), false)).toBe(null);
+  expect(resolveKey(key(A, { ctrlKey: true, shiftKey: true, altKey: true }), false)).toBe(null);
+});
 
 test("Strg+Umschalt+E zeigt den Explorer", () => {
   expect(resolveKey(key(E, { ctrlKey: true, shiftKey: true }), false)).toEqual({

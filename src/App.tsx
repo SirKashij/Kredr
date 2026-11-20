@@ -23,9 +23,13 @@ import { MainArea } from "./MainArea";
 import { projectName } from "./project";
 import { Sidebar } from "./Sidebar";
 import { RunningTerminals } from "./runningTerminals";
+import { useSettings } from "./settings";
+import { SettingsPage } from "./SettingsPage";
 
 export function App() {
   const t = useT();
+  const { settings } = useSettings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<View>("agents");
   const [sidebarVisible, setSidebarVisible] = useState(true);
   /** Der Ordner des Projekts dieses Fensters. */
@@ -59,6 +63,10 @@ export function App() {
     terminals.retain(new Set(tabsOf(arrangement).map((tab) => tab.id)));
   }, [arrangement, terminals]);
 
+  useEffect(() => {
+    terminals.setFont(settings.fontFamily, settings.fontSize);
+  }, [terminals, settings.fontFamily, settings.fontSize]);
+
   /** Gibt dem sichtbaren Terminal der fokussierten Gruppe die Tastatureingaben zurück. */
   function refocusTerminal() {
     setFocusRequest((count) => count + 1);
@@ -66,6 +74,13 @@ export function App() {
 
   function update(change: (arrangement: Arrangement) => Arrangement) {
     setArrangement(change);
+    // Wer die Aufteilung bedient, will sie sehen.
+    setSettingsOpen(false);
+    refocusTerminal();
+  }
+
+  function closeSettings() {
+    setSettingsOpen(false);
     refocusTerminal();
   }
 
@@ -90,12 +105,19 @@ export function App() {
     setSidebarVisible(next !== view || !sidebarVisible);
     setView(next);
   }
+  /** „Neuer Agent“: öffnet ein Terminal, in dem sofort der Agent startet. */
+  const newAgent = (current: Arrangement) => openTab(current, true);
 
   function run(command: Command) {
+    if (command.kind === "openSettings") return setSettingsOpen(true);
+    // Alle übrigen Befehle bedienen die Aufteilung eines Projekts.
+    if (!project) return;
     const focused = focusedGroupOf(arrangement);
     switch (command.kind) {
       case "newTerminal":
         return update(openTab);
+      case "newAgent":
+        return update(newAgent);
       case "splitRight":
       case "splitDown": {
         // Ohne Gruppe gibt es nichts zu teilen; dann entsteht das erste Terminal.
@@ -129,7 +151,6 @@ export function App() {
 
   // Die Kürzel gelten im ganzen Fenster und greifen, bevor das Terminal die Taste sieht.
   useEffect(() => {
-    if (!project) return;
     let chord = false;
     const onKeyDown = (event: KeyboardEvent) => {
       if (isModifierKey(event.keyCode)) return;
@@ -144,7 +165,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [project]);
+  }, []);
 
   async function openFolder() {
     const folder = await open({ directory: true, title: t("dialog.openFolderTitle") });
@@ -154,13 +175,20 @@ export function App() {
   return (
     <>
       <div className="workbench">
-        <ActivityBar view={sidebarVisible ? view : null} onSelect={selectView} />
+        <ActivityBar
+          view={sidebarVisible ? view : null}
+          onSelect={selectView}
+          settingsOpen={settingsOpen}
+          onToggleSettings={() => (settingsOpen ? closeSettings() : setSettingsOpen(true))}
+        />
         <Sidebar
           view={view}
           visible={sidebarVisible}
           project={project}
           arrangement={arrangement}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
+          onNewAgent={project ? () => update(newAgent) : undefined}
+          onNewTerminal={project ? () => update(openTab) : undefined}
         />
         <main className="main">
           {!project ? (
@@ -183,11 +211,15 @@ export function App() {
           ) : (
             <div className="welcome">
               <p>{t("terminal.none")}</p>
-              <button className="btn" onClick={() => update(openTab)}>
+              <button className="btn" onClick={() => update(newAgent)}>
+                {t("agent.new")}
+              </button>
+              <button className="btn ghost" onClick={() => update(openTab)}>
                 {t("terminal.new")}
               </button>
             </div>
           )}
+          {settingsOpen && <SettingsPage onClose={closeSettings} />}
         </main>
       </div>
       <footer className="status">

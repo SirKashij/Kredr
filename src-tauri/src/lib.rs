@@ -1,4 +1,6 @@
+pub mod agent;
 pub mod project_files;
+pub mod settings;
 pub mod terminal;
 
 use std::collections::HashMap;
@@ -7,9 +9,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 
 use project_files::{Entry, ProjectChanges, ProjectWatcher, Subscription};
+use settings::{Settings, SettingsStore, Shell};
 use terminal::{Terminal, TerminalEvent, TerminalOptions};
 
 /// Die laufenden Terminals, nach Kennung.
@@ -30,16 +33,47 @@ impl Terminals {
     }
 }
 
+/// Der Agent-Startbefehl aus den Einstellungen des Kerns. Er wird bei jedem
+/// Start frisch gelesen, damit eine Änderung sofort gilt.
+fn agent_start_command(settings: &SettingsStore) -> String {
+    settings.get().agent_command
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenedTerminal {
+    id: u32,
+    /// Das Programm des Agent-Startbefehls, wenn ein Agent starten sollte,
+    /// es aber nicht installiert ist. Das Terminal ist dann eine gewöhnliche Shell.
+    missing_agent_program: Option<String>,
+}
+
+/// Öffnet ein Terminal. Mit `agent` startet darin sofort der Agent.
 #[tauri::command]
 fn terminal_open(
     terminals: State<'_, Terminals>,
+    settings: State<'_, SettingsStore>,
     cwd: PathBuf,
     cols: u16,
     rows: u16,
+    agent: bool,
     on_output: Channel<InvokeResponseBody>,
     on_exit: Channel<()>,
-) -> Result<u32, String> {
-    let options = TerminalOptions { cwd, cols, rows };
+) -> Result<OpenedTerminal, String> {
+    let mut start_command = agent.then(|| agent_start_command(&settings));
+    let search_path = std::env::var_os("PATH").unwrap_or_default();
+    let missing_agent_program = start_command
+        .as_deref()
+        .and_then(|command| agent::missing_program(command, &search_path));
+    if missing_agent_program.is_some() {
+        start_command = None;
+    }
+    let options = TerminalOptions {
+        cwd,
+        cols,
+        rows,
+        start_command,
+    };
     let terminal = Terminal::open(options, move |event| {
         // Scheitert das Senden, ist das Fenster bereits geschlossen.
         let _ = match event {
@@ -55,7 +89,10 @@ fn terminal_open(
         .lock()
         .map_err(|e| e.to_string())?
         .insert(id, Arc::new(terminal));
-    Ok(id)
+    Ok(OpenedTerminal {
+        id,
+        missing_agent_program,
+    })
 }
 
 #[tauri::command]
@@ -163,11 +200,38 @@ fn initial_project() -> Option<PathBuf> {
     std::path::absolute(folder).ok()
 }
 
+#[tauri::command]
+fn settings_get(settings: State<'_, SettingsStore>) -> Settings {
+    settings.get()
+}
+
+/// Speichert die Einstellungen; alle Fenster erfahren davon über das
+/// Ereignis `settings-changed`.
+#[tauri::command]
+fn settings_set(settings: State<'_, SettingsStore>, value: Settings) -> Result<Settings, String> {
+    settings.set(value).map_err(|e| e.to_string())
+}
+
+/// Die Shells, die die Einstellungsseite zur Wahl stellt.
+#[tauri::command]
+fn available_shells() -> Vec<Shell> {
+    settings::available_shells()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Terminals::default())
         .manage(ProjectWatchers::default())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let settings = SettingsStore::open(app.path().app_data_dir()?, move |settings| {
+                // Scheitert das Senden, ist kein Fenster mehr offen.
+                let _ = handle.emit("settings-changed", settings);
+            });
+            app.manage(settings);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             terminal_open,
             terminal_write,
@@ -175,6 +239,9 @@ pub fn run() {
             terminal_has_child_process,
             terminal_close,
             initial_project,
+            settings_get,
+            settings_set,
+            available_shells,
             project_files_list,
             project_files_watch,
             project_files_unwatch,

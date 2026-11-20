@@ -1849,6 +1849,7 @@ dependencies = [
  "notify",
  "portable-pty",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
