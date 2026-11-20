@@ -14,6 +14,7 @@ export type Command =
         | "previousTab"
         | "closeTab"
         | "showExplorer"
+        | "showSearch"
         | "toggleSidebar"
         | "openSettings";
     }
@@ -50,6 +51,7 @@ const Key = {
   A: 65,
   B: 66,
   E: 69,
+  F: 70,
   K: 75,
   F4: 115,
   Comma: 188,
@@ -98,6 +100,7 @@ export function resolveKey(key: KeyStroke, chord: boolean): Command | "chord" | 
     if (keyCode === Key.A) return { kind: "newAgent" };
     if (keyCode === Key.Digit5) return { kind: "splitRight" };
     if (keyCode === Key.E) return { kind: "showExplorer" };
+    if (keyCode === Key.F) return { kind: "showSearch" };
     return null;
   }
 

@@ -54,6 +54,8 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<View>("agents");
   const [sidebarVisible, setSidebarVisible] = useState(true);
+  /** Steigt mit jedem Aufruf der Suche; danach erhält ihr Suchfeld die Tastatur. */
+  const [searchFocus, setSearchFocus] = useState(0);
   /** Der Ordner des Projekts dieses Fensters. */
   const [project, setProject] = useState<string | null>(null);
   const [arrangement, setArrangement] = useState(emptyArrangement);
@@ -242,6 +244,7 @@ export function App() {
   function selectView(next: View) {
     setSidebarVisible(next !== view || !sidebarVisible);
     setView(next);
+    if (next === "search") setSearchFocus((count) => count + 1);
   }
   /** „Neuer Agent“: öffnet ein Terminal, in dem sofort der Agent startet. */
   const newAgent = (current: Arrangement) => openTab(current, true);
@@ -277,6 +280,10 @@ export function App() {
         return update((current) => activateAdjacentTab(current, -1));
       case "showExplorer":
         setView("explorer");
+        return setSidebarVisible(true);
+      case "showSearch":
+        setView("search");
+        setSearchFocus((count) => count + 1);
         return setSidebarVisible(true);
       case "toggleSidebar":
         return setSidebarVisible((visible) => !visible);
@@ -338,6 +345,8 @@ export function App() {
           arrangement={arrangement}
           activeFile={activeFile}
           onOpenFile={(path, preview) => openFile({ path, preview })}
+          onOpenMatch={openFile}
+          searchFocus={searchFocus}
           statuses={statuses}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
           onNewAgent={project ? () => update(newAgent) : undefined}
