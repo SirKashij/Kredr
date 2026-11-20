@@ -13,6 +13,7 @@ import {
   focusGroupAt,
   focusGroupToward,
   openTab,
+  openTabIn,
   splitGroup,
   tabsOf,
   type Arrangement,
@@ -202,6 +203,9 @@ export function App() {
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
           onNewAgent={project ? () => update(newAgent) : undefined}
           onNewTerminal={project ? () => update(openTab) : undefined}
+          onOpenTerminalIn={(folder, agent) =>
+            update((current) => openTabIn(current, folder, agent))
+          }
         />
         <main className="main">
           {!project ? (

@@ -267,7 +267,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
         key={group.activeTab}
         terminals={shared.terminals}
         tabId={group.activeTab}
-        cwd={shared.cwd}
+        cwd={group.tabs.find((tab) => tab.id === group.activeTab)?.cwd ?? shared.cwd}
         agent={group.tabs.some((tab) => tab.id === group.activeTab && tab.agent)}
         focused={group.id === arrangement.focusedGroup}
         focusRequest={shared.focusRequest}

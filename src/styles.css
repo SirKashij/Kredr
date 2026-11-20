@@ -220,6 +220,86 @@ button {
   text-overflow: ellipsis;
 }
 
+.tree:focus {
+  outline: none;
+}
+
+/* Knöpfe des Explorers; sie sitzen rechts in der Titelzeile der Seitenleiste. */
+.tree-actions {
+  position: absolute;
+  top: 0;
+  right: 8px;
+  height: 35px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tree-actions[hidden] {
+  display: none;
+}
+
+.tree-actions button {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--dim);
+}
+
+.tree-actions button:hover {
+  background: #2a2d2e;
+  color: var(--text);
+}
+
+.tree-actions svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Namenseingabe beim Anlegen und Umbenennen. */
+.tree-row.editing {
+  position: relative;
+  cursor: default;
+}
+
+.tree-input {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 3px;
+  font: inherit;
+  color: var(--text);
+  background: #313131;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  outline: none;
+}
+
+.tree-input.invalid {
+  border-color: #be1100;
+}
+
+.tree-error {
+  position: absolute;
+  z-index: 3;
+  top: 21px;
+  left: 8px;
+  right: 12px;
+  padding: 3px 6px;
+  white-space: normal;
+  color: var(--text);
+  background: #5a1d1d;
+  border: 1px solid #be1100;
+  border-top: none;
+}
+
 .cards {
   display: grid;
   gap: 8px;
@@ -507,6 +587,12 @@ button {
 .menu button:hover {
   background: #04395e;
   color: #fff;
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: #454545;
 }
 
 .welcome {

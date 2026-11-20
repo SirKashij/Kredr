@@ -9,6 +9,8 @@ export interface Tab {
   id: string;
   /** Gesetzt, wenn in diesem Terminal ein Agent gestartet wurde. */
   agent?: true;
+  /** Der Startordner des Terminals, wenn es nicht im Projektordner startet. */
+  cwd?: string;
 }
 
 /** Eine Gruppe: ein Teilstück des Hauptbereichs mit eigener Tab-Leiste. */
@@ -105,6 +107,21 @@ export function openTab(arrangement: Arrangement, agent = false): Arrangement {
     focusedGroup: target.id,
     nextId: nextId + 1,
   };
+}
+
+/**
+ * Öffnet wie `openTab` einen neuen Tab, dessen Terminal aber im Ordner `cwd`
+ * startet („Terminal hier öffnen“, „Agent hier starten“).
+ */
+export function openTabIn(arrangement: Arrangement, cwd: string, agent = false): Arrangement {
+  const opened = openTab(arrangement, agent);
+  const target = focusedGroupOf(opened);
+  if (!opened.root || !target) return opened;
+  const root = replaceGroup(opened.root, target.id, (group) => ({
+    ...group,
+    tabs: group.tabs.map((tab) => (tab.id === group.activeTab ? { ...tab, cwd } : tab)),
+  }));
+  return { ...opened, root };
 }
 
 /**
