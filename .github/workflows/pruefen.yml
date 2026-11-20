@@ -1,0 +1,53 @@
+name: Prüfen
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: pruefen-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pruefen:
+    # Kredr läuft nur unter Windows; die Tests des Kerns starten echte PowerShell.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Formatierung der Oberfläche
+        run: npm run format:check
+
+      - name: Typprüfung der Oberfläche
+        run: npm run typecheck
+
+      - name: Tests der Oberfläche
+        run: npm test
+
+      # Der Kern bettet die gebaute Oberfläche ein und übersetzt ohne sie nicht.
+      - name: Oberfläche bauen
+        run: npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Formatierung des Kerns
+        run: cargo fmt --check
+        working-directory: src-tauri
+
+      - name: Tests des Kerns
+        run: cargo test
+        working-directory: src-tauri
