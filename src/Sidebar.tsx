@@ -1,6 +1,6 @@
 import { useRef, useState, type PointerEvent } from "react";
 import { views, type View } from "./ActivityBar";
-import { focusedGroupOf, tabsOf, type Arrangement, type Tab } from "./arrangement";
+import { focusedGroupOf, isTerminal, tabsOf, type Arrangement, type Tab } from "./arrangement";
 import { Explorer } from "./Explorer";
 import { useT } from "./i18n/i18n";
 
@@ -25,9 +25,20 @@ interface SidebarProps extends AgentsViewProps {
   visible: boolean;
   /** Der Ordner des Projekts dieses Fensters. */
   project: string | null;
+  /** Die Datei des sichtbaren Tabs der fokussierten Gruppe. */
+  activeFile: string | null;
+  /** Öffnet eine Datei des Projekts als Dateiansicht, mit `preview` als Vorschau-Tab. */
+  onOpenFile: (path: string, preview: boolean) => void;
 }
 
-export function Sidebar({ view, visible, project, ...agents }: SidebarProps) {
+export function Sidebar({
+  view,
+  visible,
+  project,
+  activeFile,
+  onOpenFile,
+  ...agents
+}: SidebarProps) {
   const t = useT();
   const [width, setWidth] = useState(280);
   const sidebar = useRef<HTMLElement>(null);
@@ -54,7 +65,15 @@ export function Sidebar({ view, visible, project, ...agents }: SidebarProps) {
         )}
       </div>
       {/* Der Explorer bleibt bestehen, damit er beim Wechsel der Ansicht nichts neu lesen muss. */}
-      {project !== null && <Explorer key={project} project={project} hidden={!showsExplorer} />}
+      {project !== null && (
+        <Explorer
+          key={project}
+          project={project}
+          hidden={!showsExplorer}
+          activeFile={activeFile}
+          onOpenFile={onOpenFile}
+        />
+      )}
       <div
         className="sash"
         role="separator"
@@ -75,7 +94,8 @@ export function Sidebar({ view, visible, project, ...agents }: SidebarProps) {
  */
 function AgentsView({ arrangement, onSelectTab, onNewAgent, onNewTerminal }: AgentsViewProps) {
   const t = useT();
-  const tabs = tabsOf(arrangement);
+  // Dateiansichten gehören nicht in die Agenten-Ansicht.
+  const tabs = tabsOf(arrangement).filter(isTerminal);
   const agents = tabs.filter((tab) => tab.agent);
   const terminals = tabs.filter((tab) => !tab.agent);
   const selected = focusedGroupOf(arrangement)?.activeTab;

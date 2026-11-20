@@ -9,17 +9,21 @@ import {
 import {
   activateTab,
   focusGroup,
+  keepTab,
   moveDivider,
   openTab,
   splitGroup,
   type Arrangement,
   type Group,
   type Split,
+  type Tab,
   type TreeNode,
 } from "./arrangement";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { useT } from "./i18n/i18n";
+import type { OpenFiles } from "./openFiles";
 import type { RunningTerminals } from "./runningTerminals";
+import { ContentTabBody, ContentTabFace, type ContentTab } from "./tabViews";
 import { TerminalView } from "./TerminalView";
 import { useTabDrag, type TabDrag } from "./useTabDrag";
 
@@ -29,6 +33,8 @@ const MIN_GROUP_SIZE = 80;
 interface MainAreaProps {
   arrangement: Arrangement;
   terminals: RunningTerminals;
+  /** Die offenen Dateien der Dateiansichten. */
+  files: OpenFiles;
   /** Der Ordner des Projekts; darin starten die Terminals. */
   cwd: string;
   /** Steigt mit jeder Bedienung der Aufteilung; danach erhält das Terminal wieder den Fokus. */
@@ -79,6 +85,10 @@ function Icon({ name }: { name: keyof typeof icons }) {
       {icons[name]}
     </svg>
   );
+}
+
+function hasContent(tab: Tab | undefined): tab is ContentTab {
+  return tab?.content !== undefined;
 }
 
 /** Der Hauptbereich: die Gruppen der Aufteilung mit ihren Tabs und Trennlinien. */
@@ -168,6 +178,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
   const newAgent = () => update((current) => openTab(focusGroup(current, group.id), true));
   const splitRight = () => update((current) => splitGroup(current, group.id, "right"));
   const splitDown = () => update((current) => splitGroup(current, group.id, "down"));
+  const activeTab = group.tabs.find((tab) => tab.id === group.activeTab);
 
   function openMenu(event: MouseEvent, tabId?: string) {
     event.preventDefault();
@@ -213,15 +224,21 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
                 if (event.button === 1) onCloseTab(tab.id);
               }}
               onContextMenu={(event) => openMenu(event, tab.id)}
+              // Ein Doppelklick behält einen Vorschau-Tab wie in VS Code.
+              onDoubleClick={() => update((current) => keepTab(current, tab.id))}
             >
-              {tab.agent ? (
+              {hasContent(tab) ? (
+                <ContentTabFace tab={tab} files={shared.files} />
+              ) : tab.agent ? (
                 <span className="tab-icon agent">
                   <Icon name="agent" />
                 </span>
               ) : (
                 <span className="tab-icon">›_</span>
               )}
-              <span>{t(tab.agent ? "agent.name" : "terminal.powershell")}</span>
+              {!hasContent(tab) && (
+                <span>{t(tab.agent ? "agent.name" : "terminal.powershell")}</span>
+              )}
               <button
                 className="tab-close"
                 title={t("tab.closeTooltip")}
@@ -263,15 +280,27 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
           </button>
         </div>
       </div>
-      <TerminalView
-        key={group.activeTab}
-        terminals={shared.terminals}
-        tabId={group.activeTab}
-        cwd={shared.cwd}
-        agent={group.tabs.some((tab) => tab.id === group.activeTab && tab.agent)}
-        focused={group.id === arrangement.focusedGroup}
-        focusRequest={shared.focusRequest}
-      />
+      {hasContent(activeTab) ? (
+        <ContentTabBody
+          key={activeTab.id}
+          tab={activeTab}
+          files={shared.files}
+          project={shared.cwd}
+          focused={group.id === arrangement.focusedGroup}
+          focusRequest={shared.focusRequest}
+          onKeep={() => update((current) => keepTab(current, activeTab.id))}
+        />
+      ) : (
+        <TerminalView
+          key={group.activeTab}
+          terminals={shared.terminals}
+          tabId={group.activeTab}
+          cwd={shared.cwd}
+          agent={activeTab?.agent ?? false}
+          focused={group.id === arrangement.focusedGroup}
+          focusRequest={shared.focusRequest}
+        />
+      )}
     </section>
   );
 }
