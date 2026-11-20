@@ -1059,3 +1059,241 @@ button {
 .tab:has(.tab-dirty):not(:hover) .tab-close {
   display: none;
 }
+
+/* Versionskontrolle */
+:root {
+  /* Farben der Git-Status wie in VS Code; auch für den Explorer gedacht. */
+  --git-modified: #e2c08d;
+  --git-added: #73c991;
+  --git-deleted: #f14c4c;
+  --git-conflicted: #e4676b;
+}
+
+.git-modified {
+  color: var(--git-modified);
+}
+
+.git-added,
+.git-untracked,
+.git-renamed {
+  color: var(--git-added);
+}
+
+.git-deleted {
+  color: var(--git-deleted);
+}
+
+.git-conflicted {
+  color: var(--git-conflicted);
+}
+
+/* Die Zahl der geänderten Dateien am Symbol der Versionskontrolle. */
+.actbar .badge.changes {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Der aktuelle Branch am linken Rand der Statusleiste. */
+.status .branch {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: -10px;
+  padding: 0 10px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.status .branch svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+/* Die Änderungen in der Seitenleiste. */
+.changes-title {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px 4px 16px;
+}
+
+.changes-title .count {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #3a3a3a;
+  font-weight: 400;
+}
+
+.change-row {
+  height: 22px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 0 24px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.change-row:hover {
+  background: #2a2d2e;
+}
+
+.change-row.sel {
+  background: var(--sel);
+}
+
+.change-name {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.change-name.git-deleted {
+  text-decoration: line-through;
+}
+
+.change-folder {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dim);
+  font-size: 11.5px;
+}
+
+.change-status {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  font-size: 11px;
+}
+
+/* Hinweis (kein Git, kein Repository) oder Fehler mit aufklappbarem Originaltext. */
+.git-notice {
+  margin: 4px 16px;
+  color: var(--dim);
+  user-select: text;
+}
+
+.git-notice p {
+  margin: 0 0 8px;
+}
+
+.git-notice.error p {
+  color: #f48771;
+}
+
+.git-notice summary {
+  cursor: pointer;
+}
+
+.git-notice pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font:
+    12px "Cascadia Mono",
+    Consolas,
+    monospace;
+  color: var(--text);
+  background: #111;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+/* Der Tab „Versionskontrolle“: der Diff, rechts daneben später der Verlauf. */
+.vc-tab {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.vc-diff {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.vc-head {
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.vc-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Umschalter zwischen Nebeneinander und Untereinander. */
+.seg {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.seg button {
+  padding: 1px 8px;
+  color: var(--dim);
+}
+
+.seg button.on {
+  background: var(--accent);
+  color: #fff;
+}
+
+.vc-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.vc-empty,
+.vc-diff > .git-notice,
+.vc-body > .git-notice {
+  margin: auto;
+  padding: 24px;
+  max-width: 560px;
+  color: var(--dim);
+  text-align: center;
+}
+
+.vc-body > .git-notice pre,
+.vc-diff > .git-notice pre {
+  text-align: left;
+}
+
+/* „Maximieren“ und „Terminals einblenden“ in der Tab-Leiste. */
+.tab-actions button.wide {
+  width: auto;
+  margin-right: 4px;
+  padding: 0 8px;
+  border: 1px solid #3c3c3c;
+  border-radius: 11px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--text);
+}

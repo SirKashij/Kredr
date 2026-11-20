@@ -26,6 +26,14 @@ test("Strg+Umschalt+E zeigt den Explorer", () => {
   });
 });
 
+test("Strg+Umschalt+G zeigt die Versionskontrolle", () => {
+  const G = 71;
+  expect(resolveKey(key(G, { ctrlKey: true, shiftKey: true }), false)).toEqual({
+    kind: "showVersionControl",
+  });
+  expect(resolveKey(key(G, { ctrlKey: true }), false)).toBeNull();
+});
+
 test("Strg+B blendet die Seitenleiste ein und aus", () => {
   expect(resolveKey(key(B, { ctrlKey: true }), false)).toEqual({ kind: "toggleSidebar" });
 });

@@ -14,6 +14,8 @@ import "../node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/co
 import "../node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon-modifiers.css";
 import "monaco-editor/editor/browser/coreCommands";
 import "monaco-editor/editor/browser/widget/codeEditor/codeEditorWidget";
+// Der Diff-Editor für den Tab „Versionskontrolle“.
+import "monaco-editor/editor/browser/widget/diffEditor/diffEditor.contribution";
 import "monaco-editor/editor/common/standaloneStrings";
 import "monaco-editor/editor/contrib/bracketMatching/browser/bracketMatching";
 import "monaco-editor/editor/contrib/clipboard/browser/clipboard";

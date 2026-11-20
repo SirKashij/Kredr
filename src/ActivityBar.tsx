@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { AgentStatuses } from "./agentStatus";
 import { WaitingBadge } from "./AgentStatusViews";
 import { useT, type MessageKey } from "./i18n/i18n";
+import { ChangesBadge } from "./VersionControlView";
 
 export type View = "agents" | "explorer" | "search" | "versionControl";
 
@@ -46,7 +47,11 @@ export const views: { id: View; label: MessageKey; tooltip?: MessageKey }[] = [
   { id: "agents", label: "activity.agents" },
   { id: "explorer", label: "activity.explorer", tooltip: "activity.explorerTooltip" },
   { id: "search", label: "activity.search" },
-  { id: "versionControl", label: "activity.versionControl" },
+  {
+    id: "versionControl",
+    label: "activity.versionControl",
+    tooltip: "activity.versionControlTooltip",
+  },
 ];
 
 export function ActivityBar({
@@ -78,6 +83,7 @@ export function ActivityBar({
         >
           <svg viewBox="0 0 24 24">{icons[id]}</svg>
           {id === "agents" && <WaitingBadge statuses={statuses} />}
+          {id === "versionControl" && <ChangesBadge />}
         </button>
       ))}
       <div className="spacer" />

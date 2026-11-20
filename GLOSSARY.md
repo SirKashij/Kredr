@@ -50,3 +50,7 @@ _Vermeiden_: temporärer Tab, Preview
 **Versionskontrolle**:
 Die Ansicht, in der Änderungen eines Projekts geprüft, festgeschrieben und mit GitHub abgeglichen werden.
 _Vermeiden_: Source Control, Git-Panel
+
+**Änderung**:
+Eine geänderte, neue, gelöschte oder umbenannte Datei des Projekts gegenüber dem letzten Commit. Eine Änderung ist ausgewählt, wenn sie in den nächsten Commit kommt.
+_Vermeiden_: gestagt, Stage, Index

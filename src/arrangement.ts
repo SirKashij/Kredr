@@ -27,22 +27,31 @@ export interface Tab {
  * Der Inhalt eines Tabs, der kein Terminal ist. Jede weitere Tab-Art (Diff,
  * Versionskontrolle, Bild …) ist ein weiterer Fall mit eigenem `kind`.
  */
-export type TabContent = {
-  /** Eine Dateiansicht. */
-  kind: "file";
-  /** Relativ zum Projektordner und mit `/` getrennt; außerhalb des Projekts der volle Pfad. */
-  path: string;
-};
+export type TabContent =
+  | {
+      /** Eine Dateiansicht. */
+      kind: "file";
+      /** Relativ zum Projektordner und mit `/` getrennt; außerhalb des Projekts der volle Pfad. */
+      path: string;
+    }
+  /** Die Versionskontrolle mit dem großen Diff; es gibt sie nur einmal. */
+  | { kind: "versionControl" };
 
 /** Ob der Tab ein Terminal ist (gewöhnlich oder mit Agent). */
 export function isTerminal(tab: Tab): boolean {
   return !tab.content;
 }
 
+/** Der Pfad der Datei, wenn der Tab eine Dateiansicht ist. */
+export function filePathOf(tab: Tab | undefined): string | undefined {
+  return tab?.content?.kind === "file" ? tab.content.path : undefined;
+}
+
 /** Ob beide dasselbe zeigen; ein Inhalt ist im Hauptbereich nur einmal offen. */
 export function sameContent(a: TabContent, b: TabContent): boolean {
+  if (a.kind !== "file" || b.kind !== "file") return a.kind === b.kind;
   // Windows unterscheidet bei Pfaden keine Groß- und Kleinschreibung.
-  return a.kind === b.kind && a.path.toLowerCase() === b.path.toLowerCase();
+  return a.path.toLowerCase() === b.path.toLowerCase();
 }
 
 /** Eine Gruppe: ein Teilstück des Hauptbereichs mit eigener Tab-Leiste. */
@@ -77,6 +86,12 @@ export interface Arrangement {
   focusedGroup: string | null;
   /** Zähler für die nächste vergebene Kennung. */
   nextId: number;
+  /**
+   * Kennung des maximierten Tabs. Solange er der sichtbare Tab der
+   * fokussierten Gruppe ist, verdeckt seine Gruppe alle übrigen
+   * (siehe `maximizedGroupOf`).
+   */
+  maximized?: string;
 }
 
 export const emptyArrangement: Arrangement = {
@@ -189,8 +204,10 @@ export function closeTab(arrangement: Arrangement, tabId: string): Arrangement {
   const group = groupOfTab(arrangement, tabId);
   if (!arrangement.root || !group) return arrangement;
   const root = tidy(replaceGroup(arrangement.root, group.id, () => withoutTab(group, tabId)));
+  // Mit dem maximierten Tab endet das Maximieren.
+  const remaining = arrangement.maximized === tabId ? restoreGroups(arrangement) : arrangement;
   if (group.tabs.length > 1 || arrangement.focusedGroup !== group.id) {
-    return { ...arrangement, root };
+    return { ...remaining, root };
   }
 
   // Die fokussierte Gruppe ist verschwunden: Der Fokus geht an die Gruppe
@@ -198,7 +215,46 @@ export function closeTab(arrangement: Arrangement, tabId: string): Arrangement {
   const before = groupsOf(arrangement);
   const position = before.indexOf(group);
   const heir = before[position - 1] ?? before[position + 1];
-  return { ...arrangement, root, focusedGroup: heir?.id ?? null };
+  return { ...remaining, root, focusedGroup: heir?.id ?? null };
+}
+
+/**
+ * Maximiert den Tab: Er wird sichtbar, seine Gruppe erhält den Fokus und
+ * verdeckt die übrigen Gruppen. Deren Tabs bleiben, wo sie sind.
+ */
+export function maximizeTab(arrangement: Arrangement, tabId: string): Arrangement {
+  if (!groupOfTab(arrangement, tabId)) return arrangement;
+  return { ...activateTab(arrangement, tabId), maximized: tabId };
+}
+
+/** Beendet das Maximieren; alle Gruppen sind wieder zu sehen. */
+export function restoreGroups(arrangement: Arrangement): Arrangement {
+  if (arrangement.maximized === undefined) return arrangement;
+  const { maximized: _, ...restored } = arrangement;
+  return restored;
+}
+
+/**
+ * Die Gruppe, die gerade alle übrigen verdeckt. Das gilt nur, solange der
+ * maximierte Tab der sichtbare Tab der fokussierten Gruppe ist: Wer ein
+ * Terminal nach vorn holt oder daneben einen Tab öffnet, sieht wieder alles.
+ */
+export function maximizedGroupOf(arrangement: Arrangement): Group | null {
+  const group = focusedGroupOf(arrangement);
+  return group && group.activeTab === arrangement.maximized ? group : null;
+}
+
+/**
+ * Zeigt den Tab der Versionskontrolle und öffnet ihn, wenn es ihn noch nicht
+ * gibt. Beim Öffnen ist er maximiert; ein vorhandener Tab wird es nur mit
+ * `maximize` erneut (Klick auf das Symbol der Versionskontrolle).
+ */
+export function showVersionControl(arrangement: Arrangement, maximize: boolean): Arrangement {
+  const isShown = (tab: Tab) => tab.content?.kind === "versionControl";
+  const existed = tabsOf(arrangement).some(isShown);
+  const shown = openContent(arrangement, { kind: "versionControl" });
+  if (existed && !maximize) return shown;
+  return maximizeTab(shown, tabsOf(shown).find(isShown)!.id);
 }
 
 /**

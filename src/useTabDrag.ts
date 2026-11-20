@@ -29,7 +29,10 @@ function rectOf(element: Element): Rect {
 
 /** Die Flächen aller Gruppen, wie sie gerade auf dem Bildschirm liegen. */
 function readGroupRects(): GroupRects[] {
-  return [...document.querySelectorAll<HTMLElement>("[data-group]")].map((section) => {
+  const groups = [...document.querySelectorAll<HTMLElement>("[data-group]")];
+  // Von einer maximierten Gruppe verdeckte Gruppen sind kein Ziel.
+  const visible = groups.filter((section) => section.getClientRects().length > 0);
+  return visible.map((section) => {
     const box = rectOf(section);
     const bar = rectOf(section.querySelector(".tabs")!);
     return {

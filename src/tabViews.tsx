@@ -2,7 +2,9 @@ import type { Tab, TabContent } from "./arrangement";
 import { fileIcon } from "./fileIcons";
 import { fileName } from "./filePath";
 import { FileView, useOpenFiles } from "./FileView";
+import { useT } from "./i18n/i18n";
 import type { OpenFiles } from "./openFiles";
+import { VersionControlTab } from "./VersionControlTab";
 
 /**
  * Darstellung der Tabs, die kein Terminal sind. Eine neue Tab-Art braucht
@@ -16,8 +18,16 @@ export type ContentTab = Tab & { content: TabContent };
 /** Symbol und Beschriftung eines Tabs in der Tab-Leiste. */
 export function ContentTabFace({ tab, files }: { tab: ContentTab; files: OpenFiles }) {
   useOpenFiles(files);
+  const t = useT();
   const { content } = tab;
   switch (content.kind) {
+    case "versionControl":
+      return (
+        <>
+          <span className="tab-icon">±</span>
+          <span className="tab-label">{t("activity.versionControl")}</span>
+        </>
+      );
     case "file": {
       const name = fileName(content.path);
       const icon = fileIcon(name);
@@ -64,6 +74,8 @@ export function ContentTabBody({
 }) {
   const { content } = tab;
   switch (content.kind) {
+    case "versionControl":
+      return <VersionControlTab focused={focused} focusRequest={focusRequest} />;
     case "file":
       return (
         <FileView

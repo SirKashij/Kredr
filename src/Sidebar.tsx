@@ -6,6 +6,8 @@ import { focusedGroupOf, isTerminal, tabsOf, type Arrangement, type Tab } from "
 import { Explorer } from "./Explorer";
 import { useT } from "./i18n/i18n";
 import { tabLabel } from "./tabLabel";
+import type { ChangedFile } from "./versionControlState";
+import { VersionControlView } from "./VersionControlView";
 
 /** Zwischen diesen Breiten lässt sich die Seitenleiste ziehen (in Pixeln). */
 const MIN_WIDTH = 170;
@@ -36,6 +38,8 @@ interface SidebarProps extends AgentsViewProps {
   activeFile: string | null;
   /** Öffnet eine Datei des Projekts als Dateiansicht, mit `preview` als Vorschau-Tab. */
   onOpenFile: (path: string, preview: boolean) => void;
+  /** Zeigt den Diff einer Änderung im Tab „Versionskontrolle“. */
+  onShowChange: (file: ChangedFile) => void;
 }
 
 export function Sidebar({
@@ -45,6 +49,7 @@ export function Sidebar({
   onOpenTerminalIn,
   activeFile,
   onOpenFile,
+  onShowChange,
   ...agents
 }: SidebarProps) {
   const t = useT();
@@ -66,6 +71,8 @@ export function Sidebar({
       <div className="side-body" hidden={showsExplorer}>
         {view === "agents" ? (
           <AgentsView {...agents} />
+        ) : view === "versionControl" && project !== null ? (
+          <VersionControlView onShowChange={onShowChange} />
         ) : (
           <p className="hint">
             {t(view === "explorer" ? "status.noProject" : "sidebar.notAvailable")}
