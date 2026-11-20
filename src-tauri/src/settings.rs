@@ -11,6 +11,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+// Welche Shells es gibt und welche gefunden werden, weiß der Terminal-Dienst.
+pub use crate::terminal::{available_shells, Shell};
+
 const FILE_NAME: &str = "settings.json";
 /// Version des gespeicherten Formats.
 const VERSION: u32 = 1;
@@ -23,14 +26,6 @@ const MAX_FONT_SIZE: u16 = 32;
 pub enum Language {
     De,
     En,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Shell {
-    #[default]
-    Powershell,
-    GitBash,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,37 +166,4 @@ impl SettingsStore {
         std::fs::write(&draft, content)?;
         std::fs::rename(&draft, &self.file)
     }
-}
-
-/// Die Shells, die auf diesem Rechner zur Wahl stehen. Git Bash wird nur
-/// angeboten, wenn es gefunden wird.
-pub fn available_shells() -> Vec<Shell> {
-    let mut shells = vec![Shell::Powershell];
-    if git_bash_installed() {
-        shells.push(Shell::GitBash);
-    }
-    shells
-}
-
-/// Sucht Git Bash an den üblichen Installationsorten von Git für Windows und
-/// neben einem `git.exe` im Suchpfad.
-fn git_bash_installed() -> bool {
-    let env_dir = |name: &str| std::env::var_os(name).map(PathBuf::from);
-    let installs = [
-        env_dir("ProgramFiles").map(|dir| dir.join("Git")),
-        env_dir("ProgramFiles(x86)").map(|dir| dir.join("Git")),
-        env_dir("LocalAppData").map(|dir| dir.join("Programs").join("Git")),
-    ];
-    // `git.exe` liegt in `<Git>\cmd`.
-    let from_path = std::env::var_os("PATH").into_iter().flat_map(|path| {
-        std::env::split_paths(&path)
-            .filter(|dir| dir.join("git.exe").is_file())
-            .filter_map(|dir| dir.parent().map(Path::to_path_buf))
-            .collect::<Vec<_>>()
-    });
-    installs
-        .into_iter()
-        .flatten()
-        .chain(from_path)
-        .any(|git| git.join("bin").join("bash.exe").is_file())
 }

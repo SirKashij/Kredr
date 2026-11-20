@@ -440,6 +440,24 @@ button {
   visibility: visible;
 }
 
+/* Der Knopf neben „Neues Terminal“, der die Shell wählen lässt. */
+.tab-actions button.narrow {
+  width: 14px;
+  padding: 3px 0;
+  margin-left: -2px;
+}
+
+.tab-name-input {
+  height: 22px;
+  padding: 0 4px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  outline: none;
+}
+
 .tab-icon {
   color: var(--dim);
 }

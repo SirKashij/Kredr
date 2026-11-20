@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod arrangement_store;
+pub mod external;
 pub mod project_files;
 pub mod project_windows;
 mod projects;
@@ -71,12 +72,14 @@ struct OpenedTerminal {
     missing_agent_program: Option<String>,
 }
 
-/// Öffnet ein Terminal. Mit `agent` startet darin sofort der Agent.
+/// Öffnet ein Terminal mit der gewählten Shell. Mit `agent` startet darin
+/// sofort der Agent.
 #[tauri::command]
 fn terminal_open(
     window: tauri::Window,
     terminals: State<'_, Terminals>,
     settings: State<'_, SettingsStore>,
+    shell: Option<Shell>,
     cwd: PathBuf,
     cols: u16,
     rows: u16,
@@ -93,6 +96,8 @@ fn terminal_open(
         start_command = None;
     }
     let options = TerminalOptions {
+        // Ohne Angabe gilt die Standard-Shell aus den Einstellungen.
+        shell: shell.unwrap_or_else(|| settings.get().default_shell),
         cwd,
         cols,
         rows,
@@ -257,6 +262,26 @@ fn project_files_unwatch(watchers: State<'_, ProjectWatchers>, id: u32) -> Resul
     Ok(())
 }
 
+/// Prüft, welche Texte aus einem Terminal vorhandene Dateien bezeichnen:
+/// je Text der volle Pfad oder nichts. Relative Angaben gelten ab `base`.
+#[tauri::command]
+fn resolve_files(base: PathBuf, candidates: Vec<String>) -> Vec<Option<PathBuf>> {
+    candidates
+        .iter()
+        .map(|candidate| external::resolve_file(&base, candidate))
+        .collect()
+}
+
+#[tauri::command]
+fn open_file(path: PathBuf) -> Result<(), String> {
+    external::open_file(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    external::open_url(&url).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn settings_get(settings: State<'_, SettingsStore>) -> Settings {
     settings.get()
@@ -286,6 +311,7 @@ pub fn run() {
     }
     builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(Terminals::default())
         .manage(ProjectWatchers::default())
         .manage(project_windows::ProjectWindows::default())
@@ -314,6 +340,9 @@ pub fn run() {
             terminal_resize,
             terminal_has_child_process,
             terminal_close,
+            resolve_files,
+            open_file,
+            open_url,
             settings_get,
             settings_set,
             available_shells,

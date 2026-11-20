@@ -6,6 +6,7 @@ import { ActivityBar, type View } from "./ActivityBar";
 import {
   activateAdjacentTab,
   activateTab,
+  assignShell,
   closeTab,
   emptyArrangement,
   focusAdjacentGroup,
@@ -20,12 +21,15 @@ import {
 import { useT } from "./i18n/i18n";
 import { isModifierKey, resolveKey, type Command } from "./keybindings";
 import { MainArea } from "./MainArea";
+import { openFileExternally, openUrl } from "./openExternally";
 import { projectName } from "./project";
 import { Sidebar } from "./Sidebar";
 import { StartPage } from "./StartPage";
 import { RunningTerminals } from "./runningTerminals";
 import { useSettings } from "./settings";
 import { SettingsPage } from "./SettingsPage";
+import { availableShells, type Shell } from "./settingsStore";
+import { shellLabel } from "./tabLabel";
 
 export function App() {
   const t = useT();
@@ -41,7 +45,32 @@ export function App() {
   // Ein Sprachwechsel soll laufende Terminals nicht neu starten.
   const translate = useRef(t);
   translate.current = t;
-  const [terminals] = useState(() => new RunningTerminals(() => translate.current));
+  const [terminals] = useState(
+    () =>
+      new RunningTerminals({
+        translate: () => translate.current,
+        openUrl,
+        // Bis es die Dateiansicht gibt, öffnen Dateipfade aus dem Terminal
+        // im Windows-Standardprogramm. Die Dateiansicht hängt sich hier ein.
+        openFile: openFileExternally,
+      }),
+  );
+  /** Die Shells, die es auf diesem Rechner gibt; PowerShell immer. */
+  const [shells, setShells] = useState<Shell[]>(["powershell"]);
+  // Eine geänderte Standard-Shell gilt für das nächste neue Terminal.
+  const defaultShell = useRef(settings.defaultShell);
+  defaultShell.current = settings.defaultShell;
+
+  useEffect(() => {
+    availableShells()
+      .then(setShells)
+      .catch(() => {});
+  }, []);
+
+  /** Jedes neu entstandene Terminal hält die Standard-Shell fest, wenn keine gewählt wurde. */
+  function settle(arrangement: Arrangement): Arrangement {
+    return assignShell(arrangement, defaultShell.current);
+  }
 
   useEffect(() => {
     invoke<string | null>("window_project").then((folder) => {
@@ -63,7 +92,7 @@ export function App() {
 
   // Ein frisch geöffnetes Projekt beginnt mit einem Terminal.
   useEffect(() => {
-    if (project) setArrangement((current) => (current.root ? current : openTab(current)));
+    if (project) setArrangement((current) => (current.root ? current : settle(openTab(current))));
   }, [project]);
 
   // Terminals, deren Tab geschlossen wurde, enden.
@@ -81,7 +110,7 @@ export function App() {
   }
 
   function update(change: (arrangement: Arrangement) => Arrangement) {
-    setArrangement(change);
+    setArrangement((current) => settle(change(current)));
     // Wer die Aufteilung bedient, will sie sehen.
     setSettingsOpen(false);
     refocusTerminal();
@@ -123,7 +152,7 @@ export function App() {
     const focused = focusedGroupOf(arrangement);
     switch (command.kind) {
       case "newTerminal":
-        return update(openTab);
+        return update((current) => openTab(current));
       case "newAgent":
         return update(newAgent);
       case "splitRight":
@@ -175,6 +204,10 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
 
+  const focusedGroup = focusedGroupOf(arrangement);
+  /** Der sichtbare Tab der fokussierten Gruppe. */
+  const activeTab = focusedGroup?.tabs.find((tab) => tab.id === focusedGroup.activeTab);
+
   async function openFolder() {
     const folder = await open({ directory: true, title: t("dialog.openFolderTitle") });
     if (folder) await openProject(folder);
@@ -201,7 +234,7 @@ export function App() {
           arrangement={arrangement}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
           onNewAgent={project ? () => update(newAgent) : undefined}
-          onNewTerminal={project ? () => update(openTab) : undefined}
+          onNewTerminal={project ? () => update((current) => openTab(current)) : undefined}
         />
         <main className="main">
           {!project ? (
@@ -211,6 +244,7 @@ export function App() {
               arrangement={arrangement}
               terminals={terminals}
               cwd={project}
+              shells={shells}
               focusRequest={focusRequest}
               update={update}
               onRefocus={refocusTerminal}
@@ -222,7 +256,7 @@ export function App() {
               <button className="btn" onClick={() => update(newAgent)}>
                 {t("agent.new")}
               </button>
-              <button className="btn ghost" onClick={() => update(openTab)}>
+              <button className="btn ghost" onClick={() => update((current) => openTab(current))}>
                 {t("terminal.new")}
               </button>
             </div>
@@ -232,7 +266,7 @@ export function App() {
       </div>
       <footer className="status">
         <span>{project ? projectName(project) : t("status.noProject")}</span>
-        {arrangement.root && <span className="right">{t("terminal.powershell")}</span>}
+        {activeTab && <span className="right">{shellLabel(activeTab.shell, t)}</span>}
       </footer>
     </>
   );

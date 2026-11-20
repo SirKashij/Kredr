@@ -3,6 +3,7 @@ import { views, type View } from "./ActivityBar";
 import { focusedGroupOf, tabsOf, type Arrangement, type Tab } from "./arrangement";
 import { Explorer } from "./Explorer";
 import { useT } from "./i18n/i18n";
+import { tabLabel } from "./tabLabel";
 
 /** Zwischen diesen Breiten lässt sich die Seitenleiste ziehen (in Pixeln). */
 const MIN_WIDTH = 170;
@@ -86,7 +87,7 @@ function AgentsView({ arrangement, onSelectTab, onNewAgent, onNewTerminal }: Age
       onClick={() => onSelectTab(tab.id)}
     >
       <span className="dot" />
-      <span>{t(tab.agent ? "agent.name" : "terminal.powershell")}</span>
+      <span>{tabLabel(tab, t)}</span>
     </button>
   );
   return (

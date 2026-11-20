@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
-use kredr_lib::terminal::{Terminal, TerminalEvent, TerminalOptions};
+use kredr_lib::terminal::{available_shells, Shell, Terminal, TerminalEvent, TerminalOptions};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -17,12 +17,13 @@ struct TestTerminal {
 
 impl TestTerminal {
     fn open(cwd: PathBuf) -> TestTerminal {
-        TestTerminal::open_with(cwd, None)
+        TestTerminal::open_with(cwd, Shell::Powershell, None)
     }
 
-    fn open_with(cwd: PathBuf, start_command: Option<&str>) -> TestTerminal {
+    fn open_with(cwd: PathBuf, shell: Shell, start_command: Option<&str>) -> TestTerminal {
         let (sender, events) = channel();
         let options = TerminalOptions {
+            shell,
             cwd,
             cols: 200,
             rows: 30,
@@ -31,7 +32,7 @@ impl TestTerminal {
         let terminal = Terminal::open(options, move |event| {
             let _ = sender.send(event);
         })
-        .expect("PowerShell sollte starten");
+        .expect("Die Shell sollte starten");
         TestTerminal {
             terminal,
             events,
@@ -132,7 +133,7 @@ fn startbefehl_laeuft_sofort_und_die_shell_bleibt_danach_offen() {
     let project = temp_project("startbefehl");
     let start_command = "echo \"agent-$(6*7) mit 'Zusatz'\"";
 
-    let mut terminal = TestTerminal::open_with(project, Some(start_command));
+    let mut terminal = TestTerminal::open_with(project, Shell::Powershell, Some(start_command));
 
     // Ohne jede Eingabe: Der Startbefehl ist schon gelaufen.
     terminal.wait_for_output("agent-42 mit 'Zusatz'");
@@ -195,4 +196,63 @@ fn prozessende_wird_nach_der_letzten_ausgabe_gemeldet() {
 
     // Was die Shell vor ihrem Ende ausgegeben hat, ist dann schon angekommen.
     assert!(terminal.output.contains("letzte-42"));
+}
+
+#[test]
+fn powershell_wird_immer_angeboten() {
+    assert_eq!(available_shells().first(), Some(&Shell::Powershell));
+}
+
+/// Git Bash gehört zu Git für Windows; ohne es gibt es hier nichts zu prüfen.
+fn git_bash_found() -> bool {
+    let found = available_shells().contains(&Shell::GitBash);
+    if !found {
+        eprintln!("Git Bash wurde nicht gefunden; Test übersprungen");
+    }
+    found
+}
+
+#[test]
+fn git_bash_fuehrt_bash_befehle_aus() {
+    if !git_bash_found() {
+        return;
+    }
+    let mut terminal = TestTerminal::open_with(temp_project("git-bash"), Shell::GitBash, None);
+
+    // Diese Ersetzung kennt nur Bash; PowerShell meldet daran einen Fehler.
+    terminal.send_line("echo \"kredr-$((6*7))-${BASH_VERSION:+bash}\"");
+
+    terminal.wait_for_output("kredr-42-bash");
+}
+
+#[test]
+fn git_bash_startet_im_startordner() {
+    if !git_bash_found() {
+        return;
+    }
+    let project = temp_project("git-bash-startordner");
+    let folder_name = project.file_name().unwrap().to_str().unwrap().to_owned();
+
+    let mut terminal = TestTerminal::open_with(project, Shell::GitBash, None);
+    terminal.send_line("echo \"ort=$(pwd)|\"");
+
+    terminal.wait_for_output(&format!("{folder_name}|"));
+}
+
+#[test]
+fn startbefehl_laeuft_auch_in_git_bash_und_die_shell_bleibt_offen() {
+    if !git_bash_found() {
+        return;
+    }
+    let project = temp_project("git-bash-startbefehl");
+    let start_command = "echo \"agent-$((6*7)) mit 'Zusatz'\"";
+
+    let mut terminal = TestTerminal::open_with(project, Shell::GitBash, Some(start_command));
+
+    // Ohne jede Eingabe: Der Startbefehl ist schon gelaufen.
+    terminal.wait_for_output("agent-42 mit 'Zusatz'");
+
+    // Nach dem Ende des Startbefehls nimmt die Shell weiter Eingaben an.
+    terminal.send_line("echo \"danach-$((6*7))-${BASH_VERSION:+bash}\"");
+    terminal.wait_for_output("danach-42-bash");
 }
