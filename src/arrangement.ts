@@ -128,15 +128,10 @@ export function splitGroup(
 export function closeTab(arrangement: Arrangement, tabId: string): Arrangement {
   const group = groupOfTab(arrangement, tabId);
   if (!arrangement.root || !group) return arrangement;
-  const index = group.tabs.findIndex((tab) => tab.id === tabId);
-  const tabs = group.tabs.filter((tab) => tab.id !== tabId);
-  // Bleibt kein Tab übrig, räumt `tidy` die Gruppe ab.
-  const successor = tabs[index] ?? tabs.at(-1);
-  const activeTab = group.activeTab === tabId && successor ? successor.id : group.activeTab;
-  const root = tidy(
-    replaceGroup(arrangement.root, group.id, () => ({ ...group, tabs, activeTab })),
-  );
-  if (tabs.length > 0 || arrangement.focusedGroup !== group.id) return { ...arrangement, root };
+  const root = tidy(replaceGroup(arrangement.root, group.id, () => withoutTab(group, tabId)));
+  if (group.tabs.length > 1 || arrangement.focusedGroup !== group.id) {
+    return { ...arrangement, root };
+  }
 
   // Die fokussierte Gruppe ist verschwunden: Der Fokus geht an die Gruppe
   // davor, sonst an die danach.
@@ -144,6 +139,70 @@ export function closeTab(arrangement: Arrangement, tabId: string): Arrangement {
   const position = before.indexOf(group);
   const heir = before[position - 1] ?? before[position + 1];
   return { ...arrangement, root, focusedGroup: heir?.id ?? null };
+}
+
+/** Wohin ein Tab verschoben wird. */
+export type TabTarget =
+  | {
+      /** In die Tab-Leiste dieser Gruppe. */
+      groupId: string;
+      /** Lücke der Tab-Leiste, wie sie vor dem Verschieben aussieht: 0 vor dem ersten Tab, die Anzahl der Tabs nach dem letzten. */
+      index: number;
+    }
+  | {
+      /** An den Rand dieser Gruppe; dort entsteht eine neue Gruppe. */
+      groupId: string;
+      side: Side;
+    };
+
+/**
+ * Verschiebt den Tab an das Ziel. Dort wird er sichtbar, und seine neue Gruppe
+ * erhält den Fokus. In der alten Gruppe rückt ein Nachbar nach wie beim
+ * Schließen; verliert sie ihren letzten Tab, verschwindet sie. An einem Rand
+ * übernimmt die neue Gruppe die Hälfte des Platzes der Zielgruppe.
+ */
+export function moveTab(arrangement: Arrangement, tabId: string, target: TabTarget): Arrangement {
+  const source = groupOfTab(arrangement, tabId);
+  const destination = groupsOf(arrangement).find((group) => group.id === target.groupId);
+  if (!arrangement.root || !source || !destination) return arrangement;
+  const sourceIndex = source.tabs.findIndex((tab) => tab.id === tabId);
+  const tab = source.tabs[sourceIndex];
+  const without = replaceGroup(arrangement.root, source.id, (group) => withoutTab(group, tabId));
+
+  if ("side" in target) {
+    // Der einzige Tab einer Gruppe hätte neben sich nur eine leere Gruppe.
+    if (source === destination && source.tabs.length === 1) return arrangement;
+    const { nextId } = arrangement;
+    const added: Group = { kind: "group", id: `g${nextId}`, tabs: [tab], activeTab: tab.id };
+    const addedFirst = target.side === "left" || target.side === "up";
+    const root = replaceGroup(without, destination.id, (group) => ({
+      kind: "split",
+      id: `s${nextId + 1}`,
+      axis: target.side === "left" || target.side === "right" ? "row" : "column",
+      children: addedFirst ? [added, group] : [group, added],
+      sizes: [0.5, 0.5],
+    }));
+    return { ...arrangement, root: tidy(root), focusedGroup: added.id, nextId: nextId + 2 };
+  }
+
+  // Fehlt der Tab links von der Lücke, liegt sie eine Stelle weiter vorn.
+  const shift = source === destination && sourceIndex < target.index ? 1 : 0;
+  const root = replaceGroup(without, destination.id, (group) => {
+    const tabs = [...group.tabs];
+    tabs.splice(target.index - shift, 0, tab);
+    return { ...group, tabs, activeTab: tab.id };
+  });
+  return { ...arrangement, root: tidy(root), focusedGroup: destination.id };
+}
+
+/** Die Gruppe ohne den Tab. War er sichtbar, rückt sein rechter Nachbar nach, sonst der linke. */
+function withoutTab(group: Group, tabId: string): Group {
+  const index = group.tabs.findIndex((tab) => tab.id === tabId);
+  const tabs = group.tabs.filter((tab) => tab.id !== tabId);
+  // Bleibt kein Tab übrig, räumt `tidy` die Gruppe ab.
+  const successor = tabs[index] ?? tabs.at(-1);
+  const activeTab = group.activeTab === tabId && successor ? successor.id : group.activeTab;
+  return { ...group, tabs, activeTab };
 }
 
 /**
