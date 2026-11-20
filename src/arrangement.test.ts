@@ -13,6 +13,7 @@ import {
   moveTab,
   assignShell,
   openTab,
+  openTabIn,
   renameTab,
   splitGroup,
   tabsOf,
@@ -451,6 +452,28 @@ test("ein Agent bleibt beim Verschieben in eine andere Gruppe ein Agent", () => 
   const moved = moveTab(split, left.tabs[0].id, { groupId: right.id, index: 0 });
 
   expect(groupsOf(moved)[0].tabs[0]).toMatchObject({ id: left.tabs[0].id, agent: true });
+});
+
+test("„Terminal hier öffnen“ legt in der fokussierten Gruppe einen Tab mit eigenem Startordner an", () => {
+  const before = splitGroup(single, groupsOf(single)[0].id, "right");
+  const focused = groupsOf(before)[1];
+
+  const arrangement = openTabIn(before, "C:\\Projekt\\src");
+
+  const [untouched, group] = groupsOf(arrangement);
+  expect(untouched).toEqual(groupsOf(before)[0]);
+  expect(group.tabs).toHaveLength(2);
+  expect(group.tabs[0]).toEqual(focused.tabs[0]);
+  expect(group.tabs[1]).toEqual({ id: group.activeTab, cwd: "C:\\Projekt\\src" });
+  expect(arrangement.focusedGroup).toBe(group.id);
+});
+
+test("„Agent hier starten“ öffnet den Tab als Agent, auch als ersten Tab überhaupt", () => {
+  const arrangement = openTabIn(emptyArrangement, "C:\\Projekt\\docs", true);
+
+  expect(tabsOf(arrangement)).toEqual([
+    { id: groupsOf(arrangement)[0].activeTab, agent: true, cwd: "C:\\Projekt\\docs" },
+  ]);
 });
 
 test("ein neues Terminal merkt sich die gewählte Shell", () => {

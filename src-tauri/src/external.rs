@@ -62,12 +62,24 @@ pub fn open_file(path: &Path) -> io::Result<()> {
         return Err(io::Error::new(io::ErrorKind::NotFound, "file not found"));
     }
     if runs_when_opened(path) {
-        Command::new("explorer.exe")
-            .raw_arg(format!("/select,\"{}\"", path.display()))
-            .spawn()?;
-        return Ok(());
+        return reveal(path);
     }
     shell_open(path.as_os_str())
+}
+
+/// Öffnet den Windows-Explorer im Ordner der Datei oder des Ordners und
+/// markiert den Eintrag dort.
+pub fn reveal(path: &Path) -> io::Result<()> {
+    if path.symlink_metadata().is_err() {
+        return Err(io::Error::new(io::ErrorKind::NotFound, "entry not found"));
+    }
+    let path = std::path::absolute(path)?;
+    // Der Explorer versteht nur genau diese Schreibweise; Anführungszeichen
+    // können in Windows-Pfaden nicht vorkommen.
+    Command::new("explorer.exe")
+        .raw_arg(format!("/select,\"{}\"", path.display()))
+        .spawn()?;
+    Ok(())
 }
 
 /// Übergibt das Ziel an Windows, als wäre es im Explorer doppelt geklickt worden.

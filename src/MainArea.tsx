@@ -10,6 +10,7 @@ import {
 import {
   activateTab,
   focusGroup,
+  keepTab,
   moveDivider,
   openTab,
   renameTab,
@@ -17,12 +18,15 @@ import {
   type Arrangement,
   type Group,
   type Split,
+  type Tab,
   type TreeNode,
 } from "./arrangement";
 import { AgentDot } from "./AgentStatusViews";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { useT } from "./i18n/i18n";
+import type { OpenFiles } from "./openFiles";
 import type { RunningTerminals } from "./runningTerminals";
+import { ContentTabBody, ContentTabFace, type ContentTab } from "./tabViews";
 import type { Shell } from "./settingsStore";
 import { shellLabel, tabLabel } from "./tabLabel";
 import { TerminalView } from "./TerminalView";
@@ -34,6 +38,8 @@ const MIN_GROUP_SIZE = 80;
 interface MainAreaProps {
   arrangement: Arrangement;
   terminals: RunningTerminals;
+  /** Die offenen Dateien der Dateiansichten. */
+  files: OpenFiles;
   /** Der Ordner des Projekts; darin starten die Terminals. */
   cwd: string;
   /** Die Shells, die sich für ein neues Terminal wählen lassen. */
@@ -89,6 +95,10 @@ function Icon({ name }: { name: keyof typeof icons }) {
       {icons[name]}
     </svg>
   );
+}
+
+function hasContent(tab: Tab | undefined): tab is ContentTab {
+  return tab?.content !== undefined;
 }
 
 /** Der Hauptbereich: die Gruppen der Aufteilung mit ihren Tabs und Trennlinien. */
@@ -237,10 +247,11 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
       { label: t("group.splitDown"), onSelect: splitDown },
     ];
     if (tabId) {
-      items.push(
-        { label: t("tab.rename"), onSelect: () => setRenaming(tabId) },
-        { label: t("tab.close"), onSelect: () => onCloseTab(tabId) },
-      );
+      // Einen eigenen Namen tragen nur Terminals.
+      if (!hasContent(group.tabs.find((tab) => tab.id === tabId))) {
+        items.push({ label: t("tab.rename"), onSelect: () => setRenaming(tabId) });
+      }
+      items.push({ label: t("tab.close"), onSelect: () => onCloseTab(tabId) });
     }
     onOpenMenu({ x: event.clientX, y: event.clientY, items });
   }
@@ -297,10 +308,16 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
                 // Mittelklick schließt wie in VS Code.
                 if (event.button === 1) onCloseTab(tab.id);
               }}
-              onDoubleClick={() => setRenaming(tab.id)}
+              onDoubleClick={() => {
+                // Ein Doppelklick behält einen Vorschau-Tab wie in VS Code.
+                if (hasContent(tab)) update((current) => keepTab(current, tab.id));
+                else setRenaming(tab.id);
+              }}
               onContextMenu={(event) => openMenu(event, tab.id)}
             >
-              {tab.agent ? (
+              {hasContent(tab) ? (
+                <ContentTabFace tab={tab} files={shared.files} />
+              ) : tab.agent ? (
                 <AgentDot
                   statuses={shared.terminals.statuses}
                   tabId={tab.id}
@@ -313,7 +330,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
               ) : (
                 <span className="tab-icon">›_</span>
               )}
-              {tab.id === renaming ? (
+              {hasContent(tab) ? null : tab.id === renaming ? (
                 <TabNameInput
                   initial={tabLabel(tab, t)}
                   onDone={(name) => {
@@ -378,16 +395,28 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
           </button>
         </div>
       </div>
-      <TerminalView
-        key={group.activeTab}
-        terminals={shared.terminals}
-        tab={activeTab}
-        cwd={shared.cwd}
-        // Solange ein Tab seinen Namen erhält, gehören die Eingaben dem Eingabefeld.
-        focused={group.id === arrangement.focusedGroup && renaming === null}
-        focusRequest={shared.focusRequest}
-        onContextMenu={openTerminalMenu}
-      />
+      {hasContent(activeTab) ? (
+        <ContentTabBody
+          key={activeTab.id}
+          tab={activeTab}
+          files={shared.files}
+          project={shared.cwd}
+          focused={group.id === arrangement.focusedGroup && renaming === null}
+          focusRequest={shared.focusRequest}
+          onKeep={() => update((current) => keepTab(current, activeTab.id))}
+        />
+      ) : (
+        <TerminalView
+          key={group.activeTab}
+          terminals={shared.terminals}
+          tab={activeTab}
+          cwd={activeTab.cwd ?? shared.cwd}
+          // Solange ein Tab seinen Namen erhält, gehören die Eingaben dem Eingabefeld.
+          focused={group.id === arrangement.focusedGroup && renaming === null}
+          focusRequest={shared.focusRequest}
+          onContextMenu={openTerminalMenu}
+        />
+      )}
     </section>
   );
 }

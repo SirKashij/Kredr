@@ -15,6 +15,34 @@ export interface Tab {
   shell?: Shell;
   /** Gesetzt, wenn in diesem Terminal ein Agent gestartet wurde. */
   agent?: true;
+  /** Der Startordner des Terminals, wenn es nicht im Projektordner startet. */
+  cwd?: string;
+  /** Was der Tab zeigt; fehlt bei einem Terminal. */
+  content?: TabContent;
+  /** Gesetzt bei einem Vorschau-Tab: Die nächste Vorschau seiner Gruppe ersetzt ihn. */
+  preview?: true;
+}
+
+/**
+ * Der Inhalt eines Tabs, der kein Terminal ist. Jede weitere Tab-Art (Diff,
+ * Versionskontrolle, Bild …) ist ein weiterer Fall mit eigenem `kind`.
+ */
+export type TabContent = {
+  /** Eine Dateiansicht. */
+  kind: "file";
+  /** Relativ zum Projektordner und mit `/` getrennt; außerhalb des Projekts der volle Pfad. */
+  path: string;
+};
+
+/** Ob der Tab ein Terminal ist (gewöhnlich oder mit Agent). */
+export function isTerminal(tab: Tab): boolean {
+  return !tab.content;
+}
+
+/** Ob beide dasselbe zeigen; ein Inhalt ist im Hauptbereich nur einmal offen. */
+export function sameContent(a: TabContent, b: TabContent): boolean {
+  // Windows unterscheidet bei Pfaden keine Groß- und Kleinschreibung.
+  return a.kind === b.kind && a.path.toLowerCase() === b.path.toLowerCase();
 }
 
 /** Eine Gruppe: ein Teilstück des Hauptbereichs mit eigener Tab-Leiste. */
@@ -118,6 +146,21 @@ export function openTab(arrangement: Arrangement, agent = false, shell?: Shell):
 }
 
 /**
+ * Öffnet wie `openTab` einen neuen Tab, dessen Terminal aber im Ordner `cwd`
+ * startet („Terminal hier öffnen“, „Agent hier starten“).
+ */
+export function openTabIn(arrangement: Arrangement, cwd: string, agent = false): Arrangement {
+  const opened = openTab(arrangement, agent);
+  const target = focusedGroupOf(opened);
+  if (!opened.root || !target) return opened;
+  const root = replaceGroup(opened.root, target.id, (group) => ({
+    ...group,
+    tabs: group.tabs.map((tab) => (tab.id === group.activeTab ? { ...tab, cwd } : tab)),
+  }));
+  return { ...opened, root };
+}
+
+/**
  * Teilt die Gruppe: rechts von ihr oder unter ihr entsteht eine neue Gruppe
  * mit einem neuen Tab, die die Hälfte ihres Platzes übernimmt und den Fokus erhält.
  */
@@ -173,15 +216,16 @@ export function renameTab(arrangement: Arrangement, tabId: string, name: string)
 }
 
 /**
- * Trägt bei jedem Tab, für den keine Shell gewählt wurde, `shell` ein: die
+ * Trägt bei jedem Terminal, für das keine Shell gewählt wurde, `shell` ein: die
  * Standard-Shell zum Zeitpunkt seines Entstehens. Eine spätere Änderung der
  * Standard-Shell lässt bestehende Terminals damit unberührt.
  */
 export function assignShell(arrangement: Arrangement, shell: Shell): Arrangement {
-  if (!arrangement.root || tabsOf(arrangement).every((tab) => tab.shell)) return arrangement;
+  const settled = (tab: Tab) => tab.shell !== undefined || !isTerminal(tab);
+  if (!arrangement.root || tabsOf(arrangement).every(settled)) return arrangement;
   const assign = (node: TreeNode): TreeNode =>
     node.kind === "group"
-      ? { ...node, tabs: node.tabs.map((tab) => (tab.shell ? tab : { ...tab, shell })) }
+      ? { ...node, tabs: node.tabs.map((tab) => (settled(tab) ? tab : { ...tab, shell })) }
       : { ...node, children: node.children.map(assign) };
   return { ...arrangement, root: assign(arrangement.root) };
 }
@@ -284,6 +328,74 @@ function replaceGroup(
 ): TreeNode {
   if (node.kind === "group") return node.id === id ? change(node) : node;
   return { ...node, children: node.children.map((child) => replaceGroup(child, id, change)) };
+}
+
+/**
+ * Öffnet einen Inhalt (etwa eine Dateiansicht) als Tab der fokussierten
+ * Gruppe, rechts neben ihrem sichtbaren Tab, und zeigt ihn an. Ist der Inhalt
+ * schon irgendwo offen, wird stattdessen jener Tab angezeigt. Mit `preview`
+ * entsteht ein Vorschau-Tab, der den bisherigen Vorschau-Tab der Gruppe
+ * ersetzt; ohne `preview` ist der Tab dauerhaft, auch wenn er zuvor Vorschau war.
+ */
+export function openContent(
+  arrangement: Arrangement,
+  content: TabContent,
+  preview = false,
+): Arrangement {
+  const existing = tabsOf(arrangement).find(
+    (tab) => tab.content && sameContent(tab.content, content),
+  );
+  if (existing) {
+    const shown = activateTab(arrangement, existing.id);
+    return preview ? shown : keepTab(shown, existing.id);
+  }
+
+  const { root, nextId } = arrangement;
+  const added: Tab = preview
+    ? { id: `t${nextId}`, content, preview }
+    : { id: `t${nextId}`, content };
+  if (!root) {
+    const group: Group = {
+      kind: "group",
+      id: `g${nextId + 1}`,
+      tabs: [added],
+      activeTab: added.id,
+    };
+    return { ...arrangement, root: group, focusedGroup: group.id, nextId: nextId + 2 };
+  }
+  const target = focusedGroupOf(arrangement) ?? groupsOf(arrangement)[0];
+  const replaced = preview ? target.tabs.find((tab) => tab.preview) : undefined;
+  if (replaced) {
+    // Der Vorschau-Tab behält Platz und Kennung und zeigt nur etwas anderes.
+    const tabs = target.tabs.map((tab) => (tab === replaced ? { ...tab, content } : tab));
+    return {
+      ...arrangement,
+      root: replaceGroup(root, target.id, (group) => ({ ...group, tabs, activeTab: replaced.id })),
+      focusedGroup: target.id,
+    };
+  }
+  const tabs = [...target.tabs];
+  tabs.splice(tabs.findIndex((tab) => tab.id === target.activeTab) + 1, 0, added);
+  return {
+    ...arrangement,
+    root: replaceGroup(root, target.id, (group) => ({ ...group, tabs, activeTab: added.id })),
+    focusedGroup: target.id,
+    nextId: nextId + 1,
+  };
+}
+
+/** Macht aus einem Vorschau-Tab einen dauerhaften. */
+export function keepTab(arrangement: Arrangement, tabId: string): Arrangement {
+  const group = groupOfTab(arrangement, tabId);
+  if (!arrangement.root || !group?.tabs.some((tab) => tab.id === tabId && tab.preview)) {
+    return arrangement;
+  }
+  const keep = ({ preview: _, ...tab }: Tab): Tab => tab;
+  const tabs = group.tabs.map((tab) => (tab.id === tabId ? keep(tab) : tab));
+  return {
+    ...arrangement,
+    root: replaceGroup(arrangement.root, group.id, () => ({ ...group, tabs })),
+  };
 }
 
 /**
