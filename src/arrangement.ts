@@ -603,3 +603,146 @@ export function activateAdjacentTab(arrangement: Arrangement, offset: 1 | -1): A
 export function focusedGroupOf(arrangement: Arrangement): Group | null {
   return groupsOf(arrangement).find((group) => group.id === arrangement.focusedGroup) ?? null;
 }
+
+/** Die gespeicherte Aufteilung ist nicht lesbar; es gilt die leere. */
+class Unreadable extends Error {}
+
+type Raw = Record<string, unknown>;
+
+function rawObject(value: unknown): Raw {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Unreadable();
+  return value as Raw;
+}
+
+function rawList(value: unknown): unknown[] {
+  if (!Array.isArray(value)) throw new Unreadable();
+  return value;
+}
+
+/** Jede Shell, die ein gespeichertes Terminal haben kann. */
+const knownShells: Record<Shell, true> = { powershell: true, gitBash: true };
+
+/**
+ * Der gespeicherte Inhalt eines Tabs, oder `null`, wenn er sich nicht
+ * wiederherstellen lässt: eine unbekannte Tab-Art oder eine Datei, die es
+ * nicht mehr gibt. Jede weitere Tab-Art, die das Schließen des Fensters
+ * überdauern soll, ist hier ein weiterer Fall.
+ */
+function restoreContent(value: unknown, exists: (path: string) => boolean): TabContent | null {
+  const raw = rawObject(value);
+  switch (raw.kind) {
+    case "file":
+    // Markdown-Vorschau und Bild zeigen wie die Dateiansicht eine Datei.
+    case "markdown":
+    case "image":
+      return typeof raw.path === "string" && exists(raw.path)
+        ? { kind: raw.kind, path: raw.path }
+        : null;
+    default:
+      return null;
+  }
+}
+
+/** Der gespeicherte Tab ohne alles, was zu einem laufenden Prozess gehört; `null`, wenn er entfällt. */
+function restoreTab(raw: Raw, exists: (path: string) => boolean): Tab | null {
+  const tab: Tab = { id: raw.id as string };
+  if (typeof raw.name === "string" && raw.name) tab.name = raw.name;
+  if (raw.content !== undefined) {
+    const content = restoreContent(raw.content, exists);
+    if (!content) return null;
+    tab.content = content;
+    if (raw.preview === true) tab.preview = true;
+    return tab;
+  }
+  // `agent` bleibt weg: Ein wiederhergestelltes Terminal startet als frische
+  // Shell, kein Agent läuft von selbst an.
+  if (typeof raw.shell === "string" && raw.shell in knownShells) tab.shell = raw.shell as Shell;
+  // Ohne seinen Startordner startet das Terminal im Projektordner.
+  if (typeof raw.cwd === "string" && exists(raw.cwd)) tab.cwd = raw.cwd;
+  return tab;
+}
+
+/**
+ * Stellt eine gespeicherte Aufteilung wieder her. `stored` ist, was der
+ * Aufteilungsspeicher geladen hat, und kann alles sein: Ist es nicht lesbar
+ * oder von einer anderen Version, ergibt sich die leere Aufteilung. Terminals
+ * kommen als gewöhnliche Terminals mit Namen, Shell und Startordner zurück.
+ * Tabs unbekannter Art und Dateiansichten, deren Datei es laut `exists` nicht
+ * mehr gibt, fehlen still; ihre Nachbarn rücken nach wie beim Schließen.
+ * `exists` erhält die Pfade so, wie sie gespeichert sind (Dateien, Startordner).
+ */
+export function restoreArrangement(
+  stored: unknown,
+  exists: (path: string) => boolean = () => true,
+): Arrangement {
+  try {
+    const raw = rawObject(stored);
+    if (raw.version !== emptyArrangement.version) return emptyArrangement;
+    if (raw.root === null) return emptyArrangement;
+
+    const ids = new Set<string>();
+    /** Ob etwas entfallen ist und der Baum aufgeräumt werden muss. */
+    let dropped = false;
+    const claimId = (value: unknown): string => {
+      if (typeof value !== "string" || value === "" || ids.has(value)) throw new Unreadable();
+      ids.add(value);
+      return value;
+    };
+
+    const restoreNode = (value: unknown): TreeNode => {
+      const node = rawObject(value);
+      const id = claimId(node.id);
+      if (node.kind === "group") {
+        const all = rawList(node.tabs).map(rawObject);
+        all.forEach((tab) => claimId(tab.id));
+        if (all.length === 0) throw new Unreadable();
+        const restored = all.map((tab) => restoreTab(tab, exists));
+        const tabs = restored.filter((tab) => tab !== null);
+        if (tabs.length < all.length) dropped = true;
+        // Fehlt der sichtbare Tab, rückt sein rechter Nachbar nach, sonst der linke.
+        const visible = Math.max(
+          all.findIndex((tab) => tab.id === node.activeTab),
+          0,
+        );
+        const successor = restored.slice(visible).find((tab) => tab !== null) ?? tabs.at(-1);
+        return { kind: "group", id, tabs, activeTab: successor?.id ?? "" };
+      }
+      if (node.kind === "split" && (node.axis === "row" || node.axis === "column")) {
+        const children = rawList(node.children).map(restoreNode);
+        if (children.length < 2) throw new Unreadable();
+        return {
+          kind: "split",
+          id,
+          axis: node.axis,
+          children,
+          sizes: restoreSizes(node.sizes, children.length),
+        };
+      }
+      throw new Unreadable();
+    };
+
+    const whole = restoreNode(raw.root);
+    const root = dropped ? tidy(whole) : whole;
+    const restored: Arrangement = { ...emptyArrangement, root };
+    const groups = groupsOf(restored);
+    const focused = groups.find((group) => group.id === raw.focusedGroup) ?? groups[0];
+    // Auch entfallene Tabs zählen: Ihre Kennungen werden nicht neu vergeben.
+    const used = Math.max(0, ...[...ids].map((id) => Number(id.slice(1)) || 0));
+    const nextId = Number.isSafeInteger(raw.nextId) ? (raw.nextId as number) : 0;
+    return { ...restored, focusedGroup: focused?.id ?? null, nextId: Math.max(nextId, used + 1) };
+  } catch (error) {
+    if (error instanceof Unreadable) return emptyArrangement;
+    throw error;
+  }
+}
+
+/** Die Anteile einer Teilung; sind sie unbrauchbar, erhält jedes Teilstück gleich viel. */
+function restoreSizes(value: unknown, count: number): number[] {
+  const sizes = Array.isArray(value) ? value : [];
+  const usable =
+    sizes.length === count &&
+    sizes.every((size) => typeof size === "number" && Number.isFinite(size) && size > 0);
+  if (!usable) return Array.from({ length: count }, () => 1 / count);
+  const total = sizes.reduce((sum: number, size: number) => sum + size, 0);
+  return Math.abs(total - 1) < 1e-6 ? sizes : sizes.map((size: number) => size / total);
+}

@@ -41,6 +41,9 @@ pub struct Settings {
     pub default_shell: Shell,
     /// Der Befehl, mit dem „Neuer Agent“ Claude Code startet.
     pub agent_command: String,
+    /// Ob Kredr sich meldet, wenn ein Agent auf Eingabe wartet und sein
+    /// Fenster nicht im Vordergrund ist.
+    pub notifications: bool,
 }
 
 impl Default for Settings {
@@ -51,6 +54,7 @@ impl Default for Settings {
             font_size: 13,
             default_shell: Shell::default(),
             agent_command: crate::agent::DEFAULT_START_COMMAND.into(),
+            notifications: true,
         }
     }
 }
@@ -72,6 +76,7 @@ impl Settings {
             font_size: field(&file, "fontSize").unwrap_or(defaults.font_size),
             default_shell: field(&file, "defaultShell").unwrap_or(defaults.default_shell),
             agent_command: field(&file, "agentCommand").unwrap_or(defaults.agent_command),
+            notifications: field(&file, "notifications").unwrap_or(defaults.notifications),
         }
         .corrected()
     }

@@ -8,6 +8,7 @@ import {
   openContentBeside,
   openTab,
   emptyArrangement,
+  restoreArrangement,
   showInTab,
   tabsOf,
   type Arrangement,
@@ -116,4 +117,28 @@ test("ein Bild schließt ohne Rückfrage, auch neben seinem Quelltext", () => {
 
   expect(closesFileText(both, pictureTab.id)).toBe(false);
   expect(closesFileText(both, sourceTab.id)).toBe(true);
+});
+
+test("Markdown-Vorschau und Bild überdauern das Speichern und Laden der Aufteilung", () => {
+  const picture: TabContent = { kind: "image", path: "docs/logo.png" };
+  const arrangement = openContent(openContentBeside(withSource, rendered), picture);
+
+  const restored = restoreArrangement(JSON.parse(JSON.stringify(arrangement)));
+
+  expect(restored).toEqual(arrangement);
+});
+
+test("Vorschau und Bild einer nicht mehr vorhandenen Datei fehlen nach dem Laden", () => {
+  const picture: TabContent = { kind: "image", path: "docs/logo.png" };
+  const arrangement = openContent(openContent(withSource, rendered), picture);
+
+  const restored = restoreArrangement(JSON.parse(JSON.stringify(arrangement)), () => false);
+
+  expect(tabsOf(restored).map((tab) => tab.content)).toEqual([undefined]);
+});
+
+test("eine gespeicherte Tab-Art, die es nicht gibt, fällt beim Laden weg", () => {
+  const stored = JSON.parse(JSON.stringify(withSource).replace('"file"', '"hologramm"'));
+
+  expect(tabsOf(restoreArrangement(stored)).map((tab) => tab.content)).toEqual([undefined]);
 });

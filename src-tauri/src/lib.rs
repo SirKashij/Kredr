@@ -2,11 +2,15 @@ pub mod agent;
 pub mod agent_status;
 pub mod arrangement_store;
 pub mod external;
+pub mod file_list;
+pub mod notifications;
 pub mod project_files;
 pub mod project_windows;
 mod projects;
 pub mod settings;
 pub mod terminal;
+mod waiting_alerts;
+pub mod window_geometry;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -268,6 +272,13 @@ fn project_files_list(project: PathBuf, folder: String) -> Result<Vec<Entry>, St
     project_files::list_folder(&project.join(folder)).map_err(|e| e.to_string())
 }
 
+/// Die Dateiliste des Projekts für „Datei per Namen öffnen“: alle nicht
+/// ignorierten Dateien, relativ zum Projektordner.
+#[tauri::command(async)]
+fn project_file_list(project: PathBuf) -> Vec<String> {
+    file_list::list_files(&project)
+}
+
 /// Liest eine Datei für die Dateiansicht. `path` ist relativ zum
 /// Projektordner; ein voller Pfad (Datei außerhalb des Projekts) gilt unverändert.
 #[tauri::command(async)]
@@ -301,6 +312,17 @@ fn project_files_read_image(
             details: e.to_string(),
         }),
     }
+}
+
+/// Welche der Dateien und Ordner es gibt, in der Reihenfolge von `paths`;
+/// jeder Pfad wie bei `project_files_read`. Danach richtet sich, was von
+/// einer gespeicherten Aufteilung wiederhergestellt wird.
+#[tauri::command(async)]
+fn project_files_exist(project: PathBuf, paths: Vec<String>) -> Vec<bool> {
+    paths
+        .iter()
+        .map(|path| project.join(path).exists())
+        .collect()
 }
 
 /// Schreibt den Inhalt einer Datei; `path` wie bei `project_files_read`.
@@ -459,11 +481,13 @@ pub fn run() {
             });
             app.manage(settings);
             projects::start(app.handle())?;
+            waiting_alerts::start(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
                 projects::window_closed(window);
+                waiting_alerts::window_closed(window);
                 window.state::<Terminals>().close_all_of(window.label());
                 window
                     .state::<ProjectWatchers>()
@@ -483,6 +507,7 @@ pub fn run() {
             settings_set,
             available_shells,
             project_files_list,
+            project_file_list,
             project_files_read,
             project_files_read_image,
             project_files_write,
@@ -497,6 +522,11 @@ pub fn run() {
             projects::recent_projects,
             projects::forget_project,
             projects::open_project,
+            waiting_alerts::waiting_alert,
+            waiting_alerts::waiting_alert_clear,
+            project_files_exist,
+            projects::arrangement_load,
+            projects::arrangement_save,
         ])
         .run(tauri::generate_context!())
         .expect("Kredr konnte nicht gestartet werden");
