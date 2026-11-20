@@ -165,10 +165,37 @@ fn terminal_close(terminals: State<'_, Terminals>, id: u32) -> Result<(), String
 struct ProjectWatchers {
     next_id: AtomicU32,
     watchers: Mutex<HashMap<PathBuf, Arc<ProjectWatcher>>>,
-    subscriptions: Mutex<HashMap<u32, Subscription>>,
+    subscriptions: Mutex<HashMap<u32, WindowSubscription>>,
+}
+
+/// Das Abonnement eines Fensters am Ereignisstrom seines Projekts.
+struct WindowSubscription {
+    window: String,
+    project: PathBuf,
+    _subscription: Subscription,
 }
 
 impl ProjectWatchers {
+    /// Beendet die Abonnements eines geschlossenen Fensters und die
+    /// Beobachter, an denen danach niemand mehr hängt; sonst bliebe der
+    /// Projektordner bis zum Ende des Prozesses beobachtet.
+    fn close_all_of(&self, window: &str) {
+        let Ok(mut subscriptions) = self.subscriptions.lock() else {
+            return;
+        };
+        subscriptions.retain(|_, subscription| subscription.window != window);
+        let Ok(mut watchers) = self.watchers.lock() else {
+            return;
+        };
+        watchers.retain(|project, watcher| {
+            // Wer den Beobachter außerhalb dieser Liste hält, hört noch zu.
+            Arc::strong_count(watcher) > 1
+                || subscriptions
+                    .values()
+                    .any(|subscription| &subscription.project == project)
+        });
+    }
+
     /// Liefert den Beobachter des Projekts und startet ihn beim ersten Mal.
     fn for_project(&self, project: &Path) -> Result<Arc<ProjectWatcher>, String> {
         let mut watchers = self.watchers.lock().map_err(|e| e.to_string())?;
@@ -192,11 +219,15 @@ fn project_files_list(project: PathBuf, folder: String) -> Result<Vec<Entry>, St
 /// Abonniert den Ereignisstrom des Projekts und liefert die Kennung des Abonnements.
 #[tauri::command]
 fn project_files_watch(
+    window: tauri::Window,
     watchers: State<'_, ProjectWatchers>,
     project: PathBuf,
     on_change: Channel<ProjectChanges>,
 ) -> Result<u32, String> {
-    let subscription = watchers.for_project(&project)?.subscribe(move |changes| {
+    // Der Beobachter bleibt gehalten, bis das Abonnement eingetragen ist;
+    // so räumt ihn ein gleichzeitig schließendes Fenster nicht weg.
+    let watcher = watchers.for_project(&project)?;
+    let subscription = watcher.subscribe(move |changes| {
         // Scheitert das Senden, ist das Fenster bereits geschlossen.
         let _ = on_change.send(changes.clone());
     });
@@ -205,7 +236,14 @@ fn project_files_watch(
         .subscriptions
         .lock()
         .map_err(|e| e.to_string())?
-        .insert(id, subscription);
+        .insert(
+            id,
+            WindowSubscription {
+                window: window.label().to_string(),
+                project,
+                _subscription: subscription,
+            },
+        );
     Ok(id)
 }
 
@@ -265,6 +303,9 @@ pub fn run() {
             if let tauri::WindowEvent::Destroyed = event {
                 projects::window_closed(window);
                 window.state::<Terminals>().close_all_of(window.label());
+                window
+                    .state::<ProjectWatchers>()
+                    .close_all_of(window.label());
             }
         })
         .invoke_handler(tauri::generate_handler![
