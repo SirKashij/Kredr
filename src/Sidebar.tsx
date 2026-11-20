@@ -1,9 +1,13 @@
 import { views, type View } from "./ActivityBar";
+import { useAgentStatuses, type AgentStatuses } from "./agentStatus";
+import { AgentCardStatus, AgentCardTop } from "./AgentStatusViews";
 import { focusedGroupOf, tabsOf, type Arrangement, type Tab } from "./arrangement";
 import { useT } from "./i18n/i18n";
 
 interface AgentsViewProps {
   arrangement: Arrangement;
+  /** Der Agentenstatus der Terminals des Fensters. */
+  statuses: AgentStatuses;
   /** Zeigt den Tab im Hauptbereich an und gibt ihm den Fokus. */
   onSelectTab: (tabId: string) => void;
   /** Öffnet ein Terminal und startet darin einen Agenten; fehlt ohne Projekt. */
@@ -30,25 +34,37 @@ export function Sidebar({ view, ...agents }: { view: View } & AgentsViewProps) {
 }
 
 /**
- * Die Agenten-Ansicht: oben die Agenten des Fensters als Karten, darunter die
- * gewöhnlichen Terminals. Der Agentenstatus folgt in einem eigenen Schritt.
+ * Die Agenten-Ansicht: oben die Agenten des Fensters als Karten mit
+ * Agentenstatus, Laufzeit und letzter Aktion, darunter die gewöhnlichen
+ * Terminals. Ein wartender Agent ist hervorgehoben.
  */
-function AgentsView({ arrangement, onSelectTab, onNewAgent, onNewTerminal }: AgentsViewProps) {
+function AgentsView({
+  arrangement,
+  statuses,
+  onSelectTab,
+  onNewAgent,
+  onNewTerminal,
+}: AgentsViewProps) {
   const t = useT();
+  const known = useAgentStatuses(statuses);
   const tabs = tabsOf(arrangement);
   const agents = tabs.filter((tab) => tab.agent);
   const terminals = tabs.filter((tab) => !tab.agent);
   const selected = focusedGroupOf(arrangement)?.activeTab;
-  const card = (tab: Tab) => (
-    <button
-      key={tab.id}
-      className={tab.id === selected ? "card sel" : "card"}
-      onClick={() => onSelectTab(tab.id)}
-    >
-      <span className="dot" />
-      <span>{t(tab.agent ? "agent.name" : "terminal.powershell")}</span>
-    </button>
-  );
+  const card = (tab: Tab) => {
+    const status = known.get(tab.id);
+    const classes = ["card", status?.state === "waiting" && "wait", tab.id === selected && "sel"];
+    return (
+      <button
+        key={tab.id}
+        className={classes.filter(Boolean).join(" ")}
+        onClick={() => onSelectTab(tab.id)}
+      >
+        <AgentCardTop status={status} name={t(tab.agent ? "agent.name" : "terminal.powershell")} />
+        {status && <AgentCardStatus status={status} />}
+      </button>
+    );
+  };
   return (
     <div className="cards">
       <div className="side-actions">

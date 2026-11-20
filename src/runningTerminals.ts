@@ -3,6 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
+import type { AgentStatuses, StatusUpdate } from "./agentStatus";
 import type { Translate } from "./i18n/i18n";
 
 /** Terminalfarben des dunklen VS-Code-Standardthemas. */
@@ -71,11 +72,13 @@ export class RunningTerminal {
    * @param agent Ob in der Shell sofort ein Agent startet.
    * @param translate Liefert die Übersetzungsfunktion der aktuellen Sprache;
    *   ein Sprachwechsel soll die laufende Shell nicht neu starten.
+   * @param onAgentStatus Erhält jede Änderung des Agentenstatus dieses Terminals.
    */
   constructor(
     private readonly cwd: string,
     private readonly agent: boolean,
     private readonly translate: () => Translate,
+    private readonly onAgentStatus: (update: StatusUpdate) => void,
   ) {
     this.screen.className = "terminal-screen";
     this.element.append(this.screen);
@@ -147,9 +150,13 @@ export class RunningTerminal {
       if (this.closed) return;
       this.xterm.write(`\r\n\x1b[90m${this.translate()("terminal.exited")}\x1b[0m\r\n`);
     });
+    const onAgentStatus = new Channel<StatusUpdate>((update) => {
+      if (!this.closed) this.onAgentStatus(update);
+    });
     const { cols, rows } = this.xterm;
     const { cwd, agent } = this;
-    invoke<OpenedTerminal>("terminal_open", { cwd, cols, rows, agent, onOutput, onExit })
+    const channels = { onOutput, onExit, onAgentStatus };
+    invoke<OpenedTerminal>("terminal_open", { cwd, cols, rows, agent, ...channels })
       .then(({ id, missingAgentProgram }) => {
         if (this.closed) {
           invoke("terminal_close", { id });
@@ -202,7 +209,14 @@ export class RunningTerminal {
 export class RunningTerminals {
   private readonly terminals = new Map<string, RunningTerminal>();
 
-  constructor(private readonly translate: () => Translate) {}
+  /**
+   * @param statuses Nimmt den Agentenstatus der Terminals auf, nach der
+   *   Kennung ihres Tabs.
+   */
+  constructor(
+    private readonly translate: () => Translate,
+    readonly statuses: AgentStatuses,
+  ) {}
 
   /**
    * Das Terminal des Tabs; gibt es noch keines, entsteht es mit Startordner
@@ -211,7 +225,9 @@ export class RunningTerminals {
   get(tabId: string, cwd: string, agent: boolean): RunningTerminal {
     let terminal = this.terminals.get(tabId);
     if (!terminal) {
-      terminal = new RunningTerminal(cwd, agent, this.translate);
+      terminal = new RunningTerminal(cwd, agent, this.translate, (update) =>
+        this.statuses.report(tabId, update),
+      );
       this.terminals.set(tabId, terminal);
     }
     return terminal;
@@ -228,5 +244,6 @@ export class RunningTerminals {
       terminal.dispose();
       this.terminals.delete(tabId);
     }
+    this.statuses.retain(tabIds);
   }
 }

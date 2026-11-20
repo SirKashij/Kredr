@@ -30,5 +30,20 @@
   "agent.new": "Neuer Agent",
   "agent.newTooltip": "Neuer Agent (Strg+Umschalt+A)",
   "agent.name": "Agent",
-  "agent.missing": "Der Agent konnte nicht starten: Das Programm „{program}“ wurde nicht gefunden. Installiere Claude Code oder ändere den Agent-Startbefehl in den Einstellungen und wähle dann erneut „Neuer Agent“."
+  "agent.missing": "Der Agent konnte nicht starten: Das Programm „{program}“ wurde nicht gefunden. Installiere Claude Code oder ändere den Agent-Startbefehl in den Einstellungen und wähle dann erneut „Neuer Agent“.",
+  "agentStatus.working": "arbeitet",
+  "agentStatus.waiting": "wartet auf Eingabe",
+  "agentStatus.done": "fertig",
+  "agentStatus.workingTooltip": "Der Agent arbeitet.",
+  "agentStatus.waitingTooltip": "Der Agent wartet auf deine Eingabe.",
+  "agentStatus.doneTooltip": "Der Agent ist fertig.",
+  "agentStatus.count.working.one": "{count} arbeitet",
+  "agentStatus.count.working.other": "{count} arbeiten",
+  "agentStatus.count.waiting.one": "{count} wartet",
+  "agentStatus.count.waiting.other": "{count} warten",
+  "agentStatus.count.done.one": "{count} fertig",
+  "agentStatus.count.done.other": "{count} fertig",
+  "duration.seconds": "{count} s",
+  "duration.minutes": "{count} min",
+  "duration.hours": "{hours} h {minutes} min"
 }

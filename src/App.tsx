@@ -3,6 +3,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { ActivityBar, type View } from "./ActivityBar";
+import { AgentStatuses } from "./agentStatus";
+import { AgentCounters } from "./AgentStatusViews";
 import {
   activateAdjacentTab,
   activateTab,
@@ -35,7 +37,8 @@ export function App() {
   // Ein Sprachwechsel soll laufende Terminals nicht neu starten.
   const translate = useRef(t);
   translate.current = t;
-  const [terminals] = useState(() => new RunningTerminals(() => translate.current));
+  const [statuses] = useState(() => new AgentStatuses());
+  const [terminals] = useState(() => new RunningTerminals(() => translate.current, statuses));
 
   useEffect(() => {
     invoke<string | null>("initial_project").then((folder) => {
@@ -147,10 +150,11 @@ export function App() {
   return (
     <>
       <div className="workbench">
-        <ActivityBar view={view} onSelect={setView} />
+        <ActivityBar view={view} onSelect={setView} statuses={statuses} />
         <Sidebar
           view={view}
           arrangement={arrangement}
+          statuses={statuses}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
           onNewAgent={project ? () => update(newAgent) : undefined}
           onNewTerminal={project ? () => update(openTab) : undefined}
@@ -188,6 +192,7 @@ export function App() {
       </div>
       <footer className="status">
         <span>{project ? projectName(project) : t("status.noProject")}</span>
+        <AgentCounters statuses={statuses} />
         {arrangement.root && <span className="right">{t("terminal.powershell")}</span>}
       </footer>
     </>

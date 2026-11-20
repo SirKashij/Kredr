@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import type { AgentStatuses } from "./agentStatus";
+import { WaitingBadge } from "./AgentStatusViews";
 import { useT, type MessageKey } from "./i18n/i18n";
 
 export type View = "agents" | "explorer" | "search" | "versionControl";
@@ -47,7 +49,16 @@ export const views: { id: View; label: MessageKey }[] = [
   { id: "versionControl", label: "activity.versionControl" },
 ];
 
-export function ActivityBar({ view, onSelect }: { view: View; onSelect: (view: View) => void }) {
+export function ActivityBar({
+  view,
+  onSelect,
+  statuses,
+}: {
+  view: View;
+  onSelect: (view: View) => void;
+  /** Am Symbol der Agenten-Ansicht steht die Zahl der wartenden Agenten. */
+  statuses: AgentStatuses;
+}) {
   const t = useT();
   return (
     <nav className="actbar">
@@ -61,6 +72,7 @@ export function ActivityBar({ view, onSelect }: { view: View; onSelect: (view: V
           onClick={() => onSelect(id)}
         >
           <svg viewBox="0 0 24 24">{icons[id]}</svg>
+          {id === "agents" && <WaitingBadge statuses={statuses} />}
         </button>
       ))}
       <div className="spacer" />
