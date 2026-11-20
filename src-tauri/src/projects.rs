@@ -86,7 +86,8 @@ fn open_window(app: &AppHandle, label: &str) -> tauri::Result<()> {
     Ok(())
 }
 
-fn focus(app: &AppHandle, label: &str) {
+/// Holt das Fenster nach vorn, auch aus der Taskleiste.
+pub(crate) fn focus(app: &AppHandle, label: &str) {
     if let Some(window) = app.get_webview_window(label) {
         let _ = window.unminimize();
         let _ = window.show();

@@ -31,7 +31,9 @@ import { RunningTerminals } from "./runningTerminals";
 import { useSettings } from "./settings";
 import { SettingsPage } from "./SettingsPage";
 import { availableShells, type Shell } from "./settingsStore";
-import { shellLabel } from "./tabLabel";
+import { shellLabel, tabLabel } from "./tabLabel";
+import { useWaitingAlerts } from "./useWaitingAlerts";
+import { alertBody } from "./waitingAlerts";
 
 export function App() {
   const t = useT();
@@ -191,6 +193,24 @@ export function App() {
   }
   const runCommand = useRef(run);
   runCommand.current = run;
+
+  useWaitingAlerts({
+    statuses,
+    enabled: settings.notifications,
+    describe: (tabIds) => {
+      const tabs = tabsOf(arrangement);
+      const waiting = tabIds.flatMap((tabId) => tabs.find((tab) => tab.id === tabId) ?? []);
+      return {
+        title: project ? projectName(project) : "",
+        body: alertBody(
+          waiting.map((tab) => tabLabel(tab, t)),
+          t,
+        ),
+      };
+    },
+    // Wie der Klick auf die Karte des Agenten in der Agenten-Ansicht.
+    onSelect: (tabId) => update((current) => activateTab(current, tabId)),
+  });
 
   // Die Kürzel gelten im ganzen Fenster und greifen, bevor das Terminal die Taste sieht.
   useEffect(() => {

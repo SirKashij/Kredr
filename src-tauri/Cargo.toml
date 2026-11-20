@@ -26,6 +26,12 @@ windows-sys = { version = "0.61", features = [
 ] }
 notify = "8"
 tauri-plugin-single-instance = "2"
+# Dieselbe Fassung, die Tauri ohnehin mitbringt.
+windows = { version = "0.62", features = [
+  "Data_Xml_Dom",
+  "Foundation",
+  "UI_Notifications",
+] }
 
 [profile.release]
 codegen-units = 1
