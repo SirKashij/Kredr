@@ -16,13 +16,13 @@ import {
   splitGroup,
   type Arrangement,
   type Group,
-  type Shell,
   type Split,
   type TreeNode,
 } from "./arrangement";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { useT } from "./i18n/i18n";
 import type { RunningTerminals } from "./runningTerminals";
+import type { Shell } from "./settingsStore";
 import { shellLabel, tabLabel } from "./tabLabel";
 import { TerminalView } from "./TerminalView";
 import { useTabDrag, type TabDrag } from "./useTabDrag";
@@ -56,9 +56,17 @@ interface Menu {
   items: MenuItem[];
 }
 
-const icons: Record<"new" | "chooseShell" | "splitRight" | "splitDown" | "close", ReactNode> = {
+type IconName = "new" | "chooseShell" | "agent" | "splitRight" | "splitDown" | "close";
+
+const icons: Record<IconName, ReactNode> = {
   new: <path d="M8 3v10M3 8h10" />,
   chooseShell: <path d="m4.5 6.5 3.5 3.5 3.5-3.5" />,
+  agent: (
+    <>
+      <rect x="3" y="6" width="10" height="7" rx="1.5" />
+      <path d="M8 6V3.5M6.3 9v1.2M9.7 9v1.2" />
+    </>
+  ),
   splitRight: (
     <>
       <rect x="2.5" y="3" width="11" height="10" rx="1" />
@@ -213,7 +221,8 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
   const activeTab = group.tabs.find((tab) => tab.id === group.activeTab)!;
 
   const newTerminal = (shell?: Shell) =>
-    update((current) => openTab(focusGroup(current, group.id), shell));
+    update((current) => openTab(focusGroup(current, group.id), false, shell));
+  const newAgent = () => update((current) => openTab(focusGroup(current, group.id), true));
   const splitRight = () => update((current) => splitGroup(current, group.id, "right"));
   const splitDown = () => update((current) => splitGroup(current, group.id, "down"));
 
@@ -221,6 +230,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
     event.preventDefault();
     event.stopPropagation();
     const items: MenuItem[] = [
+      { label: t("agent.new"), onSelect: newAgent },
       { label: t("terminal.new"), onSelect: () => newTerminal() },
       { label: t("group.splitRight"), onSelect: splitRight },
       { label: t("group.splitDown"), onSelect: splitDown },
@@ -289,7 +299,13 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
               onDoubleClick={() => setRenaming(tab.id)}
               onContextMenu={(event) => openMenu(event, tab.id)}
             >
-              <span className="tab-icon">›_</span>
+              {tab.agent ? (
+                <span className="tab-icon agent">
+                  <Icon name="agent" />
+                </span>
+              ) : (
+                <span className="tab-icon">›_</span>
+              )}
               {tab.id === renaming ? (
                 <TabNameInput
                   initial={tabLabel(tab, t)}
@@ -319,6 +335,9 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
           ))}
         </div>
         <div className="tab-actions">
+          <button title={t("agent.newTooltip")} aria-label={t("agent.new")} onClick={newAgent}>
+            <Icon name="agent" />
+          </button>
           <button
             title={t("terminal.newTooltip")}
             aria-label={t("terminal.new")}

@@ -11,6 +11,7 @@ import {
   groupsOf,
   moveDivider,
   moveTab,
+  assignShell,
   openTab,
   renameTab,
   splitGroup,
@@ -428,13 +429,47 @@ test("ein Tab ohne gültiges Ziel bleibt, wo er ist", () => {
   expect((far.root as Group).tabs.at(-1)).toEqual(b1);
 });
 
+test("ein neuer Agent öffnet sich als Tab, der als Agent erkennbar ist", () => {
+  const arrangement = openTab(single, true);
+
+  const [terminal, agent] = groupsOf(arrangement)[0].tabs;
+  expect(terminal.agent).toBeUndefined();
+  expect(agent.agent).toBe(true);
+  expect(groupsOf(arrangement)[0].activeTab).toBe(agent.id);
+});
+
+test("der erste Tab eines Fensters kann ein Agent sein", () => {
+  const arrangement = openTab(emptyArrangement, true);
+
+  expect(tabsOf(arrangement)).toMatchObject([{ agent: true }]);
+});
+
+test("ein Agent bleibt beim Verschieben in eine andere Gruppe ein Agent", () => {
+  const split = splitGroup(openTab(emptyArrangement, true), groupsOf(single)[0].id, "right");
+  const [left, right] = groupsOf(split);
+
+  const moved = moveTab(split, left.tabs[0].id, { groupId: right.id, index: 0 });
+
+  expect(groupsOf(moved)[0].tabs[0]).toMatchObject({ id: left.tabs[0].id, agent: true });
+});
+
 test("ein neues Terminal merkt sich die gewählte Shell", () => {
-  const arrangement = openTab(openTab(emptyArrangement, "gitBash"));
+  const arrangement = openTab(openTab(emptyArrangement, false, "gitBash"));
 
   const [first, second] = tabsOf(arrangement);
   expect(first.shell).toBe("gitBash");
-  // Ohne Wahl gilt die Standard-Shell; sie wird nicht festgeschrieben.
   expect(second.shell).toBeUndefined();
+});
+
+test("Terminals ohne gewählte Shell erhalten die Standard-Shell", () => {
+  const chosen = openTab(emptyArrangement, false, "gitBash");
+  const split = splitGroup(openTab(chosen), groupsOf(chosen)[0].id, "right");
+
+  const assigned = assignShell(split, "powershell");
+
+  expect(tabsOf(assigned).map((tab) => tab.shell)).toEqual(["gitBash", "powershell", "powershell"]);
+  // Ändert sich später die Standard-Shell, behält jedes Terminal seine Shell.
+  expect(assignShell(assigned, "gitBash")).toBe(assigned);
 });
 
 test("ein Terminal lässt sich umbenennen", () => {

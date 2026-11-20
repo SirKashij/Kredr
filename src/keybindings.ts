@@ -5,13 +5,15 @@ export type Command =
   | {
       kind:
         | "newTerminal"
+        | "newAgent"
         | "splitRight"
         | "splitDown"
         | "focusNextGroup"
         | "focusPreviousGroup"
         | "nextTab"
         | "previousTab"
-        | "closeTab";
+        | "closeTab"
+        | "openSettings";
     }
   | { kind: "focusGroupAt"; index: number }
   | { kind: "focusGroupToward"; side: Side };
@@ -43,8 +45,10 @@ const Key = {
   Digit1: 49,
   Digit5: 53,
   Digit8: 56,
+  A: 65,
   K: 75,
   F4: 115,
+  Comma: 188,
   Oem3: 192,
   Oem5: 220,
 };
@@ -86,6 +90,8 @@ export function resolveKey(key: KeyStroke, chord: boolean): Command | "chord" | 
 
   if (shiftKey) {
     if (keyCode === Key.Oem3) return { kind: "newTerminal" };
+    // VS Code kennt keinen Agenten; dieses Kürzel ist dort unter Windows frei.
+    if (keyCode === Key.A) return { kind: "newAgent" };
     if (keyCode === Key.Digit5) return { kind: "splitRight" };
     return null;
   }
@@ -95,6 +101,7 @@ export function resolveKey(key: KeyStroke, chord: boolean): Command | "chord" | 
   if (keyCode === Key.PageDown) return { kind: "nextTab" };
   if (keyCode === Key.PageUp) return { kind: "previousTab" };
   if (keyCode === Key.F4) return { kind: "closeTab" };
+  if (keyCode === Key.Comma) return { kind: "openSettings" };
   if (keyCode >= Key.Digit1 && keyCode <= Key.Digit8) {
     return { kind: "focusGroupAt", index: keyCode - Key.Digit1 };
   }

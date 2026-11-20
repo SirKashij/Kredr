@@ -4,8 +4,8 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal } from "@xterm/xterm";
-import type { Shell } from "./arrangement";
 import type { Translate } from "./i18n/i18n";
+import type { Shell } from "./settingsStore";
 import { clipboardCommand } from "./terminalClipboard";
 import { linkProvider, type LinkActions } from "./terminalLinkProvider";
 
@@ -22,8 +22,10 @@ export interface TerminalHost extends LinkActions {
 export interface TerminalStart {
   /** Startordner der Shell. */
   cwd: string;
-  /** Ohne Angabe die Standard-Shell. */
+  /** Ohne Angabe die Standard-Shell aus den Einstellungen. */
   shell?: Shell;
+  /** Ob in der Shell sofort ein Agent startet. */
+  agent: boolean;
 }
 
 /** Terminalfarben des dunklen VS-Code-Standardthemas. */
@@ -50,6 +52,13 @@ const theme = {
   brightWhite: "#e5e5e5",
 };
 
+/** Was der Kern nach dem Öffnen eines Terminals meldet. */
+interface OpenedTerminal {
+  id: number;
+  /** Das Programm des Agent-Startbefehls, wenn es nicht installiert ist. */
+  missingAgentProgram: string | null;
+}
+
 /**
  * Ein laufendes Terminal samt Darstellung. Es lebt unabhängig davon, wo es
  * im Hauptbereich gerade angezeigt wird: Sein Element wird beim Umbau der
@@ -57,6 +66,8 @@ const theme = {
  */
 export class RunningTerminal {
   private readonly element = document.createElement("div");
+  /** Darin zeichnet xterm.js; darüber ist Platz für einen Hinweis. */
+  private readonly screen = document.createElement("div");
   private readonly xterm = new Terminal({
     theme,
     fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
@@ -84,6 +95,8 @@ export class RunningTerminal {
     private readonly options: TerminalStart,
     private readonly host: TerminalHost,
   ) {
+    this.screen.className = "terminal-screen";
+    this.element.append(this.screen);
     this.xterm.loadAddon(this.fitAddon);
     this.xterm.registerLinkProvider(linkProvider(this.xterm, options.cwd, host));
     this.xterm.attachCustomKeyEventHandler((event) => {
@@ -117,7 +130,7 @@ export class RunningTerminal {
       return;
     }
     this.started = true;
-    this.xterm.open(this.element);
+    this.xterm.open(this.screen);
     try {
       const webgl = new WebglAddon();
       // Verliert die Grafikkarte den Kontext, zeichnet xterm.js ohne Beschleunigung weiter.
@@ -127,7 +140,7 @@ export class RunningTerminal {
       // Ohne WebGL bleibt die langsamere Standarddarstellung.
     }
     this.fit();
-    this.observer.observe(this.element);
+    this.observer.observe(this.screen);
     this.start();
   }
 
@@ -165,6 +178,13 @@ export class RunningTerminal {
       .catch(() => {});
   }
 
+  /** Stellt Schriftart und Schriftgröße um; Spalten und Zeilen passen sich an. */
+  setFont(fontFamily: string, fontSize: number) {
+    this.xterm.options.fontFamily = fontFamily;
+    this.xterm.options.fontSize = fontSize;
+    if (this.started) this.fit();
+  }
+
   /** Ob in der Shell gerade ein Programm läuft, etwa ein Agent. */
   async hasChildProcess(): Promise<boolean> {
     if (this.id === null) return false;
@@ -190,9 +210,9 @@ export class RunningTerminal {
       this.xterm.write(`\r\n\x1b[90m${this.host.translate()("terminal.exited")}\x1b[0m\r\n`);
     });
     const { cols, rows } = this.xterm;
-    const { cwd, shell } = this.options;
-    invoke<number>("terminal_open", { shell, cwd, cols, rows, onOutput, onExit })
-      .then((id) => {
+    const { cwd, shell, agent } = this.options;
+    invoke<OpenedTerminal>("terminal_open", { shell, cwd, cols, rows, agent, onOutput, onExit })
+      .then(({ id, missingAgentProgram }) => {
         if (this.closed) {
           invoke("terminal_close", { id });
           return;
@@ -201,6 +221,7 @@ export class RunningTerminal {
         // Die Gruppe kann ihre Größe geändert haben, während die Shell startete.
         this.resize();
         if (this.earlyInput) this.write(this.earlyInput);
+        if (missingAgentProgram) this.showAgentMissing(missingAgentProgram);
       })
       .catch((details) => {
         if (this.closed) return;
@@ -211,9 +232,22 @@ export class RunningTerminal {
       });
   }
 
+  /**
+   * Zeigt über dem Terminal an, dass das Programm des Agent-Startbefehls
+   * fehlt. In das Terminal selbst geschrieben, würde die Shell den Hinweis
+   * mit ihrer eigenen Ausgabe überschreiben.
+   */
+  private showAgentMissing(program: string) {
+    const notice = document.createElement("div");
+    notice.className = "terminal-notice";
+    notice.setAttribute("role", "alert");
+    notice.textContent = this.host.translate()("agent.missing", { program });
+    this.element.prepend(notice);
+  }
+
   /** Passt Spalten und Zeilen an den Platz an; unsichtbar gibt es nichts zu messen. */
   private fit() {
-    if (this.element.clientWidth > 0 && this.element.clientHeight > 0) this.fitAddon.fit();
+    if (this.screen.clientWidth > 0 && this.screen.clientHeight > 0) this.fitAddon.fit();
   }
 
   // Eingaben und Größenänderungen an eine bereits beendete Shell scheitern;
@@ -231,6 +265,7 @@ export class RunningTerminal {
 /** Die laufenden Terminals eines Fensters, nach der Kennung ihres Tabs. */
 export class RunningTerminals {
   private readonly terminals = new Map<string, RunningTerminal>();
+  private font: { family: string; size: number } | null = null;
 
   constructor(private readonly host: TerminalHost) {}
 
@@ -239,9 +274,16 @@ export class RunningTerminals {
     let terminal = this.terminals.get(tabId);
     if (!terminal) {
       terminal = new RunningTerminal(start, this.host);
+      if (this.font) terminal.setFont(this.font.family, this.font.size);
       this.terminals.set(tabId, terminal);
     }
     return terminal;
+  }
+
+  /** Schrift aus den Einstellungen: gilt sofort für alle laufenden und für neue Terminals. */
+  setFont(family: string, size: number) {
+    this.font = { family, size };
+    for (const terminal of this.terminals.values()) terminal.setFont(family, size);
   }
 
   find(tabId: string): RunningTerminal | undefined {

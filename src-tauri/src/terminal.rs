@@ -12,6 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use serde::{Deserialize, Serialize};
 
 /// So lange wird Ausgabe gesammelt, bevor sie als ein Ereignis weitergeht.
 /// Kurz genug, dass das Echo eines Tastendrucks nicht spürbar verzögert wird.
@@ -20,33 +21,19 @@ const OUTPUT_WINDOW: Duration = Duration::from_millis(5);
 const OUTPUT_LIMIT: usize = 256 * 1024;
 
 /// Die Shell, die in einem Terminal läuft.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Shell {
-    PowerShell,
+    #[default]
+    Powershell,
     /// Die Bash aus Git für Windows.
     GitBash,
-}
-
-impl Shell {
-    /// Die Kennung, unter der die Oberfläche die Shell führt.
-    pub fn id(self) -> &'static str {
-        match self {
-            Shell::PowerShell => "powershell",
-            Shell::GitBash => "gitBash",
-        }
-    }
-
-    pub fn from_id(id: &str) -> Option<Shell> {
-        [Shell::PowerShell, Shell::GitBash]
-            .into_iter()
-            .find(|shell| shell.id() == id)
-    }
 }
 
 /// Die Shells, die sich auf diesem Rechner starten lassen. PowerShell steht
 /// immer an erster Stelle; Git Bash nur, wenn es gefunden wird.
 pub fn available_shells() -> Vec<Shell> {
-    let mut shells = vec![Shell::PowerShell];
+    let mut shells = vec![Shell::Powershell];
     if git_bash().is_some() {
         shells.push(Shell::GitBash);
     }
@@ -59,6 +46,9 @@ pub struct TerminalOptions {
     pub cwd: PathBuf,
     pub cols: u16,
     pub rows: u16,
+    /// Ein Befehl, den die Shell sofort ausführt, etwa der Start eines
+    /// Agenten. Danach bleibt die Shell offen.
+    pub start_command: Option<String>,
 }
 
 pub enum TerminalEvent {
@@ -109,7 +99,7 @@ impl Terminal {
             .openpty(size(options.cols, options.rows))
             .map_err(error)?;
 
-        let mut command = shell_command(options.shell)?;
+        let mut command = shell_command(options.shell, options.start_command.as_deref())?;
         command.cwd(&options.cwd);
         // Daran erkennen Programme wie Claude Code, dass 24-Bit-Farben gehen.
         command.env("COLORTERM", "truecolor");
@@ -251,11 +241,19 @@ fn has_child(parent: u32) -> bool {
     }
 }
 
-fn shell_command(shell: Shell) -> Result<CommandBuilder, TerminalError> {
+/// Der Aufruf der Shell. Mit `start_command` führt sie zuerst diesen Befehl
+/// aus und bleibt danach offen.
+fn shell_command(
+    shell: Shell,
+    start_command: Option<&str>,
+) -> Result<CommandBuilder, TerminalError> {
     match shell {
-        Shell::PowerShell => {
+        Shell::Powershell => {
             let mut command = CommandBuilder::new(powershell());
             command.arg("-NoLogo");
+            if let Some(start_command) = start_command {
+                command.args(["-NoExit", "-Command", start_command]);
+            }
             Ok(command)
         }
         Shell::GitBash => {
@@ -264,6 +262,10 @@ fn shell_command(shell: Shell) -> Result<CommandBuilder, TerminalError> {
             // Als Anmelde-Shell lädt Bash das Profil von Git für Windows,
             // das unter anderem den Suchpfad für die Unix-Werkzeuge setzt.
             command.args(["--login", "-i"]);
+            if let Some(start_command) = start_command {
+                // Bash endet nach `-c`; eine zweite Bash hält das Terminal offen.
+                command.args(["-c", &format!("{start_command}\nexec bash --login -i")]);
+            }
             // Ohne diese Angabe wechselt das Profil in den Benutzerordner.
             command.env("CHERE_INVOKING", "1");
             command.env("TERM", "xterm-256color");

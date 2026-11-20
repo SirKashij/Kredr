@@ -3,7 +3,8 @@ import type { Tab } from "./arrangement";
 import type { RunningTerminals } from "./runningTerminals";
 
 /**
- * Zeigt das Terminal eines Tabs an; die Shell startet im Ordner `cwd`.
+ * Zeigt das Terminal eines Tabs an; seine Shell startet im Ordner `cwd`,
+ * in einem Agenten-Tab samt einem Agenten.
  * Mit `focused` erhält es die Tastatureingaben, erneut bei jedem neuen
  * `focusRequest`. Ein Rechtsklick meldet sich über `onContextMenu`.
  */
@@ -24,13 +25,14 @@ export function TerminalView({
 }) {
   const host = useRef<HTMLDivElement>(null);
   const { id, shell } = tab;
+  const agent = tab.agent ?? false;
 
   useEffect(() => {
     const element = host.current!;
-    const terminal = terminals.get(id, { cwd, shell });
+    const terminal = terminals.get(id, { cwd, shell, agent });
     terminal.attach(element);
     return () => terminal.detach(element);
-  }, [terminals, id, cwd, shell]);
+  }, [terminals, id, cwd, shell, agent]);
 
   // Erst nach dem Einhängen: Ein Terminal außerhalb des Dokuments nimmt keinen Fokus an.
   useEffect(() => {

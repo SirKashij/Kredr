@@ -17,16 +17,17 @@ struct TestTerminal {
 
 impl TestTerminal {
     fn open(cwd: PathBuf) -> TestTerminal {
-        TestTerminal::open_with(cwd, Shell::PowerShell)
+        TestTerminal::open_with(cwd, Shell::Powershell, None)
     }
 
-    fn open_with(cwd: PathBuf, shell: Shell) -> TestTerminal {
+    fn open_with(cwd: PathBuf, shell: Shell, start_command: Option<&str>) -> TestTerminal {
         let (sender, events) = channel();
         let options = TerminalOptions {
             shell,
             cwd,
             cols: 200,
             rows: 30,
+            start_command: start_command.map(str::to_owned),
         };
         let terminal = Terminal::open(options, move |event| {
             let _ = sender.send(event);
@@ -128,6 +129,21 @@ fn shell_startet_im_startordner() {
 }
 
 #[test]
+fn startbefehl_laeuft_sofort_und_die_shell_bleibt_danach_offen() {
+    let project = temp_project("startbefehl");
+    let start_command = "echo \"agent-$(6*7) mit 'Zusatz'\"";
+
+    let mut terminal = TestTerminal::open_with(project, Shell::Powershell, Some(start_command));
+
+    // Ohne jede Eingabe: Der Startbefehl ist schon gelaufen.
+    terminal.wait_for_output("agent-42 mit 'Zusatz'");
+
+    // Nach dem Ende des Startbefehls nimmt die Shell weiter Eingaben an.
+    terminal.send_line("echo \"danach-$(6*7)\"");
+    terminal.wait_for_output("danach-42");
+}
+
+#[test]
 fn groessenaenderung_kommt_in_der_shell_an() {
     let mut terminal = TestTerminal::open(temp_project("groesse"));
 
@@ -184,7 +200,7 @@ fn prozessende_wird_nach_der_letzten_ausgabe_gemeldet() {
 
 #[test]
 fn powershell_wird_immer_angeboten() {
-    assert_eq!(available_shells().first(), Some(&Shell::PowerShell));
+    assert_eq!(available_shells().first(), Some(&Shell::Powershell));
 }
 
 /// Git Bash gehört zu Git für Windows; ohne es gibt es hier nichts zu prüfen.
@@ -201,7 +217,7 @@ fn git_bash_fuehrt_bash_befehle_aus() {
     if !git_bash_found() {
         return;
     }
-    let mut terminal = TestTerminal::open_with(temp_project("git-bash"), Shell::GitBash);
+    let mut terminal = TestTerminal::open_with(temp_project("git-bash"), Shell::GitBash, None);
 
     // Diese Ersetzung kennt nur Bash; PowerShell meldet daran einen Fehler.
     terminal.send_line("echo \"kredr-$((6*7))-${BASH_VERSION:+bash}\"");
@@ -217,8 +233,26 @@ fn git_bash_startet_im_startordner() {
     let project = temp_project("git-bash-startordner");
     let folder_name = project.file_name().unwrap().to_str().unwrap().to_owned();
 
-    let mut terminal = TestTerminal::open_with(project, Shell::GitBash);
+    let mut terminal = TestTerminal::open_with(project, Shell::GitBash, None);
     terminal.send_line("echo \"ort=$(pwd)|\"");
 
     terminal.wait_for_output(&format!("{folder_name}|"));
+}
+
+#[test]
+fn startbefehl_laeuft_auch_in_git_bash_und_die_shell_bleibt_offen() {
+    if !git_bash_found() {
+        return;
+    }
+    let project = temp_project("git-bash-startbefehl");
+    let start_command = "echo \"agent-$((6*7)) mit 'Zusatz'\"";
+
+    let mut terminal = TestTerminal::open_with(project, Shell::GitBash, Some(start_command));
+
+    // Ohne jede Eingabe: Der Startbefehl ist schon gelaufen.
+    terminal.wait_for_output("agent-42 mit 'Zusatz'");
+
+    // Nach dem Ende des Startbefehls nimmt die Shell weiter Eingaben an.
+    terminal.send_line("echo \"danach-$((6*7))-${BASH_VERSION:+bash}\"");
+    terminal.wait_for_output("danach-42-bash");
 }

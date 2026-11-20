@@ -6,6 +6,7 @@ import { ActivityBar, type View } from "./ActivityBar";
 import {
   activateAdjacentTab,
   activateTab,
+  assignShell,
   closeTab,
   emptyArrangement,
   focusAdjacentGroup,
@@ -16,7 +17,6 @@ import {
   splitGroup,
   tabsOf,
   type Arrangement,
-  type Shell,
 } from "./arrangement";
 import { useT } from "./i18n/i18n";
 import { isModifierKey, resolveKey, type Command } from "./keybindings";
@@ -25,10 +25,15 @@ import { openFileExternally, openUrl } from "./openExternally";
 import { projectName } from "./project";
 import { Sidebar } from "./Sidebar";
 import { RunningTerminals } from "./runningTerminals";
+import { useSettings } from "./settings";
+import { SettingsPage } from "./SettingsPage";
+import { availableShells, type Shell } from "./settingsStore";
 import { shellLabel } from "./tabLabel";
 
 export function App() {
   const t = useT();
+  const { settings } = useSettings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<View>("agents");
   /** Der Ordner des Projekts dieses Fensters. */
   const [project, setProject] = useState<string | null>(null);
@@ -50,12 +55,20 @@ export function App() {
   );
   /** Die Shells, die es auf diesem Rechner gibt; PowerShell immer. */
   const [shells, setShells] = useState<Shell[]>(["powershell"]);
+  // Eine geänderte Standard-Shell gilt für das nächste neue Terminal.
+  const defaultShell = useRef(settings.defaultShell);
+  defaultShell.current = settings.defaultShell;
 
   useEffect(() => {
-    invoke<Shell[]>("terminal_shells")
+    availableShells()
       .then(setShells)
       .catch(() => {});
   }, []);
+
+  /** Jedes neu entstandene Terminal hält die Standard-Shell fest, wenn keine gewählt wurde. */
+  function settle(arrangement: Arrangement): Arrangement {
+    return assignShell(arrangement, defaultShell.current);
+  }
 
   useEffect(() => {
     invoke<string | null>("initial_project").then((folder) => {
@@ -70,7 +83,7 @@ export function App() {
 
   // Ein frisch geöffnetes Projekt beginnt mit einem Terminal.
   useEffect(() => {
-    if (project) setArrangement((current) => (current.root ? current : openTab(current)));
+    if (project) setArrangement((current) => (current.root ? current : settle(openTab(current))));
   }, [project]);
 
   // Terminals, deren Tab geschlossen wurde, enden.
@@ -78,13 +91,24 @@ export function App() {
     terminals.retain(new Set(tabsOf(arrangement).map((tab) => tab.id)));
   }, [arrangement, terminals]);
 
+  useEffect(() => {
+    terminals.setFont(settings.fontFamily, settings.fontSize);
+  }, [terminals, settings.fontFamily, settings.fontSize]);
+
   /** Gibt dem sichtbaren Terminal der fokussierten Gruppe die Tastatureingaben zurück. */
   function refocusTerminal() {
     setFocusRequest((count) => count + 1);
   }
 
   function update(change: (arrangement: Arrangement) => Arrangement) {
-    setArrangement(change);
+    setArrangement((current) => settle(change(current)));
+    // Wer die Aufteilung bedient, will sie sehen.
+    setSettingsOpen(false);
+    refocusTerminal();
+  }
+
+  function closeSettings() {
+    setSettingsOpen(false);
     refocusTerminal();
   }
 
@@ -104,11 +128,19 @@ export function App() {
     update((current) => closeTab(current, tabId));
   }
 
+  /** „Neuer Agent“: öffnet ein Terminal, in dem sofort der Agent startet. */
+  const newAgent = (current: Arrangement) => openTab(current, true);
+
   function run(command: Command) {
+    if (command.kind === "openSettings") return setSettingsOpen(true);
+    // Alle übrigen Befehle bedienen die Aufteilung eines Projekts.
+    if (!project) return;
     const focused = focusedGroupOf(arrangement);
     switch (command.kind) {
       case "newTerminal":
         return update((current) => openTab(current));
+      case "newAgent":
+        return update(newAgent);
       case "splitRight":
       case "splitDown": {
         // Ohne Gruppe gibt es nichts zu teilen; dann entsteht das erste Terminal.
@@ -137,7 +169,6 @@ export function App() {
 
   // Die Kürzel gelten im ganzen Fenster und greifen, bevor das Terminal die Taste sieht.
   useEffect(() => {
-    if (!project) return;
     let chord = false;
     const onKeyDown = (event: KeyboardEvent) => {
       if (isModifierKey(event.keyCode)) return;
@@ -152,7 +183,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [project]);
+  }, []);
 
   const focusedGroup = focusedGroupOf(arrangement);
   /** Der sichtbare Tab der fokussierten Gruppe. */
@@ -166,11 +197,18 @@ export function App() {
   return (
     <>
       <div className="workbench">
-        <ActivityBar view={view} onSelect={setView} />
+        <ActivityBar
+          view={view}
+          onSelect={setView}
+          settingsOpen={settingsOpen}
+          onToggleSettings={() => (settingsOpen ? closeSettings() : setSettingsOpen(true))}
+        />
         <Sidebar
           view={view}
           arrangement={arrangement}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
+          onNewAgent={project ? () => update(newAgent) : undefined}
+          onNewTerminal={project ? () => update((current) => openTab(current)) : undefined}
         />
         <main className="main">
           {!project ? (
@@ -194,11 +232,15 @@ export function App() {
           ) : (
             <div className="welcome">
               <p>{t("terminal.none")}</p>
-              <button className="btn" onClick={() => update((current) => openTab(current))}>
+              <button className="btn" onClick={() => update(newAgent)}>
+                {t("agent.new")}
+              </button>
+              <button className="btn ghost" onClick={() => update((current) => openTab(current))}>
                 {t("terminal.new")}
               </button>
             </div>
           )}
+          {settingsOpen && <SettingsPage onClose={closeSettings} />}
         </main>
       </div>
       <footer className="status">
