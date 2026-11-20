@@ -4,6 +4,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal } from "@xterm/xterm";
+import type { AgentStatuses, StatusUpdate } from "./agentStatus";
 import type { Translate } from "./i18n/i18n";
 import type { Shell } from "./settingsStore";
 import { clipboardCommand } from "./terminalClipboard";
@@ -91,9 +92,13 @@ export class RunningTerminal {
   // schon auf die Antwort von xterm.js auf seine Cursorabfrage.
   private earlyInput = "";
 
+  /**
+   * @param onAgentStatus Erhält jede Änderung des Agentenstatus dieses Terminals.
+   */
   constructor(
     private readonly options: TerminalStart,
     private readonly host: TerminalHost,
+    private readonly onAgentStatus: (update: StatusUpdate) => void,
   ) {
     this.screen.className = "terminal-screen";
     this.element.append(this.screen);
@@ -209,9 +214,13 @@ export class RunningTerminal {
       if (this.closed) return;
       this.xterm.write(`\r\n\x1b[90m${this.host.translate()("terminal.exited")}\x1b[0m\r\n`);
     });
+    const onAgentStatus = new Channel<StatusUpdate>((update) => {
+      if (!this.closed) this.onAgentStatus(update);
+    });
     const { cols, rows } = this.xterm;
     const { cwd, shell, agent } = this.options;
-    invoke<OpenedTerminal>("terminal_open", { shell, cwd, cols, rows, agent, onOutput, onExit })
+    const channels = { onOutput, onExit, onAgentStatus };
+    invoke<OpenedTerminal>("terminal_open", { shell, cwd, cols, rows, agent, ...channels })
       .then(({ id, missingAgentProgram }) => {
         if (this.closed) {
           invoke("terminal_close", { id });
@@ -267,13 +276,22 @@ export class RunningTerminals {
   private readonly terminals = new Map<string, RunningTerminal>();
   private font: { family: string; size: number } | null = null;
 
-  constructor(private readonly host: TerminalHost) {}
+  /**
+   * @param statuses Nimmt den Agentenstatus der Terminals auf, nach der
+   *   Kennung ihres Tabs.
+   */
+  constructor(
+    private readonly host: TerminalHost,
+    readonly statuses: AgentStatuses,
+  ) {}
 
   /** Das Terminal des Tabs; gibt es noch keines, entsteht es und startet mit `start`. */
   get(tabId: string, start: TerminalStart): RunningTerminal {
     let terminal = this.terminals.get(tabId);
     if (!terminal) {
-      terminal = new RunningTerminal(start, this.host);
+      terminal = new RunningTerminal(start, this.host, (update) =>
+        this.statuses.report(tabId, update),
+      );
       if (this.font) terminal.setFont(this.font.family, this.font.size);
       this.terminals.set(tabId, terminal);
     }
@@ -297,5 +315,6 @@ export class RunningTerminals {
       terminal.dispose();
       this.terminals.delete(tabId);
     }
+    this.statuses.retain(tabIds);
   }
 }

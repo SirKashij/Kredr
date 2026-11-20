@@ -19,6 +19,7 @@ import {
   type Split,
   type TreeNode,
 } from "./arrangement";
+import { AgentDot } from "./AgentStatusViews";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { useT } from "./i18n/i18n";
 import type { RunningTerminals } from "./runningTerminals";
@@ -300,9 +301,15 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
               onContextMenu={(event) => openMenu(event, tab.id)}
             >
               {tab.agent ? (
-                <span className="tab-icon agent">
-                  <Icon name="agent" />
-                </span>
+                <AgentDot
+                  statuses={shared.terminals.statuses}
+                  tabId={tab.id}
+                  fallback={
+                    <span className="tab-icon agent">
+                      <Icon name="agent" />
+                    </span>
+                  }
+                />
               ) : (
                 <span className="tab-icon">›_</span>
               )}

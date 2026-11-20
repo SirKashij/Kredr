@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod agent_status;
 pub mod arrangement_store;
 pub mod external;
 pub mod project_files;
@@ -15,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Emitter, Manager, State};
 
+use agent_status::{AgentStatus, StatusUpdate};
 use project_files::{Entry, ProjectChanges, ProjectWatcher, Subscription};
 use settings::{Settings, SettingsStore, Shell};
 use terminal::{Terminal, TerminalEvent, TerminalOptions};
@@ -72,12 +74,19 @@ struct OpenedTerminal {
     missing_agent_program: Option<String>,
 }
 
+/// Der Empfänger für den Agentenstatus. Er fehlt, wenn er sich beim Start
+/// nicht öffnen ließ; Agenten starten dann ohne Agentenstatus.
+type AgentStatusReceiver = Option<Arc<AgentStatus>>;
+
 /// Öffnet ein Terminal mit der gewählten Shell. Mit `agent` startet darin
-/// sofort der Agent.
+/// sofort der Agent; `on_agent_status` erhält dann jede Änderung seines
+/// Agentenstatus.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn terminal_open(
     window: tauri::Window,
     terminals: State<'_, Terminals>,
+    agent_status: State<'_, AgentStatusReceiver>,
     settings: State<'_, SettingsStore>,
     shell: Option<Shell>,
     cwd: PathBuf,
@@ -86,7 +95,9 @@ fn terminal_open(
     agent: bool,
     on_output: Channel<InvokeResponseBody>,
     on_exit: Channel<()>,
+    on_agent_status: Channel<StatusUpdate>,
 ) -> Result<OpenedTerminal, String> {
+    let id = terminals.next_id.fetch_add(1, Ordering::Relaxed);
     let mut start_command = agent.then(|| agent_start_command(&settings));
     let search_path = std::env::var_os("PATH").unwrap_or_default();
     let missing_agent_program = start_command
@@ -94,6 +105,21 @@ fn terminal_open(
         .and_then(|command| agent::missing_program(command, &search_path));
     if missing_agent_program.is_some() {
         start_command = None;
+    }
+    // Der Agent meldet seinen Status über eine Konfiguration, die nur für
+    // dieses Terminal gilt. Lässt sie sich nicht anlegen, startet er ohne.
+    let status = agent_status
+        .inner()
+        .clone()
+        .filter(|_| start_command.is_some());
+    if let (Some(status), Some(command)) = (&status, &mut start_command) {
+        let settings_file = status.register(id, move |update| {
+            // Hier beginnt jede Reaktion des Kerns auf einen Statuswechsel.
+            let _ = on_agent_status.send(update);
+        });
+        if let Ok(settings_file) = settings_file {
+            *command = agent::with_status_settings(command, &settings_file);
+        }
     }
     let options = TerminalOptions {
         // Ohne Angabe gilt die Standard-Shell aus den Einstellungen.
@@ -103,16 +129,26 @@ fn terminal_open(
         rows,
         start_command,
     };
+    let exited_status = status.clone();
     let terminal = Terminal::open(options, move |event| {
         // Scheitert das Senden, ist das Fenster bereits geschlossen.
         let _ = match event {
             TerminalEvent::Output(bytes) => on_output.send(InvokeResponseBody::Raw(bytes)),
-            TerminalEvent::Exited => on_exit.send(()),
+            TerminalEvent::Exited => {
+                if let Some(status) = &exited_status {
+                    status.forget(id);
+                }
+                on_exit.send(())
+            }
         };
     })
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        if let Some(status) = &status {
+            status.forget(id);
+        }
+        e.to_string()
+    })?;
 
-    let id = terminals.next_id.fetch_add(1, Ordering::Relaxed);
     terminals
         .open
         .lock()
@@ -152,7 +188,14 @@ fn terminal_has_child_process(terminals: State<'_, Terminals>, id: u32) -> Resul
 }
 
 #[tauri::command]
-fn terminal_close(terminals: State<'_, Terminals>, id: u32) -> Result<(), String> {
+fn terminal_close(
+    terminals: State<'_, Terminals>,
+    agent_status: State<'_, AgentStatusReceiver>,
+    id: u32,
+) -> Result<(), String> {
+    if let Some(status) = agent_status.inner() {
+        status.forget(id);
+    }
     terminals
         .open
         .lock()
@@ -301,6 +344,10 @@ fn available_shells() -> Vec<Shell> {
 }
 
 pub fn run() {
+    // Der Empfänger für den Agentenstatus aller Fenster; sein Laufzeitordner
+    // gehört diesem Kredr-Prozess.
+    let runtime_dir = std::env::temp_dir().join(format!("kredr-{}", std::process::id()));
+    let agent_status: AgentStatusReceiver = AgentStatus::start(runtime_dir).ok().map(Arc::new);
     let mut builder = tauri::Builder::default();
     // Ein einziger Prozess verwaltet alle Fenster. Die Entwicklungsfassung
     // nimmt daran nicht teil, damit sie neben einem installierten Kredr läuft.
@@ -313,6 +360,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(Terminals::default())
+        .manage(agent_status)
         .manage(ProjectWatchers::default())
         .manage(project_windows::ProjectWindows::default())
         .setup(|app| {

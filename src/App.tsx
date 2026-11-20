@@ -3,6 +3,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { ActivityBar, type View } from "./ActivityBar";
+import { AgentStatuses } from "./agentStatus";
+import { AgentCounters } from "./AgentStatusViews";
 import {
   activateAdjacentTab,
   activateTab,
@@ -45,15 +47,19 @@ export function App() {
   // Ein Sprachwechsel soll laufende Terminals nicht neu starten.
   const translate = useRef(t);
   translate.current = t;
+  const [statuses] = useState(() => new AgentStatuses());
   const [terminals] = useState(
     () =>
-      new RunningTerminals({
-        translate: () => translate.current,
-        openUrl,
-        // Bis es die Dateiansicht gibt, öffnen Dateipfade aus dem Terminal
-        // im Windows-Standardprogramm. Die Dateiansicht hängt sich hier ein.
-        openFile: openFileExternally,
-      }),
+      new RunningTerminals(
+        {
+          translate: () => translate.current,
+          openUrl,
+          // Bis es die Dateiansicht gibt, öffnen Dateipfade aus dem Terminal
+          // im Windows-Standardprogramm. Die Dateiansicht hängt sich hier ein.
+          openFile: openFileExternally,
+        },
+        statuses,
+      ),
   );
   /** Die Shells, die es auf diesem Rechner gibt; PowerShell immer. */
   const [shells, setShells] = useState<Shell[]>(["powershell"]);
@@ -225,6 +231,7 @@ export function App() {
           view={sidebarVisible ? view : null}
           onSelect={selectView}
           settingsOpen={settingsOpen}
+          statuses={statuses}
           onToggleSettings={() => (settingsOpen ? closeSettings() : setSettingsOpen(true))}
         />
         <Sidebar
@@ -232,6 +239,7 @@ export function App() {
           visible={sidebarVisible}
           project={project}
           arrangement={arrangement}
+          statuses={statuses}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
           onNewAgent={project ? () => update(newAgent) : undefined}
           onNewTerminal={project ? () => update((current) => openTab(current)) : undefined}
@@ -266,6 +274,7 @@ export function App() {
       </div>
       <footer className="status">
         <span>{project ? projectName(project) : t("status.noProject")}</span>
+        <AgentCounters statuses={statuses} />
         {activeTab && <span className="right">{shellLabel(activeTab.shell, t)}</span>}
       </footer>
     </>

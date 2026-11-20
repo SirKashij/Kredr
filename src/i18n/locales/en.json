@@ -55,5 +55,20 @@
   "agent.new": "New Agent",
   "agent.newTooltip": "New Agent (Ctrl+Shift+A)",
   "agent.name": "Agent",
-  "agent.missing": "The agent could not start: the program “{program}” was not found. Install Claude Code or change the agent start command in the settings, then choose “New Agent” again."
+  "agent.missing": "The agent could not start: the program “{program}” was not found. Install Claude Code or change the agent start command in the settings, then choose “New Agent” again.",
+  "agentStatus.working": "working",
+  "agentStatus.waiting": "waiting for input",
+  "agentStatus.done": "done",
+  "agentStatus.workingTooltip": "The agent is working.",
+  "agentStatus.waitingTooltip": "The agent is waiting for your input.",
+  "agentStatus.doneTooltip": "The agent is done.",
+  "agentStatus.count.working.one": "{count} working",
+  "agentStatus.count.working.other": "{count} working",
+  "agentStatus.count.waiting.one": "{count} waiting",
+  "agentStatus.count.waiting.other": "{count} waiting",
+  "agentStatus.count.done.one": "{count} done",
+  "agentStatus.count.done.other": "{count} done",
+  "duration.seconds": "{count} s",
+  "duration.minutes": "{count} min",
+  "duration.hours": "{hours} h {minutes} min"
 }

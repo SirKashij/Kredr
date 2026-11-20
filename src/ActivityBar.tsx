@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import type { AgentStatuses } from "./agentStatus";
+import { WaitingBadge } from "./AgentStatusViews";
 import { useT, type MessageKey } from "./i18n/i18n";
 
 export type View = "agents" | "explorer" | "search" | "versionControl";
@@ -52,12 +54,15 @@ export function ActivityBar({
   onSelect,
   settingsOpen,
   onToggleSettings,
+  statuses,
 }: {
   /** Die gezeigte Ansicht; `null`, solange die Seitenleiste ausgeblendet ist. */
   view: View | null;
   onSelect: (view: View) => void;
   settingsOpen: boolean;
   onToggleSettings: () => void;
+  /** Am Symbol der Agenten-Ansicht steht die Zahl der wartenden Agenten. */
+  statuses: AgentStatuses;
 }) {
   const t = useT();
   return (
@@ -72,6 +77,7 @@ export function ActivityBar({
           onClick={() => onSelect(id)}
         >
           <svg viewBox="0 0 24 24">{icons[id]}</svg>
+          {id === "agents" && <WaitingBadge statuses={statuses} />}
         </button>
       ))}
       <div className="spacer" />
