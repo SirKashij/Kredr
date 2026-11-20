@@ -8,7 +8,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use kredr_lib::project_files::{
-    list_folder, EntryKind, ProjectChanges, ProjectWatcher, Subscription,
+    list_folder, read_file, write_file, EntryKind, FileContent, ProjectChanges, ProjectWatcher,
+    Subscription, MAX_FILE_SIZE,
 };
 use tempfile::TempDir;
 
@@ -232,4 +233,135 @@ fn jeder_abonnent_erhaelt_die_ereignisse_bis_er_sein_abonnement_verwirft() {
     assert!(late
         .iter()
         .all(|changes| !changes.paths.contains(&"zwei.txt".to_owned())));
+}
+
+#[test]
+fn lesen_liefert_den_text_einer_datei_unveraendert() {
+    let project = temp_project();
+    let path = project.path().join("notiz.md");
+    fs::write(&path, "# Überschrift\r\nZeile zwei\n").unwrap();
+
+    let content = read_file(&path).expect("Datei sollte lesbar sein");
+
+    assert_eq!(
+        content,
+        FileContent::Text {
+            text: "# Überschrift\r\nZeile zwei\n".to_owned()
+        }
+    );
+}
+
+#[test]
+fn lesen_einer_leeren_datei_liefert_leeren_text() {
+    let project = temp_project();
+    let path = project.path().join("leer.txt");
+    fs::write(&path, "").unwrap();
+
+    assert_eq!(
+        read_file(&path).unwrap(),
+        FileContent::Text {
+            text: String::new()
+        }
+    );
+}
+
+#[test]
+fn lesen_erkennt_binaere_dateien() {
+    let project = temp_project();
+    let image = project.path().join("bild.png");
+    fs::write(&image, [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x00, 0x01]).unwrap();
+    // Kein NUL-Byte, aber auch kein gültiges UTF-8.
+    let latin1 = project.path().join("alt.txt");
+    fs::write(&latin1, [b'G', b'r', 0xfc, 0xdf, b'e']).unwrap();
+
+    assert_eq!(read_file(&image).unwrap(), FileContent::Binary);
+    assert_eq!(read_file(&latin1).unwrap(), FileContent::Binary);
+}
+
+#[test]
+fn lesen_erkennt_uebergrosse_dateien_ohne_sie_zu_laden() {
+    let project = temp_project();
+    let path = project.path().join("riesig.log");
+    let file = fs::File::create(&path).unwrap();
+    file.set_len(MAX_FILE_SIZE + 1).unwrap();
+    drop(file);
+    let at_limit = project.path().join("grenze.log");
+    fs::write(&at_limit, vec![b'a'; MAX_FILE_SIZE as usize]).unwrap();
+
+    assert_eq!(
+        read_file(&path).unwrap(),
+        FileContent::TooLarge {
+            size: MAX_FILE_SIZE + 1
+        }
+    );
+    assert!(matches!(
+        read_file(&at_limit).unwrap(),
+        FileContent::Text { .. }
+    ));
+}
+
+#[test]
+fn lesen_einer_fehlenden_datei_meldet_dass_sie_fehlt() {
+    let project = temp_project();
+
+    assert_eq!(
+        read_file(&project.path().join("geloescht.txt")).unwrap(),
+        FileContent::Missing
+    );
+}
+
+#[test]
+fn lesen_eines_ordners_scheitert() {
+    let project = temp_project();
+
+    assert!(read_file(project.path()).is_err());
+}
+
+#[test]
+fn schreiben_ersetzt_den_inhalt_und_lesen_liefert_ihn_zurueck() {
+    let project = temp_project();
+    let path = project.path().join("config.toml");
+    fs::write(&path, "alt = true\n").unwrap();
+
+    write_file(&path, "neu = \"ä\"\r\n").expect("Datei sollte schreibbar sein");
+
+    assert_eq!(fs::read(&path).unwrap(), "neu = \"ä\"\r\n".as_bytes());
+    assert_eq!(
+        read_file(&path).unwrap(),
+        FileContent::Text {
+            text: "neu = \"ä\"\r\n".to_owned()
+        }
+    );
+}
+
+#[test]
+fn schreiben_legt_eine_geloeschte_datei_wieder_an() {
+    let project = temp_project();
+    let path = project.path().join("wieder-da.txt");
+
+    write_file(&path, "inhalt").unwrap();
+
+    assert_eq!(fs::read_to_string(&path).unwrap(), "inhalt");
+}
+
+#[test]
+fn schreiben_in_einen_fehlenden_ordner_scheitert() {
+    let project = temp_project();
+
+    let result = write_file(&project.path().join("fehlt").join("datei.txt"), "x");
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn schreiben_wird_ueber_den_ereignisstrom_gemeldet() {
+    let project = temp_project();
+    let path = project.path().join("offen.txt");
+    fs::write(&path, "alt").unwrap();
+    let watcher = watch(&project);
+    let mut changes = Changes::subscribe(&watcher);
+
+    write_file(&path, "neu").unwrap();
+
+    changes.wait_for_path("offen.txt");
 }
