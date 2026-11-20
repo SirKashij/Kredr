@@ -73,6 +73,13 @@ fn terminal_resize(
     terminal.resize(cols, rows).map_err(|e| e.to_string())
 }
 
+/// Ob im Terminal noch ein Kindprozess läuft; danach richtet sich die
+/// Rückfrage beim Schließen.
+#[tauri::command]
+fn terminal_has_child_process(terminals: State<'_, Terminals>, id: u32) -> Result<bool, String> {
+    Ok(terminals.get(id)?.has_child_process())
+}
+
 #[tauri::command]
 fn terminal_close(terminals: State<'_, Terminals>, id: u32) -> Result<(), String> {
     terminals
@@ -102,6 +109,7 @@ pub fn run() {
             terminal_open,
             terminal_write,
             terminal_resize,
+            terminal_has_child_process,
             terminal_close,
             initial_project,
         ])

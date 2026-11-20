@@ -78,6 +78,18 @@ impl TestTerminal {
         }
     }
 
+    /// Wartet, bis `condition` gilt, und nimmt währenddessen Ausgabe entgegen.
+    fn wait_until(&mut self, expectation: &str, condition: impl Fn(&Terminal) -> bool) {
+        let deadline = Instant::now() + TIMEOUT;
+        while !condition(&self.terminal) {
+            assert!(Instant::now() < deadline, "{expectation}");
+            let poll = Instant::now() + Duration::from_millis(100);
+            if let Some(TerminalEvent::Output(bytes)) = self.next_event(poll) {
+                self.receive(&bytes);
+            }
+        }
+    }
+
     fn next_event(&self, deadline: Instant) -> Option<TerminalEvent> {
         let remaining = deadline.checked_duration_since(Instant::now())?;
         self.events.recv_timeout(remaining).ok()
@@ -121,6 +133,36 @@ fn groessenaenderung_kommt_in_der_shell_an() {
     terminal.send_line("echo \"breite=$($Host.UI.RawUI.WindowSize.Width)\"");
 
     terminal.wait_for_output("breite=132");
+}
+
+#[test]
+fn laufender_kindprozess_wird_erkannt() {
+    let mut terminal = TestTerminal::open(temp_project("kindprozess"));
+    terminal.send_line("echo \"bereit-$(6*7)\"");
+    terminal.wait_for_output("bereit-42");
+
+    // Eine Shell, die nur auf Eingabe wartet, hat keinen Kindprozess.
+    assert!(!terminal.terminal.has_child_process());
+
+    terminal.send_line("ping -n 4 127.0.0.1");
+    terminal.wait_until("ping sollte als Kindprozess laufen", |terminal| {
+        terminal.has_child_process()
+    });
+
+    // Nach wenigen Sekunden endet ping von selbst; danach wartet die Shell wieder.
+    terminal.wait_until("ping sollte beendet sein", |terminal| {
+        !terminal.has_child_process()
+    });
+}
+
+#[test]
+fn beendete_shell_hat_keinen_kindprozess() {
+    let mut terminal = TestTerminal::open(temp_project("beendet"));
+
+    terminal.send_line("exit");
+    terminal.wait_for_exit();
+
+    assert!(!terminal.terminal.has_child_process());
 }
 
 #[test]

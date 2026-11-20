@@ -5,7 +5,7 @@
   "activity.versionControl": "Version Control",
   "activity.settings": "Settings",
   "sidebar.terminals": "Terminals",
-  "sidebar.noTerminals": "No terminal open yet.",
+  "terminal.none": "No terminal open.",
   "sidebar.notAvailable": "This view arrives in a later step.",
   "welcome.text": "Open a folder as a project to get started.",
   "welcome.openFolder": "Open Folder",
@@ -14,5 +14,17 @@
   "terminal.exited": "The process has exited.",
   "terminal.startFailed": "The terminal could not be started: {details}",
   "status.noProject": "No project open",
-  "window.title": "{project} — Kredr"
+  "window.title": "{project} — Kredr",
+  "terminal.new": "New Terminal",
+  "terminal.newTooltip": "New Terminal (Ctrl+Shift+`)",
+  "terminal.closeConfirm.title": "Close terminal?",
+  "terminal.closeConfirm.message": "A process is still running in this terminal. Closing the terminal will end it.",
+  "terminal.closeConfirm.ok": "Close Terminal",
+  "dialog.cancel": "Cancel",
+  "group.splitRight": "Split Right",
+  "group.splitRightTooltip": "Split Right (Ctrl+Shift+5)",
+  "group.splitDown": "Split Down",
+  "group.splitDownTooltip": "Split Down (Ctrl+K, Ctrl+\\)",
+  "tab.close": "Close",
+  "tab.closeTooltip": "Close (Ctrl+F4)"
 }

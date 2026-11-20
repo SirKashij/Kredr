@@ -1,11 +1,13 @@
 //! Terminal-Dienst: startet eine Shell in einem Pseudoterminal (ConPTY),
 //! liefert ihre Ausgabe als Strom, nimmt Eingaben und Größenänderungen
-//! entgegen und meldet das Ende des Prozesses.
+//! entgegen, meldet das Ende des Prozesses und ob im Terminal noch ein
+//! Kindprozess läuft.
 
 use std::fmt;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::{mpsc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -51,6 +53,10 @@ pub struct Terminal {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    /// Prozesskennung der Shell.
+    shell_pid: Option<u32>,
+    /// Ob sich die Shell beendet hat; ihre Prozesskennung kann dann neu vergeben sein.
+    exited: Arc<AtomicBool>,
 }
 
 impl Terminal {
@@ -75,6 +81,9 @@ impl Terminal {
         command.env("COLORTERM", "truecolor");
         let mut child = pair.slave.spawn_command(command).map_err(error)?;
         let killer = child.clone_killer();
+        let shell_pid = child.process_id();
+        let exited = Arc::new(AtomicBool::new(false));
+        let shell_exited = exited.clone();
 
         let mut reader = pair.master.try_clone_reader().map_err(error)?;
         let writer = pair.master.take_writer().map_err(error)?;
@@ -99,6 +108,7 @@ impl Terminal {
         });
         thread::spawn(move || {
             let _ = child.wait();
+            shell_exited.store(true, Ordering::Relaxed);
             let _ = exit_sender.send(TerminalEvent::Exited);
         });
         // ConPTY liefert bei schneller Ausgabe ein kleines Stück pro Zeile.
@@ -134,6 +144,8 @@ impl Terminal {
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
             killer: Mutex::new(killer),
+            shell_pid,
+            exited,
         })
     }
 
@@ -148,6 +160,15 @@ impl Terminal {
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), TerminalError> {
         let master = self.master.lock().map_err(error)?;
         master.resize(size(cols, rows)).map_err(error)
+    }
+
+    /// Ob in der Shell gerade ein Programm läuft, etwa ein Agent. Eine Shell,
+    /// die nur auf Eingabe wartet, und eine beendete Shell haben keines.
+    pub fn has_child_process(&self) -> bool {
+        if self.exited.load(Ordering::Relaxed) {
+            return false;
+        }
+        self.shell_pid.is_some_and(has_child)
     }
 }
 
@@ -165,6 +186,34 @@ fn size(cols: u16, rows: u16) -> PtySize {
         rows,
         pixel_width: 0,
         pixel_height: 0,
+    }
+}
+
+/// Ob irgendein laufender Prozess `parent` als Elternprozess hat.
+fn has_child(parent: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    // SAFETY: Der Schnappschuss wird nur hier benutzt und wieder geschlossen;
+    // `entry` ist ein gültiger, mit seiner Größe versehener Puffer.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return false;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut found = false;
+        let mut more = Process32FirstW(snapshot, &mut entry);
+        while more != 0 && !found {
+            found = entry.th32ParentProcessID == parent;
+            more = Process32NextW(snapshot, &mut entry);
+        }
+        CloseHandle(snapshot);
+        found
     }
 }
 

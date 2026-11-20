@@ -1,7 +1,14 @@
 import { views, type View } from "./ActivityBar";
+import { focusedGroupOf, tabsOf, type Arrangement } from "./arrangement";
 import { useT } from "./i18n/i18n";
 
-export function Sidebar({ view, hasTerminal }: { view: View; hasTerminal: boolean }) {
+interface AgentsViewProps {
+  arrangement: Arrangement;
+  /** Zeigt den Tab im Hauptbereich an und gibt ihm den Fokus. */
+  onSelectTab: (tabId: string) => void;
+}
+
+export function Sidebar({ view, ...agents }: { view: View } & AgentsViewProps) {
   const t = useT();
   const title = views.find(({ id }) => id === view)!.label;
   return (
@@ -9,7 +16,7 @@ export function Sidebar({ view, hasTerminal }: { view: View; hasTerminal: boolea
       <div className="side-title">{t(title)}</div>
       <div className="side-body">
         {view === "agents" ? (
-          <AgentsView hasTerminal={hasTerminal} />
+          <AgentsView {...agents} />
         ) : (
           <p className="hint">{t("sidebar.notAvailable")}</p>
         )}
@@ -19,19 +26,24 @@ export function Sidebar({ view, hasTerminal }: { view: View; hasTerminal: boolea
 }
 
 /** Die Agenten-Ansicht; zeigt vorerst nur die gewöhnlichen Terminals. */
-function AgentsView({ hasTerminal }: { hasTerminal: boolean }) {
+function AgentsView({ arrangement, onSelectTab }: AgentsViewProps) {
   const t = useT();
+  const tabs = tabsOf(arrangement);
+  const selected = focusedGroupOf(arrangement)?.activeTab;
   return (
     <div className="cards">
       <div className="sect">{t("sidebar.terminals")}</div>
-      {hasTerminal ? (
-        <div className="card sel">
+      {tabs.length === 0 && <p className="hint">{t("terminal.none")}</p>}
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          className={tab.id === selected ? "card sel" : "card"}
+          onClick={() => onSelectTab(tab.id)}
+        >
           <span className="dot" />
           <span>{t("terminal.powershell")}</span>
-        </div>
-      ) : (
-        <p className="hint">{t("sidebar.noTerminals")}</p>
-      )}
+        </button>
+      ))}
     </div>
   );
 }
