@@ -1,5 +1,8 @@
 pub mod agent;
+pub mod arrangement_store;
 pub mod project_files;
+pub mod project_windows;
+mod projects;
 pub mod settings;
 pub mod terminal;
 
@@ -20,9 +23,29 @@ use terminal::{Terminal, TerminalEvent, TerminalOptions};
 struct Terminals {
     next_id: AtomicU32,
     open: Mutex<HashMap<u32, Arc<Terminal>>>,
+    /// Zu welchem Fenster ein Terminal gehört.
+    owners: Mutex<HashMap<u32, String>>,
 }
 
 impl Terminals {
+    /// Beendet die Terminals eines geschlossenen Fensters; der Prozess läuft
+    /// für die übrigen Fenster weiter.
+    fn close_all_of(&self, window: &str) {
+        let Ok(mut owners) = self.owners.lock() else {
+            return;
+        };
+        let Ok(mut open) = self.open.lock() else {
+            return;
+        };
+        owners.retain(|id, owner| {
+            let keep = owner != window;
+            if !keep {
+                open.remove(id);
+            }
+            keep
+        });
+    }
+
     /// Liefert das Terminal, ohne die Sperre über alle Terminals zu halten:
     /// eine Shell, die ihre Eingabe nicht liest, bremst so keine andere.
     fn get(&self, id: u32) -> Result<Arc<Terminal>, String> {
@@ -51,6 +74,7 @@ struct OpenedTerminal {
 /// Öffnet ein Terminal. Mit `agent` startet darin sofort der Agent.
 #[tauri::command]
 fn terminal_open(
+    window: tauri::Window,
     terminals: State<'_, Terminals>,
     settings: State<'_, SettingsStore>,
     cwd: PathBuf,
@@ -89,6 +113,9 @@ fn terminal_open(
         .lock()
         .map_err(|e| e.to_string())?
         .insert(id, Arc::new(terminal));
+    if let Ok(mut owners) = terminals.owners.lock() {
+        owners.insert(id, window.label().to_string());
+    }
     Ok(OpenedTerminal {
         id,
         missing_agent_program,
@@ -126,6 +153,9 @@ fn terminal_close(terminals: State<'_, Terminals>, id: u32) -> Result<(), String
         .lock()
         .map_err(|e| e.to_string())?
         .remove(&id);
+    if let Ok(mut owners) = terminals.owners.lock() {
+        owners.remove(&id);
+    }
     Ok(())
 }
 
@@ -189,17 +219,6 @@ fn project_files_unwatch(watchers: State<'_, ProjectWatchers>, id: u32) -> Resul
     Ok(())
 }
 
-/// Der Ordner, der beim Start als Projekt geöffnet wird: das erste
-/// Programmargument, wenn es ein Ordner ist (`kredr <Ordner>`).
-#[tauri::command]
-fn initial_project() -> Option<PathBuf> {
-    let folder = PathBuf::from(std::env::args_os().nth(1)?);
-    if !folder.is_dir() {
-        return None;
-    }
-    std::path::absolute(folder).ok()
-}
-
 #[tauri::command]
 fn settings_get(settings: State<'_, SettingsStore>) -> Settings {
     settings.get()
@@ -219,10 +238,19 @@ fn available_shells() -> Vec<Shell> {
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // Ein einziger Prozess verwaltet alle Fenster. Die Entwicklungsfassung
+    // nimmt daran nicht teil, damit sie neben einem installierten Kredr läuft.
+    if !cfg!(debug_assertions) {
+        builder = builder.plugin(tauri_plugin_single_instance::init(
+            projects::open_from_second_instance,
+        ));
+    }
+    builder
         .plugin(tauri_plugin_dialog::init())
         .manage(Terminals::default())
         .manage(ProjectWatchers::default())
+        .manage(project_windows::ProjectWindows::default())
         .setup(|app| {
             let handle = app.handle().clone();
             let settings = SettingsStore::open(app.path().app_data_dir()?, move |settings| {
@@ -230,7 +258,14 @@ pub fn run() {
                 let _ = handle.emit("settings-changed", settings);
             });
             app.manage(settings);
+            projects::start(app.handle())?;
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                projects::window_closed(window);
+                window.state::<Terminals>().close_all_of(window.label());
+            }
         })
         .invoke_handler(tauri::generate_handler![
             terminal_open,
@@ -238,13 +273,16 @@ pub fn run() {
             terminal_resize,
             terminal_has_child_process,
             terminal_close,
-            initial_project,
             settings_get,
             settings_set,
             available_shells,
             project_files_list,
             project_files_watch,
             project_files_unwatch,
+            projects::window_project,
+            projects::recent_projects,
+            projects::forget_project,
+            projects::open_project,
         ])
         .run(tauri::generate_context!())
         .expect("Kredr konnte nicht gestartet werden");

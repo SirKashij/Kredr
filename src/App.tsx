@@ -22,6 +22,7 @@ import { isModifierKey, resolveKey, type Command } from "./keybindings";
 import { MainArea } from "./MainArea";
 import { projectName } from "./project";
 import { Sidebar } from "./Sidebar";
+import { StartPage } from "./StartPage";
 import { RunningTerminals } from "./runningTerminals";
 import { useSettings } from "./settings";
 import { SettingsPage } from "./SettingsPage";
@@ -43,9 +44,16 @@ export function App() {
   const [terminals] = useState(() => new RunningTerminals(() => translate.current));
 
   useEffect(() => {
-    invoke<string | null>("initial_project").then((folder) => {
+    invoke<string | null>("window_project").then((folder) => {
       if (folder) setProject((current) => current ?? folder);
     });
+    // Ein weiterer Start von Kredr kann einem Fenster auf der Startseite ein Projekt geben.
+    const unlisten = getCurrentWindow().listen<string>("project-opened", (event) =>
+      setProject(event.payload),
+    );
+    return () => {
+      unlisten.then((stop) => stop());
+    };
   }, []);
 
   useEffect(() => {
@@ -169,7 +177,12 @@ export function App() {
 
   async function openFolder() {
     const folder = await open({ directory: true, title: t("dialog.openFolderTitle") });
-    if (folder) setProject(folder);
+    if (folder) await openProject(folder);
+  }
+
+  async function openProject(folder: string) {
+    // Ist das Projekt schon in einem anderen Fenster offen, kommt jenes nach vorn.
+    if (await invoke<boolean>("open_project", { path: folder })) setProject(folder);
   }
 
   return (
@@ -192,12 +205,7 @@ export function App() {
         />
         <main className="main">
           {!project ? (
-            <div className="welcome">
-              <p>{t("welcome.text")}</p>
-              <button className="btn" onClick={openFolder}>
-                {t("welcome.openFolder")}
-              </button>
-            </div>
+            <StartPage onOpen={openProject} onOpenFolder={openFolder} />
           ) : arrangement.root ? (
             <MainArea
               arrangement={arrangement}
