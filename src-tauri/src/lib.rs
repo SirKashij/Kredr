@@ -7,6 +7,8 @@ pub mod project_windows;
 mod projects;
 pub mod settings;
 pub mod terminal;
+pub mod version_control;
+mod version_control_commands;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -421,6 +423,7 @@ pub fn run() {
         .manage(Terminals::default())
         .manage(agent_status)
         .manage(ProjectWatchers::default())
+        .manage(version_control_commands::VersionControls::default())
         .manage(project_windows::ProjectWindows::default())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -436,6 +439,9 @@ pub fn run() {
             if let tauri::WindowEvent::Destroyed = event {
                 projects::window_closed(window);
                 window.state::<Terminals>().close_all_of(window.label());
+                window
+                    .state::<version_control_commands::VersionControls>()
+                    .close_all_of(window.label());
                 window
                     .state::<ProjectWatchers>()
                     .close_all_of(window.label());
@@ -463,6 +469,9 @@ pub fn run() {
             project_files_reveal,
             project_files_watch,
             project_files_unwatch,
+            version_control_commands::version_control_watch,
+            version_control_commands::version_control_unwatch,
+            version_control_commands::version_control_diff,
             projects::window_project,
             projects::recent_projects,
             projects::forget_project,

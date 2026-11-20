@@ -107,19 +107,27 @@ pub fn read_file(path: &Path) -> Result<FileContent, ProjectFilesError> {
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(FileContent::Missing),
         Err(e) => return Err(error(e)),
     };
-    // Die Datei kann seit der Prüfung gewachsen sein.
-    if bytes.len() as u64 > MAX_FILE_SIZE {
-        return Ok(FileContent::TooLarge {
-            size: bytes.len() as u64,
-        });
+    // Die Datei kann seit der Prüfung gewachsen sein; auch das fängt die Einordnung ab.
+    Ok(FileContent::from_bytes(bytes))
+}
+
+impl FileContent {
+    /// Ordnet einen bereits gelesenen Inhalt ein: UTF-8-Text oder binär.
+    /// Auch die Versionskontrolle liest so die Fassungen einer Datei aus Git.
+    pub fn from_bytes(bytes: Vec<u8>) -> FileContent {
+        if bytes.len() as u64 > MAX_FILE_SIZE {
+            return FileContent::TooLarge {
+                size: bytes.len() as u64,
+            };
+        }
+        if bytes.contains(&0) {
+            return FileContent::Binary;
+        }
+        match String::from_utf8(bytes) {
+            Ok(text) => FileContent::Text { text },
+            Err(_) => FileContent::Binary,
+        }
     }
-    if bytes.contains(&0) {
-        return Ok(FileContent::Binary);
-    }
-    Ok(match String::from_utf8(bytes) {
-        Ok(text) => FileContent::Text { text },
-        Err(_) => FileContent::Binary,
-    })
 }
 
 /// Schreibt `text` als neuen Inhalt der Datei und legt sie an, wenn sie fehlt.
