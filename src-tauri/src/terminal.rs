@@ -5,13 +5,14 @@
 
 use std::fmt;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use serde::{Deserialize, Serialize};
 
 /// So lange wird Ausgabe gesammelt, bevor sie als ein Ereignis weitergeht.
 /// Kurz genug, dass das Echo eines Tastendrucks nicht spürbar verzögert wird.
@@ -19,7 +20,28 @@ const OUTPUT_WINDOW: Duration = Duration::from_millis(5);
 /// Ab dieser Größe geht gesammelte Ausgabe sofort weiter.
 const OUTPUT_LIMIT: usize = 256 * 1024;
 
+/// Die Shell, die in einem Terminal läuft.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Shell {
+    #[default]
+    Powershell,
+    /// Die Bash aus Git für Windows.
+    GitBash,
+}
+
+/// Die Shells, die sich auf diesem Rechner starten lassen. PowerShell steht
+/// immer an erster Stelle; Git Bash nur, wenn es gefunden wird.
+pub fn available_shells() -> Vec<Shell> {
+    let mut shells = vec![Shell::Powershell];
+    if git_bash().is_some() {
+        shells.push(Shell::GitBash);
+    }
+    shells
+}
+
 pub struct TerminalOptions {
+    pub shell: Shell,
     /// Startordner der Shell.
     pub cwd: PathBuf,
     pub cols: u16,
@@ -63,7 +85,7 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    /// Startet PowerShell im Startordner. `on_event` wird der Reihe nach
+    /// Startet die Shell im Startordner. `on_event` wird der Reihe nach
     /// aus einem Hintergrund-Thread aufgerufen.
     ///
     /// ConPTY fragt beim Start die Cursorposition ab (`ESC[6n`) und liefert
@@ -77,11 +99,7 @@ impl Terminal {
             .openpty(size(options.cols, options.rows))
             .map_err(error)?;
 
-        let mut command = CommandBuilder::new(powershell());
-        command.arg("-NoLogo");
-        if let Some(start_command) = &options.start_command {
-            command.args(["-NoExit", "-Command", start_command]);
-        }
+        let mut command = shell_command(options.shell, options.start_command.as_deref())?;
         command.cwd(&options.cwd);
         // Daran erkennen Programme wie Claude Code, dass 24-Bit-Farben gehen.
         command.env("COLORTERM", "truecolor");
@@ -221,6 +239,63 @@ fn has_child(parent: u32) -> bool {
         CloseHandle(snapshot);
         found
     }
+}
+
+/// Der Aufruf der Shell. Mit `start_command` führt sie zuerst diesen Befehl
+/// aus und bleibt danach offen.
+fn shell_command(
+    shell: Shell,
+    start_command: Option<&str>,
+) -> Result<CommandBuilder, TerminalError> {
+    match shell {
+        Shell::Powershell => {
+            let mut command = CommandBuilder::new(powershell());
+            command.arg("-NoLogo");
+            if let Some(start_command) = start_command {
+                command.args(["-NoExit", "-Command", start_command]);
+            }
+            Ok(command)
+        }
+        Shell::GitBash => {
+            let bash = git_bash().ok_or_else(|| error("Git Bash not found"))?;
+            let mut command = CommandBuilder::new(bash);
+            // Als Anmelde-Shell lädt Bash das Profil von Git für Windows,
+            // das unter anderem den Suchpfad für die Unix-Werkzeuge setzt.
+            command.args(["--login", "-i"]);
+            if let Some(start_command) = start_command {
+                // Bash endet nach `-c`; eine zweite Bash hält das Terminal offen.
+                command.args(["-c", &format!("{start_command}\nexec bash --login -i")]);
+            }
+            // Ohne diese Angabe wechselt das Profil in den Benutzerordner.
+            command.env("CHERE_INVOKING", "1");
+            command.env("TERM", "xterm-256color");
+            Ok(command)
+        }
+    }
+}
+
+/// Die Bash aus Git für Windows, wenn es installiert ist. Ein `bash.exe` aus
+/// dem Suchpfad wäre nicht verlässlich: Dort liegt oft der Starter von WSL.
+fn git_bash() -> Option<PathBuf> {
+    // Git für Windows trägt `<Git>\cmd` in den Suchpfad ein.
+    let beside_git = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|dir| dir.join("git.exe").is_file())
+        .filter_map(|dir| dir.parent().map(Path::to_path_buf));
+    // Die üblichen Installationsorte, falls Git nicht im Suchpfad steht.
+    let installed = [
+        ("ProgramFiles", "Git"),
+        ("ProgramFiles(x86)", "Git"),
+        ("LocalAppData", "Programs\\Git"),
+    ]
+    .into_iter()
+    .filter_map(|(variable, folder)| Some(PathBuf::from(std::env::var_os(variable)?).join(folder)));
+    beside_git
+        .chain(installed)
+        .map(|git| git.join("bin").join("bash.exe"))
+        .find(|bash| bash.is_file())
 }
 
 /// PowerShell 7, wenn installiert, sonst das mit Windows gelieferte

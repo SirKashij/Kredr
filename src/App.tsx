@@ -3,27 +3,33 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, message, open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { ActivityBar, type View } from "./ActivityBar";
+import { AgentStatuses } from "./agentStatus";
+import { AgentCounters } from "./AgentStatusViews";
 import {
   activateAdjacentTab,
   activateTab,
+  assignShell,
   closeTab,
   emptyArrangement,
   focusAdjacentGroup,
   focusedGroupOf,
   focusGroupAt,
   focusGroupToward,
+  isTerminal,
   openContent,
   openTab,
+  openTabIn,
   splitGroup,
   tabsOf,
   type Arrangement,
 } from "./arrangement";
-import { fileName, toProjectPath } from "./filePath";
+import { fileName, fullPath, opensExternally, toProjectPath } from "./filePath";
 import { saveFile } from "./FileView";
 import { useT } from "./i18n/i18n";
 import { isModifierKey, resolveKey, type Command } from "./keybindings";
 import { MainArea } from "./MainArea";
 import { OpenFiles, type FilePosition } from "./openFiles";
+import { openFileExternally, openUrl } from "./openExternally";
 import { projectName } from "./project";
 import { watchProjectFiles } from "./projectFiles";
 import { Sidebar } from "./Sidebar";
@@ -31,6 +37,8 @@ import { StartPage } from "./StartPage";
 import { RunningTerminals } from "./runningTerminals";
 import { useSettings } from "./settings";
 import { SettingsPage } from "./SettingsPage";
+import { availableShells, type Shell } from "./settingsStore";
+import { shellLabel } from "./tabLabel";
 
 /** Eine Datei, die als Dateiansicht geöffnet werden soll. */
 export interface FileRequest extends Partial<FilePosition> {
@@ -54,8 +62,36 @@ export function App() {
   // Ein Sprachwechsel soll laufende Terminals nicht neu starten.
   const translate = useRef(t);
   translate.current = t;
-  const [terminals] = useState(() => new RunningTerminals(() => translate.current));
+  const [statuses] = useState(() => new AgentStatuses());
+  const [terminals] = useState(
+    () =>
+      new RunningTerminals(
+        {
+          translate: () => translate.current,
+          openUrl,
+          // Dateipfade aus dem Terminal öffnen sich in der Dateiansicht.
+          openFile: (target) => openFileRequest.current(target),
+        },
+        statuses,
+      ),
+  );
   const [files] = useState(() => new OpenFiles());
+  /** Die Shells, die es auf diesem Rechner gibt; PowerShell immer. */
+  const [shells, setShells] = useState<Shell[]>(["powershell"]);
+  // Eine geänderte Standard-Shell gilt für das nächste neue Terminal.
+  const defaultShell = useRef(settings.defaultShell);
+  defaultShell.current = settings.defaultShell;
+
+  useEffect(() => {
+    availableShells()
+      .then(setShells)
+      .catch(() => {});
+  }, []);
+
+  /** Jedes neu entstandene Terminal hält die Standard-Shell fest, wenn keine gewählt wurde. */
+  function settle(arrangement: Arrangement): Arrangement {
+    return assignShell(arrangement, defaultShell.current);
+  }
 
   useEffect(() => {
     invoke<string | null>("window_project").then((folder) => {
@@ -77,7 +113,7 @@ export function App() {
 
   // Ein frisch geöffnetes Projekt beginnt mit einem Terminal.
   useEffect(() => {
-    if (project) setArrangement((current) => (current.root ? current : openTab(current)));
+    if (project) setArrangement((current) => (current.root ? current : settle(openTab(current))));
   }, [project]);
 
   // Terminals, deren Tab geschlossen wurde, enden.
@@ -123,7 +159,7 @@ export function App() {
   }
 
   function update(change: (arrangement: Arrangement) => Arrangement) {
-    setArrangement(change);
+    setArrangement((current) => settle(change(current)));
     // Wer die Aufteilung bedient, will sie sehen.
     setSettingsOpen(false);
     refocusTerminal();
@@ -142,9 +178,26 @@ export function App() {
   function openFile({ path, preview = false, line, ...position }: FileRequest) {
     if (!project) return;
     const file = toProjectPath(project, path);
-    update((current) => openContent(current, { kind: "file", path: file }, preview));
+    // PDFs und Office-Dateien gehören ins Windows-Standardprogramm; nur die
+    // Vorschau beim Durchklicken startet kein anderes Programm.
+    if (!preview && opensExternally(file)) {
+      return openFileExternally({ path: fullPath(project, file) });
+    }
+    const open = (current: Arrangement) =>
+      openContent(current, { kind: "file", path: file }, preview);
+    if (preview) {
+      // Die Vorschau zeigt die Datei nur; die Tastatur bleibt, wo sie ist.
+      setArrangement((current) => settle(open(current)));
+      setSettingsOpen(false);
+    } else {
+      files.get(project, file).wantFocus();
+      update(open);
+    }
     if (line !== undefined) files.get(project, file).reveal({ line, ...position });
   }
+
+  const openFileRequest = useRef(openFile);
+  openFileRequest.current = openFile;
 
   /** Fragt bei ungespeicherten Änderungen nach; `false` heißt: Der Tab bleibt offen. */
   async function confirmCloseFile(path: string): Promise<boolean> {
@@ -200,7 +253,7 @@ export function App() {
     const focused = focusedGroupOf(arrangement);
     switch (command.kind) {
       case "newTerminal":
-        return update(openTab);
+        return update((current) => openTab(current));
       case "newAgent":
         return update(newAgent);
       case "splitRight":
@@ -253,9 +306,10 @@ export function App() {
   }, []);
 
   const focusedGroup = focusedGroupOf(arrangement);
+  /** Der sichtbare Tab der fokussierten Gruppe. */
+  const activeTab = focusedGroup?.tabs.find((tab) => tab.id === focusedGroup.activeTab);
   /** Die Datei des sichtbaren Tabs der fokussierten Gruppe. */
-  const activeFile =
-    focusedGroup?.tabs.find((tab) => tab.id === focusedGroup.activeTab)?.content?.path ?? null;
+  const activeFile = activeTab?.content?.path ?? null;
 
   async function openFolder() {
     const folder = await open({ directory: true, title: t("dialog.openFolderTitle") });
@@ -274,6 +328,7 @@ export function App() {
           view={sidebarVisible ? view : null}
           onSelect={selectView}
           settingsOpen={settingsOpen}
+          statuses={statuses}
           onToggleSettings={() => (settingsOpen ? closeSettings() : setSettingsOpen(true))}
         />
         <Sidebar
@@ -283,9 +338,13 @@ export function App() {
           arrangement={arrangement}
           activeFile={activeFile}
           onOpenFile={(path, preview) => openFile({ path, preview })}
+          statuses={statuses}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
           onNewAgent={project ? () => update(newAgent) : undefined}
-          onNewTerminal={project ? () => update(openTab) : undefined}
+          onNewTerminal={project ? () => update((current) => openTab(current)) : undefined}
+          onOpenTerminalIn={(folder, agent) =>
+            update((current) => openTabIn(current, folder, agent))
+          }
         />
         <main className="main">
           {!project ? (
@@ -296,6 +355,7 @@ export function App() {
               terminals={terminals}
               files={files}
               cwd={project}
+              shells={shells}
               focusRequest={focusRequest}
               update={update}
               onRefocus={refocusTerminal}
@@ -307,7 +367,7 @@ export function App() {
               <button className="btn" onClick={() => update(newAgent)}>
                 {t("agent.new")}
               </button>
-              <button className="btn ghost" onClick={() => update(openTab)}>
+              <button className="btn ghost" onClick={() => update((current) => openTab(current))}>
                 {t("terminal.new")}
               </button>
             </div>
@@ -317,8 +377,9 @@ export function App() {
       </div>
       <footer className="status">
         <span>{project ? projectName(project) : t("status.noProject")}</span>
-        {arrangement.root && activeFile === null && (
-          <span className="right">{t("terminal.powershell")}</span>
+        <AgentCounters statuses={statuses} />
+        {activeTab && isTerminal(activeTab) && (
+          <span className="right">{shellLabel(activeTab.shell, t)}</span>
         )}
       </footer>
     </>

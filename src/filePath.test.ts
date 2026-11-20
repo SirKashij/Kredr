@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { fileName, toProjectPath } from "./filePath";
+import { fileName, fullPath, isOutsideProject, opensExternally, toProjectPath } from "./filePath";
 
 const project = "C:\\Users\\kevin\\Kredr";
 
@@ -33,4 +33,26 @@ test("der Dateiname ist der letzte Teil des Pfads", () => {
   expect(fileName("src/ui/App.tsx")).toBe("App.tsx");
   expect(fileName("README.md")).toBe("README.md");
   expect(fileName("C:/anderes/b.txt")).toBe("b.txt");
+});
+
+test("der volle Pfad steht in der Schreibweise von Windows", () => {
+  expect(fullPath(project, "src/ui/App.tsx")).toBe("C:\\Users\\kevin\\Kredr\\src\\ui\\App.tsx");
+  expect(fullPath(project + "\\", "a.txt")).toBe("C:\\Users\\kevin\\Kredr\\a.txt");
+  expect(fullPath(project, "D:/anderes/b.txt")).toBe("D:\\anderes\\b.txt");
+  expect(fullPath(project, "//server/freigabe/c.txt")).toBe("\\\\server\\freigabe\\c.txt");
+});
+
+test("nur volle Pfade liegen außerhalb des Projekts", () => {
+  expect(isOutsideProject("D:/anderes/b.txt")).toBe(true);
+  expect(isOutsideProject("//server/freigabe/c.txt")).toBe(true);
+  expect(isOutsideProject("src/App.tsx")).toBe(false);
+});
+
+test("PDFs und Office-Dateien öffnen im Windows-Standardprogramm", () => {
+  expect(opensExternally("docs/Handbuch.PDF")).toBe(true);
+  expect(opensExternally("Angebot.docx")).toBe(true);
+  expect(opensExternally("zahlen.xlsx")).toBe(true);
+  expect(opensExternally("src/App.tsx")).toBe(false);
+  expect(opensExternally("README")).toBe(false);
+  expect(opensExternally("ordner.pdf/notiz.txt")).toBe(false);
 });

@@ -19,6 +19,8 @@ export interface Row {
   /** Einrückungstiefe; Einträge des Projektordners haben 0. */
   depth: number;
   expanded: boolean;
+  /** Gesetzt, wenn in dieser Zeile gerade ein Name eingegeben wird. */
+  edit?: Edit["type"];
 }
 
 export const emptyTree: ExplorerTree = { listings: new Map(), expanded: new Set() };
@@ -28,7 +30,7 @@ export function childPath(folder: string, name: string): string {
   return folder === "" ? name : `${folder}/${name}`;
 }
 
-function parentOf(path: string): string {
+export function parentOf(path: string): string {
   const slash = path.lastIndexOf("/");
   return slash < 0 ? "" : path.slice(0, slash);
 }
@@ -126,9 +128,71 @@ export function rowsOf(tree: ExplorerTree): Row[] {
   return rows;
 }
 
+/**
+ * Eine laufende Namenseingabe im Baum: ein neuer Eintrag in einem Ordner oder
+ * ein neuer Name für einen vorhandenen Eintrag.
+ */
+export type Edit =
+  { type: "create"; folder: string; kind: Entry["kind"] } | { type: "rename"; path: string };
+
+/** Der Ordner, in dem ein neuer Eintrag entsteht, wenn diese Zeile ausgewählt ist. */
+export function folderFor(row: Pick<Row, "path" | "kind"> | null | undefined): string {
+  if (!row) return "";
+  return row.kind === "folder" ? row.path : parentOf(row.path);
+}
+
+/** Klappt den Ordner und alle Ordner über ihm auf. */
+export function expandFolder(tree: ExplorerTree, folder: string): ExplorerTree {
+  const expanded = new Set(tree.expanded);
+  for (let path = folder; path !== ""; path = parentOf(path)) expanded.add(path);
+  return expanded.size === tree.expanded.size ? tree : { ...tree, expanded };
+}
+
 /** Klappt alle Ordner über dem Pfad auf, damit seine Zeile sichtbar wird. */
 export function revealPath(tree: ExplorerTree, path: string): ExplorerTree {
-  const expanded = new Set(tree.expanded);
-  for (let folder = parentOf(path); folder !== ""; folder = parentOf(folder)) expanded.add(folder);
-  return expanded.size === tree.expanded.size ? tree : { ...tree, expanded };
+  return expandFolder(tree, parentOf(path));
+}
+
+/**
+ * Die Zeilen samt der laufenden Namenseingabe. Ein neuer Eintrag bekommt eine
+ * eigene Zeile ohne Namen in seinem Ordner: ein Ordner ganz oben, eine Datei
+ * unter den Unterordnern. Beim Umbenennen wird die vorhandene Zeile markiert.
+ */
+export function rowsWithEdit(rows: readonly Row[], edit: Edit | null): Row[] {
+  if (!edit) return [...rows];
+  if (edit.type === "rename") {
+    return rows.map((row) => (row.path === edit.path ? { ...row, edit: "rename" } : row));
+  }
+  const parent = rows.findIndex((row) => row.path === edit.folder && row.kind === "folder");
+  // Ein Ordner, der nicht sichtbar ist, kann keine Eingabezeile zeigen.
+  if (edit.folder !== "" && parent < 0) return [...rows];
+  const depth = edit.folder === "" ? 0 : rows[parent].depth + 1;
+  let position = parent + 1;
+  while (position < rows.length && rows[position].depth >= depth) {
+    const row = rows[position];
+    if (row.depth === depth && (edit.kind === "folder" || row.kind === "file")) break;
+    position += 1;
+  }
+  const added: Row = {
+    path: childPath(edit.folder, ""),
+    name: "",
+    kind: edit.kind,
+    depth,
+    expanded: false,
+    edit: "create",
+  };
+  return [...rows.slice(0, position), added, ...rows.slice(position)];
+}
+
+/**
+ * Überträgt den Zustand eines umbenannten Eintrags auf seinen neuen Pfad:
+ * Ein aufgeklappter Ordner bleibt samt Unterordnern aufgeklappt.
+ */
+export function renameInTree(tree: ExplorerTree, from: string, to: string): ExplorerTree {
+  const moved = (path: string) =>
+    path === from || isBelow(path, from) ? to + path.slice(from.length) : path;
+  return {
+    listings: new Map([...tree.listings].map(([path, entries]) => [moved(path), entries])),
+    expanded: new Set([...tree.expanded].map(moved)),
+  };
 }

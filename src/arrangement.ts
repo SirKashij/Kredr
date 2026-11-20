@@ -5,10 +5,18 @@
  * nur aus einfachen Daten und lässt sich deshalb als JSON speichern.
  */
 
+import type { Shell } from "./settingsStore";
+
 export interface Tab {
   id: string;
+  /** Der selbst vergebene Name; ohne ihn heißt das Terminal wie seine Shell. */
+  name?: string;
+  /** Die Shell des Terminals; fehlt nur, bis `assignShell` die Standard-Shell einträgt. */
+  shell?: Shell;
   /** Gesetzt, wenn in diesem Terminal ein Agent gestartet wurde. */
   agent?: true;
+  /** Der Startordner des Terminals, wenn es nicht im Projektordner startet. */
+  cwd?: string;
   /** Was der Tab zeigt; fehlt bei einem Terminal. */
   content?: TabContent;
   /** Gesetzt bei einem Vorschau-Tab: Die nächste Vorschau seiner Gruppe ersetzt ihn. */
@@ -98,29 +106,33 @@ function groupOfTab(arrangement: Arrangement, tabId: string): Group | undefined 
   return groupsOf(arrangement).find((group) => group.tabs.some((tab) => tab.id === tabId));
 }
 
-function newTab(nextId: number, agent: boolean): Tab {
-  return agent ? { id: `t${nextId}`, agent: true } : { id: `t${nextId}` };
+function newTab(nextId: number, agent: boolean, shell?: Shell): Tab {
+  const tab: Tab = { id: `t${nextId}` };
+  if (agent) tab.agent = true;
+  if (shell) tab.shell = shell;
+  return tab;
 }
 
 /** Eine neue Gruppe mit einem neuen Tab; sie verbraucht zwei Kennungen. */
-function newGroup(nextId: number, agent = false): Group {
-  const tab = newTab(nextId, agent);
+function newGroup(nextId: number, agent = false, shell?: Shell): Group {
+  const tab = newTab(nextId, agent, shell);
   return { kind: "group", id: `g${nextId + 1}`, tabs: [tab], activeTab: tab.id };
 }
 
 /**
  * Öffnet einen neuen Tab in der fokussierten Gruppe und zeigt ihn an. Ohne
  * Gruppen entsteht die erste; hat keine Gruppe den Fokus, nimmt ihn die erste.
- * Mit `agent` ist es ein Terminal, in dem ein Agent startet.
+ * Mit `agent` ist es ein Terminal, in dem ein Agent startet; mit `shell`
+ * läuft darin diese Shell statt der Standard-Shell.
  */
-export function openTab(arrangement: Arrangement, agent = false): Arrangement {
+export function openTab(arrangement: Arrangement, agent = false, shell?: Shell): Arrangement {
   const { root, nextId } = arrangement;
   if (!root) {
-    const group = newGroup(nextId, agent);
+    const group = newGroup(nextId, agent, shell);
     return { ...arrangement, root: group, focusedGroup: group.id, nextId: nextId + 2 };
   }
   const target = focusedGroupOf(arrangement) ?? groupsOf(arrangement)[0];
-  const tab = newTab(nextId, agent);
+  const tab = newTab(nextId, agent, shell);
   return {
     ...arrangement,
     root: replaceGroup(root, target.id, (group) => ({
@@ -131,6 +143,21 @@ export function openTab(arrangement: Arrangement, agent = false): Arrangement {
     focusedGroup: target.id,
     nextId: nextId + 1,
   };
+}
+
+/**
+ * Öffnet wie `openTab` einen neuen Tab, dessen Terminal aber im Ordner `cwd`
+ * startet („Terminal hier öffnen“, „Agent hier starten“).
+ */
+export function openTabIn(arrangement: Arrangement, cwd: string, agent = false): Arrangement {
+  const opened = openTab(arrangement, agent);
+  const target = focusedGroupOf(opened);
+  if (!opened.root || !target) return opened;
+  const root = replaceGroup(opened.root, target.id, (group) => ({
+    ...group,
+    tabs: group.tabs.map((tab) => (tab.id === group.activeTab ? { ...tab, cwd } : tab)),
+  }));
+  return { ...opened, root };
 }
 
 /**
@@ -172,6 +199,35 @@ export function closeTab(arrangement: Arrangement, tabId: string): Arrangement {
   const position = before.indexOf(group);
   const heir = before[position - 1] ?? before[position + 1];
   return { ...arrangement, root, focusedGroup: heir?.id ?? null };
+}
+
+/**
+ * Gibt dem Tab einen eigenen Namen. Ein leerer Name nimmt ihn wieder weg;
+ * der Tab heißt dann wie seine Shell.
+ */
+export function renameTab(arrangement: Arrangement, tabId: string, name: string): Arrangement {
+  const group = groupOfTab(arrangement, tabId);
+  if (!arrangement.root || !group) return arrangement;
+  const trimmed = name.trim();
+  const rename = ({ name: _, ...tab }: Tab): Tab => (trimmed ? { ...tab, name: trimmed } : tab);
+  const tabs = group.tabs.map((tab) => (tab.id === tabId ? rename(tab) : tab));
+  const root = replaceGroup(arrangement.root, group.id, () => ({ ...group, tabs }));
+  return { ...arrangement, root };
+}
+
+/**
+ * Trägt bei jedem Terminal, für das keine Shell gewählt wurde, `shell` ein: die
+ * Standard-Shell zum Zeitpunkt seines Entstehens. Eine spätere Änderung der
+ * Standard-Shell lässt bestehende Terminals damit unberührt.
+ */
+export function assignShell(arrangement: Arrangement, shell: Shell): Arrangement {
+  const settled = (tab: Tab) => tab.shell !== undefined || !isTerminal(tab);
+  if (!arrangement.root || tabsOf(arrangement).every(settled)) return arrangement;
+  const assign = (node: TreeNode): TreeNode =>
+    node.kind === "group"
+      ? { ...node, tabs: node.tabs.map((tab) => (settled(tab) ? tab : { ...tab, shell })) }
+      : { ...node, children: node.children.map(assign) };
+  return { ...arrangement, root: assign(arrangement.root) };
 }
 
 /** Wohin ein Tab verschoben wird. */

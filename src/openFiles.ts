@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { editor } from "monaco-editor/editor/editor.api";
+import { fullPath } from "./filePath";
 import {
   edited,
   loadingFile,
@@ -22,11 +23,6 @@ export interface FilePosition {
   endColumn?: number;
 }
 
-/** Ob der Pfad voll ist, also auf eine Datei außerhalb des Projekts zeigt. */
-function isAbsolute(path: string): boolean {
-  return /^([A-Za-z]:)?\//.test(path);
-}
-
 /**
  * Eine geöffnete Datei: ihr Zustand, ihr Text in Monaco und die Stelle, an der
  * zuletzt gelesen wurde. Sie lebt, solange ihr Tab offen ist, unabhängig davon,
@@ -44,6 +40,7 @@ export class OpenFile {
   private shown: editor.ICodeEditor | null = null;
   private viewState: editor.ICodeEditorViewState | null = null;
   private pendingPosition: FilePosition | null = null;
+  private focusWanted = false;
   private reads = 0;
   private disposed = false;
 
@@ -103,6 +100,18 @@ export class OpenFile {
     this.applyPosition();
   }
 
+  /** Merkt vor, dass die Ansicht dieser Datei die Tastatureingaben erhalten soll. */
+  wantFocus() {
+    this.focusWanted = true;
+  }
+
+  /** Ob die Tastatureingaben vorgemerkt waren; die Vormerkung ist damit eingelöst. */
+  takeFocusWish(): boolean {
+    const wanted = this.focusWanted;
+    this.focusWanted = false;
+    return wanted;
+  }
+
   /** Meldet die Monaco-Ansicht an, die diese Datei gerade zeigt. */
   attach(shown: editor.ICodeEditor) {
     this.shown = shown;
@@ -149,10 +158,11 @@ export class OpenFile {
 
   private createModel(monaco: typeof import("./monaco").monaco) {
     if (this.disposed || this.textModel || this.pendingText === null) return;
-    const full = isAbsolute(this.path) ? this.path : `${this.project}/${this.path}`;
     // Die Sprache ergibt sich aus Dateiname und Endung. Die laufende Nummer
     // hält die Adresse eindeutig, falls die Datei gerade erst geschlossen wurde.
-    const uri = monaco.Uri.file(full).with({ query: String((modelCount += 1)) });
+    const uri = monaco.Uri.file(fullPath(this.project, this.path)).with({
+      query: String((modelCount += 1)),
+    });
     const model = monaco.editor.createModel(this.pendingText, undefined, uri);
     this.pendingText = null;
     this.textModel = model;

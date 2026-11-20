@@ -1,10 +1,11 @@
 import { message } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { editor } from "monaco-editor/editor/editor.api";
-import { fileName } from "./filePath";
+import { fileName, fullPath } from "./filePath";
 import { useT } from "./i18n/i18n";
 import { loadMonaco } from "./monacoLoader";
 import type { OpenFile, OpenFiles } from "./openFiles";
+import { openFileExternally } from "./openExternally";
 import { useSettings } from "./settings";
 
 /** Rendert neu, sobald sich der Zustand einer offenen Datei ändert. */
@@ -56,7 +57,24 @@ export function FileView({
             : state.phase === "missing"
               ? t("file.missing", { name })
               : t("file.readFailed", { name, details: state.error ?? "" });
-    return <div className="file-view">{notice && <p className="file-notice">{notice}</p>}</div>;
+    const external = state.phase === "binary" || state.phase === "tooLarge";
+    return (
+      <div className="file-view">
+        {notice && (
+          <div className="file-notice">
+            <p>{notice}</p>
+            {external && (
+              <button
+                className="btn ghost"
+                onClick={() => openFileExternally({ path: fullPath(project, path) })}
+              >
+                {t("file.openExternally")}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -158,10 +176,17 @@ function FileEditor({
     shown?.updateOptions({ fontFamily: settings.fontFamily, fontSize: settings.fontSize });
   }, [shown, settings.fontFamily, settings.fontSize]);
 
+  const requestAtMount = useRef(focusRequest);
   useEffect(() => {
+    if (!focused || !shown) return;
+    const active = document.activeElement;
     // Wer gerade in ein Feld der Ansicht klickt (etwa die Suche), behält dort den Fokus.
-    if (focused && shown && !host.current!.contains(document.activeElement)) shown.focus();
-  }, [focused, focusRequest, shown]);
+    if (host.current!.contains(active)) return;
+    // Beim Durchklicken in der Seitenleiste (Vorschau) bleibt die Tastatur
+    // dort, bis die Datei ausdrücklich geöffnet oder der Hauptbereich bedient wird.
+    const browsing = active?.closest(".sidebar") && focusRequest === requestAtMount.current;
+    if (file.takeFocusWish() || !browsing) shown.focus();
+  }, [file, focused, focusRequest, shown]);
 
   return <div className="file-editor" ref={host} />;
 }

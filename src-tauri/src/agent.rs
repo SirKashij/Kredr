@@ -1,8 +1,12 @@
 //! Agent-Start: der Befehl, der in einem Terminal einen Agenten startet, und
 //! die Prüfung, ob sein Programm installiert ist. Kredr gibt dem Agenten
-//! nichts mit und fasst keine Einstellungen von Claude Code an.
+//! nur die Konfiguration für den Agentenstatus mit und fasst keine
+//! Einstellungen von Claude Code an.
 
 use std::ffi::OsStr;
+use std::path::Path;
+
+use crate::terminal::Shell;
 
 /// Startet Claude Code, solange die Einstellungen nichts anderes sagen.
 pub const DEFAULT_START_COMMAND: &str = "claude";
@@ -33,4 +37,38 @@ pub fn missing_program(command: &str, search_path: &OsStr) -> Option<String> {
                 .any(|extension| dir.join(format!("{program}.{extension}")).is_file())
     });
     (!found).then(|| program.to_owned())
+}
+
+/// Der Startbefehl `command`, ergänzt um die Konfigurationsdatei `settings`
+/// für den Agentenstatus. Sie gilt nur für diese eine Sitzung von Claude
+/// Code und kommt zu dessen eigenen Einstellungen hinzu.
+///
+/// Ergänzt wird nur, wenn der Befehl mit dem Programm `claude` beginnt, als
+/// Name oder als Pfad ohne Leerzeichen. Jeder andere Befehl bleibt, wie er
+/// ist; sein Agent hat dann keinen Agentenstatus.
+///
+/// Der Pfad ist so zitiert, wie `shell` es verlangt, damit er auch mit
+/// Leerzeichen oder Apostroph als ein Argument ankommt.
+pub fn with_status_settings(command: &str, settings: &Path, shell: Shell) -> String {
+    let trimmed = command.trim_start();
+    let program = trimmed.split_whitespace().next().unwrap_or_default();
+    let is_claude = Path::new(program)
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("claude"));
+    let plain = !program.contains(['"', '\'', '$', '&', ';', '|']);
+    if !is_claude || !plain {
+        return command.to_owned();
+    }
+    // In einfachen Anführungszeichen werten beide Shells nichts aus, auch
+    // keine Backslashes eines Windows-Pfads. Nur der Apostroph im Pfad
+    // unterscheidet sich: PowerShell verdoppelt ihn, Bash kennt innerhalb
+    // der Anführungszeichen keine Maskierung und setzt ihn dazwischen.
+    let apostrophe = match shell {
+        Shell::Powershell => "''",
+        Shell::GitBash => r"'\''",
+    };
+    let quoted = settings.to_string_lossy().replace('\'', apostrophe);
+    let rest = &trimmed[program.len()..];
+    format!("{program} --settings '{quoted}'{rest}")
 }

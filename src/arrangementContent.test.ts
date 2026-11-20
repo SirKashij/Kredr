@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import {
+  assignShell,
   closeTab,
   emptyArrangement,
   focusedGroupOf,
@@ -166,4 +167,11 @@ test("die Aufteilung mit Dateiansichten übersteht Speichern und Laden als JSON"
   const arrangement = openContent(openContent(single, file("a.ts")), file("b.ts"), true);
 
   expect(JSON.parse(JSON.stringify(arrangement))).toEqual(arrangement);
+});
+
+test("die Standard-Shell wird nur Terminals eingetragen, nicht Dateiansichten", () => {
+  const arrangement = assignShell(openContent(single, file("a.ts")), "gitBash");
+
+  expect(tabsOf(arrangement).map((tab) => tab.shell)).toEqual(["gitBash", undefined]);
+  expect(assignShell(arrangement, "powershell")).toBe(arrangement);
 });
