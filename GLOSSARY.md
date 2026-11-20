@@ -31,6 +31,10 @@ _Vermeiden_: Bot, KI, Claude-Terminal
 **Agentenstatus**:
 Der Zustand eines Agenten aus Sicht der Person: arbeitet, ist fertig oder wartet auf Eingabe.
 
+**Agenten-Ansicht**:
+Die Übersicht aller Agenten und Terminals eines Fensters in der Seitenleiste, jeweils mit Agentenstatus.
+_Vermeiden_: Agentenliste, Agenten-Leiste, Dashboard
+
 **Aufteilung**:
 Die Anordnung der Gruppen und Terminals eines Fensters samt Namen und Startordnern; sie wird pro Projekt gespeichert und beim Öffnen wiederhergestellt. Laufende Prozesse gehören nicht dazu.
 _Vermeiden_: Layout, Sitzungszustand
