@@ -1,0 +1,226 @@
+import {
+  Fragment,
+  useRef,
+  useState,
+  type MouseEvent,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
+import {
+  activateTab,
+  focusGroup,
+  moveDivider,
+  openTab,
+  splitGroup,
+  type Arrangement,
+  type Group,
+  type Split,
+  type TreeNode,
+} from "./arrangement";
+import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { useT } from "./i18n/i18n";
+import type { TerminalSessions } from "./terminalSessions";
+import { TerminalView } from "./TerminalView";
+
+/** Schmaler lässt sich eine Gruppe mit der Trennlinie nicht ziehen (in Pixeln). */
+const MIN_GROUP_SIZE = 80;
+
+interface Shared {
+  arrangement: Arrangement;
+  sessions: TerminalSessions;
+  /** Der Ordner des Projekts; darin starten die Terminals. */
+  cwd: string;
+  /** Steigt mit jeder Bedienung der Aufteilung; danach erhält das Terminal wieder den Fokus. */
+  focusRequest: number;
+  /** Wendet eine Operation auf die Aufteilung an. */
+  update: (change: (arrangement: Arrangement) => Arrangement) => void;
+  /** Schließt ein Terminal, bei laufendem Kindprozess nach Rückfrage. */
+  onCloseTab: (tabId: string) => void;
+  onOpenMenu: (menu: Menu) => void;
+}
+
+interface Menu {
+  x: number;
+  y: number;
+  items: MenuItem[];
+}
+
+const icons: Record<"new" | "splitRight" | "splitDown" | "close", ReactNode> = {
+  new: <path d="M8 3v10M3 8h10" />,
+  splitRight: (
+    <>
+      <rect x="2.5" y="3" width="11" height="10" rx="1" />
+      <path d="M8 3v10" />
+    </>
+  ),
+  splitDown: (
+    <>
+      <rect x="2.5" y="3" width="11" height="10" rx="1" />
+      <path d="M2.5 8h11" />
+    </>
+  ),
+  close: <path d="m4.5 4.5 7 7M11.5 4.5l-7 7" />,
+};
+
+function Icon({ name }: { name: keyof typeof icons }) {
+  return (
+    <svg className="icon" viewBox="0 0 16 16">
+      {icons[name]}
+    </svg>
+  );
+}
+
+/** Der Hauptbereich: die Gruppen der Aufteilung mit ihren Tabs und Trennlinien. */
+export function MainArea(props: Omit<Shared, "onOpenMenu"> & { root: TreeNode }) {
+  const { root, ...shared } = props;
+  const [menu, setMenu] = useState<Menu | null>(null);
+  return (
+    <>
+      <NodeView node={root} {...shared} onOpenMenu={setMenu} />
+      {menu && (
+        <ContextMenu
+          {...menu}
+          onClose={() => {
+            setMenu(null);
+            // Der Rechtsklick hat dem Terminal den Fokus genommen.
+            shared.update((arrangement) => arrangement);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function NodeView({ node, ...shared }: Shared & { node: TreeNode }) {
+  return node.kind === "group" ? (
+    <GroupView group={node} {...shared} />
+  ) : (
+    <SplitView split={node} {...shared} />
+  );
+}
+
+function SplitView({ split, ...shared }: Shared & { split: Split }) {
+  const container = useRef<HTMLDivElement>(null);
+
+  function drag(event: PointerEvent<HTMLDivElement>, index: number) {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const box = container.current!.getBoundingClientRect();
+    const [offset, extent] =
+      split.axis === "row"
+        ? [event.clientX - box.left, box.width]
+        : [event.clientY - box.top, box.height];
+    shared.update((arrangement) =>
+      moveDivider(arrangement, split.id, index, offset / extent, MIN_GROUP_SIZE / extent),
+    );
+  }
+
+  return (
+    <div className={`split ${split.axis}`} ref={container}>
+      {split.children.map((child, index) => (
+        <Fragment key={child.id}>
+          {index > 0 && (
+            <div
+              className="divider"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+              }}
+              onPointerMove={(event) => drag(event, index - 1)}
+            />
+          )}
+          <div className="split-part" style={{ flexGrow: split.sizes[index] }}>
+            <NodeView node={child} {...shared} />
+          </div>
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+function GroupView({ group, ...shared }: Shared & { group: Group }) {
+  const t = useT();
+  const { arrangement, update, onCloseTab, onOpenMenu } = shared;
+
+  const newTerminal = () => update((a) => openTab(focusGroup(a, group.id)));
+  const splitRight = () => update((a) => splitGroup(a, group.id, "right"));
+  const splitDown = () => update((a) => splitGroup(a, group.id, "down"));
+
+  function openMenu(event: MouseEvent, tabId?: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    const items: MenuItem[] = [
+      { label: t("terminal.new"), onSelect: newTerminal },
+      { label: t("group.splitRight"), onSelect: splitRight },
+      { label: t("group.splitDown"), onSelect: splitDown },
+    ];
+    if (tabId) items.push({ label: t("tab.close"), onSelect: () => onCloseTab(tabId) });
+    onOpenMenu({ x: event.clientX, y: event.clientY, items });
+  }
+
+  return (
+    <section
+      className={group.id === arrangement.focusedGroup ? "group focused" : "group"}
+      onPointerDownCapture={() => update((a) => focusGroup(a, group.id))}
+    >
+      <div className="tabs" onContextMenu={(event) => openMenu(event)}>
+        <div className="tab-list" role="tablist">
+          {group.tabs.map((tab) => (
+            <div
+              key={tab.id}
+              role="tab"
+              aria-selected={tab.id === group.activeTab}
+              className={tab.id === group.activeTab ? "tab on" : "tab"}
+              onClick={() => update((a) => activateTab(a, tab.id))}
+              onAuxClick={(event) => {
+                // Mittelklick schließt wie in VS Code.
+                if (event.button === 1) onCloseTab(tab.id);
+              }}
+              onContextMenu={(event) => openMenu(event, tab.id)}
+            >
+              <span className="tab-icon">›_</span>
+              <span>{t("terminal.powershell")}</span>
+              <button
+                className="tab-close"
+                title={t("tab.closeTooltip")}
+                aria-label={t("tab.close")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onCloseTab(tab.id);
+                }}
+              >
+                <Icon name="close" />
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="tab-actions">
+          <button title={t("terminal.newTooltip")} aria-label={t("terminal.new")} onClick={newTerminal}>
+            <Icon name="new" />
+          </button>
+          <button
+            title={t("group.splitRightTooltip")}
+            aria-label={t("group.splitRight")}
+            onClick={splitRight}
+          >
+            <Icon name="splitRight" />
+          </button>
+          <button
+            title={t("group.splitDownTooltip")}
+            aria-label={t("group.splitDown")}
+            onClick={splitDown}
+          >
+            <Icon name="splitDown" />
+          </button>
+        </div>
+      </div>
+      <TerminalView
+        key={group.activeTab}
+        sessions={shared.sessions}
+        tabId={group.activeTab}
+        cwd={shared.cwd}
+        focused={group.id === arrangement.focusedGroup}
+        focusRequest={shared.focusRequest}
+      />
+    </section>
+  );
+}

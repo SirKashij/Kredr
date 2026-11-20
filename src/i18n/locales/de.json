@@ -5,7 +5,7 @@
   "activity.versionControl": "Versionskontrolle",
   "activity.settings": "Einstellungen",
   "sidebar.terminals": "Terminals",
-  "sidebar.noTerminals": "Noch kein Terminal geöffnet.",
+  "sidebar.noTerminals": "Kein Terminal geöffnet.",
   "sidebar.notAvailable": "Diese Ansicht folgt in einem späteren Schritt.",
   "welcome.text": "Öffne einen Ordner als Projekt, um loszulegen.",
   "welcome.openFolder": "Ordner öffnen",
@@ -14,5 +14,17 @@
   "terminal.exited": "Der Prozess wurde beendet.",
   "terminal.startFailed": "Das Terminal konnte nicht gestartet werden: {details}",
   "status.noProject": "Kein Projekt geöffnet",
-  "window.title": "{project} — Kredr"
+  "window.title": "{project} — Kredr",
+  "terminal.new": "Neues Terminal",
+  "terminal.newTooltip": "Neues Terminal (Strg+Umschalt+Ö)",
+  "terminal.closeConfirm.title": "Terminal schließen?",
+  "terminal.closeConfirm.message": "In diesem Terminal läuft noch ein Prozess. Beim Schließen wird er beendet.",
+  "terminal.closeConfirm.ok": "Terminal schließen",
+  "dialog.cancel": "Abbrechen",
+  "group.splitRight": "Nach rechts teilen",
+  "group.splitRightTooltip": "Nach rechts teilen (Strg+Umschalt+5)",
+  "group.splitDown": "Nach unten teilen",
+  "group.splitDownTooltip": "Nach unten teilen (Strg+K, Strg+^)",
+  "tab.close": "Schließen",
+  "tab.closeTooltip": "Schließen (Strg+F4)"
 }
