@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use kredr_lib::agent::with_status_settings;
 use kredr_lib::agent_status::{AgentState, AgentStatus, StatusUpdate};
-use kredr_lib::terminal::{Shell, Terminal, TerminalEvent, TerminalOptions};
+use kredr_lib::terminal::{available_shells, Shell, Terminal, TerminalEvent, TerminalOptions};
 use serde_json::{json, Value};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -459,6 +459,7 @@ fn der_agent_startet_mit_der_konfiguration_und_das_projekt_bleibt_unberuehrt() {
     let command = with_status_settings(
         programs.join("claude.cmd").to_str().unwrap(),
         &agent.settings,
+        Shell::Powershell,
     );
     let (sender, events) = channel();
     let options = TerminalOptions {
@@ -491,4 +492,67 @@ fn der_agent_startet_mit_der_konfiguration_und_das_projekt_bleibt_unberuehrt() {
         format!("--settings {}", agent.settings.display())
     );
     assert_eq!(snapshot(&project), before);
+}
+
+#[test]
+fn in_git_bash_kommt_die_konfiguration_als_ein_argument_beim_agenten_an() {
+    if !available_shells().contains(&Shell::GitBash) {
+        eprintln!("Git Bash wurde nicht gefunden; Test übersprungen");
+        return;
+    }
+    let folder = runtime_folder("git-bash");
+    let project = folder.join("projekt");
+    std::fs::create_dir_all(&project).unwrap();
+    // Anstelle von Claude Code ein Skript gleichen Namens, das jedes
+    // Argument in eine eigene Zeile schreibt.
+    let programs = folder.join("programme");
+    std::fs::create_dir_all(&programs).unwrap();
+    let arguments = programs.join("argumente.txt");
+    std::fs::write(
+        programs.join("claude"),
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$(dirname \"$0\")/argumente.txt\"\n",
+    )
+    .unwrap();
+
+    // Der Laufzeitordner liegt im Benutzerordner; dessen Name kann
+    // Leerzeichen und einen Apostroph enthalten.
+    let status = AgentStatus::start(folder.join("Max O'Neil").join("lauf zeit")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let program = programs.join("claude").to_str().unwrap().replace('\\', "/");
+    let command = with_status_settings(
+        &format!("{program} --model opus"),
+        &agent.settings,
+        Shell::GitBash,
+    );
+    let (sender, events) = channel();
+    let options = TerminalOptions {
+        shell: Shell::GitBash,
+        cwd: project,
+        cols: 200,
+        rows: 30,
+        start_command: Some(command),
+    };
+    let terminal = Terminal::open(options, move |event| {
+        let _ = sender.send(event);
+    })
+    .expect("Git Bash sollte starten");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !arguments.exists() {
+        assert!(Instant::now() < deadline, "Der Agent wurde nie gestartet");
+        // ConPTY wartet beim Start auf die Antwort auf seine Cursorabfrage.
+        if let Ok(TerminalEvent::Output(bytes)) = events.recv_timeout(Duration::from_millis(50)) {
+            if String::from_utf8_lossy(&bytes).contains("\x1b[6n") {
+                terminal.write(b"\x1b[1;1R").unwrap();
+            }
+        }
+    }
+    // Die Datei entsteht, bevor ihr Inhalt geschrieben ist.
+    std::thread::sleep(Duration::from_millis(200));
+
+    let passed = std::fs::read_to_string(&arguments).unwrap();
+    let settings = agent.settings.display().to_string();
+    assert_eq!(
+        passed.lines().collect::<Vec<_>>(),
+        ["--settings", settings.as_str(), "--model", "opus"]
+    );
 }
