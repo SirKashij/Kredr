@@ -26,6 +26,10 @@ windows-sys = { version = "0.61", features = [
 ] }
 notify = "8"
 tauri-plugin-single-instance = "2"
+grep-searcher = "0.1.17"
+grep-regex = "0.1.14"
+grep-matcher = "0.1.9"
+ignore = "0.4.34"
 
 [profile.release]
 codegen-units = 1
