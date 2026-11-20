@@ -1,11 +1,16 @@
 import { expect, test } from "vitest";
 import {
   emptyTree,
+  expandFolder,
+  folderFor,
   foldersToLoad,
   foldersToReload,
   receiveListing,
+  renameInTree,
   rowsOf,
+  rowsWithEdit,
   toggleFolder,
+  type Edit,
   type ExplorerTree,
 } from "./explorerTree";
 import type { Entry } from "./projectFiles";
@@ -181,4 +186,131 @@ test("ein Ordner mit gleichem Namensanfang bleibt beim Löschen seines Nachbarn 
   tree = receiveListing(tree, "", [folder("src-tauri")]);
 
   expect(shown(tree)).toEqual(["src-tauri", "  Cargo.toml"]);
+});
+
+/** Die Zeilen samt Namenseingabe; die Eingabezeile ist mit `>` markiert. */
+function shownWithEdit(tree: ExplorerTree, edit: Edit): string[] {
+  return rowsWithEdit(rowsOf(tree), edit).map(
+    (row) => "  ".repeat(row.depth) + (row.edit ? `>${row.name}` : row.name),
+  );
+}
+
+/** Projekt mit aufgeklapptem `src` (Unterordner `ui`, Datei `main.ts`) und `README.md`. */
+function sampleProject(): ExplorerTree {
+  const tree = projectWith([folder("src"), folder("tests"), file("README.md")]);
+  return expandWith(tree, "src", [folder("ui"), file("main.ts")]);
+}
+
+test("ein neuer Eintrag entsteht im ausgewählten Ordner, neben einer ausgewählten Datei oder im Projektordner", () => {
+  expect(folderFor({ path: "src/ui", kind: "folder" })).toBe("src/ui");
+  expect(folderFor({ path: "src/main.ts", kind: "file" })).toBe("src");
+  expect(folderFor({ path: "README.md", kind: "file" })).toBe("");
+  expect(folderFor(null)).toBe("");
+});
+
+test("die Eingabezeile für eine neue Datei steht unter den Unterordnern ihres Ordners", () => {
+  const edit: Edit = { type: "create", folder: "src", kind: "file" };
+
+  expect(shownWithEdit(sampleProject(), edit)).toEqual([
+    "src",
+    "  ui",
+    "  >",
+    "  main.ts",
+    "tests",
+    "README.md",
+  ]);
+});
+
+test("die Eingabezeile für einen neuen Ordner steht ganz oben in ihrem Ordner", () => {
+  const edit: Edit = { type: "create", folder: "src", kind: "folder" };
+
+  expect(shownWithEdit(sampleProject(), edit)).toEqual([
+    "src",
+    "  >",
+    "  ui",
+    "  main.ts",
+    "tests",
+    "README.md",
+  ]);
+});
+
+test("im Projektordner steht die Eingabezeile für eine Datei hinter allen Ordnern samt Inhalt", () => {
+  const edit: Edit = { type: "create", folder: "", kind: "file" };
+
+  expect(shownWithEdit(sampleProject(), edit)).toEqual([
+    "src",
+    "  ui",
+    "  main.ts",
+    "tests",
+    ">",
+    "README.md",
+  ]);
+});
+
+test("in einem leeren oder noch nicht gelesenen Ordner steht die Eingabezeile direkt unter ihm", () => {
+  const tree = toggleFolder(sampleProject(), "tests");
+
+  expect(shownWithEdit(tree, { type: "create", folder: "tests", kind: "file" })).toEqual([
+    "src",
+    "  ui",
+    "  main.ts",
+    "tests",
+    "  >",
+    "README.md",
+  ]);
+  expect(shownWithEdit(emptyTree, { type: "create", folder: "", kind: "folder" })).toEqual([">"]);
+});
+
+test("die Eingabezeile eines neuen Eintrags ist von jeder vorhandenen Zeile unterscheidbar", () => {
+  const rows = rowsWithEdit(rowsOf(sampleProject()), {
+    type: "create",
+    folder: "src",
+    kind: "file",
+  });
+
+  expect(new Set(rows.map((row) => row.path)).size).toBe(rows.length);
+  expect(rows.find((row) => row.edit)).toMatchObject({ kind: "file", edit: "create", depth: 1 });
+});
+
+test("beim Umbenennen wird die vorhandene Zeile zur Eingabezeile", () => {
+  expect(shownWithEdit(sampleProject(), { type: "rename", path: "src/main.ts" })).toEqual([
+    "src",
+    "  ui",
+    "  >main.ts",
+    "tests",
+    "README.md",
+  ]);
+});
+
+test("ohne Namenseingabe bleiben die Zeilen, wie sie sind", () => {
+  const rows = rowsOf(sampleProject());
+
+  expect(rowsWithEdit(rows, null)).toEqual(rows);
+});
+
+test("zum Anlegen klappt der Zielordner samt den Ordnern über ihm auf", () => {
+  const tree = expandFolder(projectWith([folder("src")]), "src/ui/deep");
+
+  expect([...tree.expanded].sort()).toEqual(["src", "src/ui", "src/ui/deep"]);
+  expect(foldersToLoad(tree)).toEqual(["src"]);
+  expect(expandFolder(tree, "")).toBe(tree);
+});
+
+test("ein umbenannter Ordner bleibt samt seinen Unterordnern aufgeklappt", () => {
+  let tree = expandWith(sampleProject(), "src/ui", [file("App.tsx")]);
+
+  tree = renameInTree(tree, "src", "source");
+  // Danach meldet der Ereignisstrom die Änderung, und der Projektordner wird neu gelesen.
+  tree = receiveListing(tree, "", [folder("source"), folder("docs"), file("README.md")]);
+
+  expect(shown(tree)).toEqual(["docs", "source", "  ui", "    App.tsx", "  main.ts", "README.md"]);
+});
+
+test("Umbenennen lässt Ordner mit ähnlich beginnendem Namen unberührt", () => {
+  let tree = projectWith([folder("src"), folder("src-tauri")]);
+  tree = toggleFolder(toggleFolder(tree, "src"), "src-tauri");
+
+  tree = renameInTree(tree, "src", "app");
+
+  expect([...tree.expanded].sort()).toEqual(["app", "src-tauri"]);
 });

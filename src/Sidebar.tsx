@@ -30,9 +30,11 @@ interface SidebarProps extends AgentsViewProps {
   visible: boolean;
   /** Der Ordner des Projekts dieses Fensters. */
   project: string | null;
+  /** Öffnet ein Terminal in diesem Ordner, mit `agent` samt einem Agenten. */
+  onOpenTerminalIn: (folder: string, agent: boolean) => void;
 }
 
-export function Sidebar({ view, visible, project, ...agents }: SidebarProps) {
+export function Sidebar({ view, visible, project, onOpenTerminalIn, ...agents }: SidebarProps) {
   const t = useT();
   const [width, setWidth] = useState(280);
   const sidebar = useRef<HTMLElement>(null);
@@ -59,7 +61,14 @@ export function Sidebar({ view, visible, project, ...agents }: SidebarProps) {
         )}
       </div>
       {/* Der Explorer bleibt bestehen, damit er beim Wechsel der Ansicht nichts neu lesen muss. */}
-      {project !== null && <Explorer key={project} project={project} hidden={!showsExplorer} />}
+      {project !== null && (
+        <Explorer
+          key={project}
+          project={project}
+          hidden={!showsExplorer}
+          onOpenTerminalIn={onOpenTerminalIn}
+        />
+      )}
       <div
         className="sash"
         role="separator"

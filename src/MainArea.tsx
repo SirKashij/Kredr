@@ -382,7 +382,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
         key={group.activeTab}
         terminals={shared.terminals}
         tab={activeTab}
-        cwd={shared.cwd}
+        cwd={activeTab.cwd ?? shared.cwd}
         // Solange ein Tab seinen Namen erhält, gehören die Eingaben dem Eingabefeld.
         focused={group.id === arrangement.focusedGroup && renaming === null}
         focusRequest={shared.focusRequest}
