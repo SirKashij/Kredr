@@ -35,6 +35,7 @@ export function App() {
   const { settings } = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<View>("agents");
+  const [sidebarVisible, setSidebarVisible] = useState(true);
   /** Der Ordner des Projekts dieses Fensters. */
   const [project, setProject] = useState<string | null>(null);
   const [arrangement, setArrangement] = useState(emptyArrangement);
@@ -128,6 +129,11 @@ export function App() {
     update((current) => closeTab(current, tabId));
   }
 
+  /** Zeigt eine Ansicht; ein Klick auf die bereits gezeigte blendet die Seitenleiste aus. */
+  function selectView(next: View) {
+    setSidebarVisible(next !== view || !sidebarVisible);
+    setView(next);
+  }
   /** „Neuer Agent“: öffnet ein Terminal, in dem sofort der Agent startet. */
   const newAgent = (current: Arrangement) => openTab(current, true);
 
@@ -160,6 +166,11 @@ export function App() {
         return update((current) => activateAdjacentTab(current, 1));
       case "previousTab":
         return update((current) => activateAdjacentTab(current, -1));
+      case "showExplorer":
+        setView("explorer");
+        return setSidebarVisible(true);
+      case "toggleSidebar":
+        return setSidebarVisible((visible) => !visible);
       case "closeTab":
         if (focused) closeTerminal(focused.activeTab);
     }
@@ -198,13 +209,15 @@ export function App() {
     <>
       <div className="workbench">
         <ActivityBar
-          view={view}
-          onSelect={setView}
+          view={sidebarVisible ? view : null}
+          onSelect={selectView}
           settingsOpen={settingsOpen}
           onToggleSettings={() => (settingsOpen ? closeSettings() : setSettingsOpen(true))}
         />
         <Sidebar
           view={view}
+          visible={sidebarVisible}
+          project={project}
           arrangement={arrangement}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
           onNewAgent={project ? () => update(newAgent) : undefined}

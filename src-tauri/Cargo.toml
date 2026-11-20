@@ -23,6 +23,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
+notify = "8"
 
 [profile.release]
 codegen-units = 1
@@ -30,3 +31,6 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+[dev-dependencies]
+tempfile = "3"

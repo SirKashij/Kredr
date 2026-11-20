@@ -37,6 +37,11 @@ body {
   flex-direction: column;
 }
 
+/* Ausgeblendetes bleibt bestehen und behÃ¤lt seinen Zustand. */
+[hidden] {
+  display: none !important;
+}
+
 button {
   font: inherit;
   color: inherit;
@@ -101,6 +106,7 @@ button {
 
 /* Seitenleiste */
 .sidebar {
+  position: relative;
   width: 280px;
   flex: none;
   background: var(--side);
@@ -131,6 +137,87 @@ button {
 .hint {
   margin: 4px 16px;
   color: var(--dim);
+}
+
+/* GreifflÃ¤che am rechten Rand, mit der sich die Breite der Seitenleiste ziehen lÃ¤sst. */
+.sash {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  right: -4px;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.sash:hover,
+.sash:active {
+  background: linear-gradient(to right, transparent 3px, var(--accent) 3px 5px, transparent 5px);
+}
+
+/* Explorer */
+.tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Die HÃ¶he muss zu ROW_HEIGHT in Explorer.tsx passen. */
+.tree-row {
+  height: 22px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tree-row:hover {
+  background: #2a2d2e;
+}
+
+.tree-row.sel {
+  background: var(--sel);
+  color: #fff;
+}
+
+.tree-twist,
+.tree-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: var(--dim);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tree-twist {
+  margin-right: -4px;
+}
+
+.tree-twist.open {
+  transform: rotate(90deg);
+}
+
+.tree-icon.folder {
+  stroke: #dcb67a;
+}
+
+.tree-icon.glyph {
+  font:
+    700 9px/16px "Cascadia Mono",
+    Consolas,
+    monospace;
+  text-align: center;
+  letter-spacing: -0.5px;
+}
+
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cards {
