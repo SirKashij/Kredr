@@ -5,6 +5,7 @@ export type Command =
   | {
       kind:
         | "newTerminal"
+        | "newAgent"
         | "splitRight"
         | "splitDown"
         | "focusNextGroup"
@@ -43,6 +44,7 @@ const Key = {
   Digit1: 49,
   Digit5: 53,
   Digit8: 56,
+  A: 65,
   K: 75,
   F4: 115,
   Oem3: 192,
@@ -86,6 +88,8 @@ export function resolveKey(key: KeyStroke, chord: boolean): Command | "chord" | 
 
   if (shiftKey) {
     if (keyCode === Key.Oem3) return { kind: "newTerminal" };
+    // VS Code kennt keinen Agenten; dieses Kürzel ist dort unter Windows frei.
+    if (keyCode === Key.A) return { kind: "newAgent" };
     if (keyCode === Key.Digit5) return { kind: "splitRight" };
     return null;
   }

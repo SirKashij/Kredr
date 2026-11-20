@@ -17,11 +17,16 @@ struct TestTerminal {
 
 impl TestTerminal {
     fn open(cwd: PathBuf) -> TestTerminal {
+        TestTerminal::open_with(cwd, None)
+    }
+
+    fn open_with(cwd: PathBuf, start_command: Option<&str>) -> TestTerminal {
         let (sender, events) = channel();
         let options = TerminalOptions {
             cwd,
             cols: 200,
             rows: 30,
+            start_command: start_command.map(str::to_owned),
         };
         let terminal = Terminal::open(options, move |event| {
             let _ = sender.send(event);
@@ -120,6 +125,21 @@ fn shell_startet_im_startordner() {
     terminal.send_line("echo \"ort=$((Get-Location).Path)|\"");
 
     terminal.wait_for_output(&format!("{folder_name}|"));
+}
+
+#[test]
+fn startbefehl_laeuft_sofort_und_die_shell_bleibt_danach_offen() {
+    let project = temp_project("startbefehl");
+    let start_command = "echo \"agent-$(6*7) mit 'Zusatz'\"";
+
+    let mut terminal = TestTerminal::open_with(project, Some(start_command));
+
+    // Ohne jede Eingabe: Der Startbefehl ist schon gelaufen.
+    terminal.wait_for_output("agent-42 mit 'Zusatz'");
+
+    // Nach dem Ende des Startbefehls nimmt die Shell weiter Eingaben an.
+    terminal.send_line("echo \"danach-$(6*7)\"");
+    terminal.wait_for_output("danach-42");
 }
 
 #[test]

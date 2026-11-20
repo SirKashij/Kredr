@@ -143,6 +143,17 @@ button {
   margin: 0 2px;
 }
 
+/* „Neuer Agent“ und „Neues Terminal“ nebeneinander. */
+.side-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.side-actions .btn {
+  padding: 6px 4px;
+}
+
 .sect {
   font-size: 11px;
   font-weight: 700;
@@ -345,6 +356,13 @@ button {
   color: var(--dim);
 }
 
+/* Der Tab eines Agenten trägt statt des Shell-Zeichens das Agenten-Symbol. */
+.tab-icon.agent {
+  width: 16px;
+  height: 16px;
+  color: #4daafc;
+}
+
 .terminal-view {
   flex: 1;
   min-height: 0;
@@ -352,11 +370,30 @@ button {
   padding: 8px 0 0 12px;
 }
 
-/* Der Behälter von xterm.js; seine Größe bestimmt Spalten und Zeilen. */
+/* Ein Terminal: gegebenenfalls ein Hinweis, darunter seine Darstellung. */
 .terminal-view > div {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Der Behälter von xterm.js; seine Größe bestimmt Spalten und Zeilen. */
+.terminal-screen {
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
+}
+
+.terminal-notice {
+  flex: none;
+  margin: 0 12px 8px 0;
+  padding: 6px 10px;
+  border: 1px solid #e8a33d;
+  border-radius: 4px;
+  background: #e8a33d1f;
+  color: #fff;
+  user-select: text;
 }
 
 /* Kontextmenü */
@@ -510,6 +547,20 @@ button {
 
 .btn:hover {
   background: #1a86dc;
+}
+
+.btn.ghost {
+  background: #313131;
+  color: var(--text);
+}
+
+.btn.ghost:hover {
+  background: #3c3c3c;
+}
+
+.btn:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 /* Statusleiste */
