@@ -1,3 +1,4 @@
+pub mod external;
 pub mod terminal;
 
 use std::collections::HashMap;
@@ -8,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::State;
 
-use terminal::{Terminal, TerminalEvent, TerminalOptions};
+use terminal::{Shell, Terminal, TerminalEvent, TerminalOptions};
 
 /// Die laufenden Terminals, nach Kennung.
 #[derive(Default)]
@@ -31,13 +32,23 @@ impl Terminals {
 #[tauri::command]
 fn terminal_open(
     terminals: State<'_, Terminals>,
+    shell: Option<String>,
     cwd: PathBuf,
     cols: u16,
     rows: u16,
     on_output: Channel<InvokeResponseBody>,
     on_exit: Channel<()>,
 ) -> Result<u32, String> {
-    let options = TerminalOptions { cwd, cols, rows };
+    let shell = match shell {
+        Some(id) => Shell::from_id(&id).ok_or_else(|| format!("unknown shell {id}"))?,
+        None => Shell::PowerShell,
+    };
+    let options = TerminalOptions {
+        shell,
+        cwd,
+        cols,
+        rows,
+    };
     let terminal = Terminal::open(options, move |event| {
         // Scheitert das Senden, ist das Fenster bereits geschlossen.
         let _ = match event {
@@ -90,6 +101,35 @@ fn terminal_close(terminals: State<'_, Terminals>, id: u32) -> Result<(), String
     Ok(())
 }
 
+/// Die Kennungen der Shells, die sich auf diesem Rechner starten lassen.
+#[tauri::command]
+fn terminal_shells() -> Vec<&'static str> {
+    terminal::available_shells()
+        .into_iter()
+        .map(Shell::id)
+        .collect()
+}
+
+/// Prüft, welche Texte aus einem Terminal vorhandene Dateien bezeichnen:
+/// je Text der volle Pfad oder nichts. Relative Angaben gelten ab `base`.
+#[tauri::command]
+fn resolve_files(base: PathBuf, candidates: Vec<String>) -> Vec<Option<PathBuf>> {
+    candidates
+        .iter()
+        .map(|candidate| external::resolve_file(&base, candidate))
+        .collect()
+}
+
+#[tauri::command]
+fn open_file(path: PathBuf) -> Result<(), String> {
+    external::open_file(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    external::open_url(&url).map_err(|e| e.to_string())
+}
+
 /// Der Ordner, der beim Start als Projekt geöffnet wird: das erste
 /// Programmargument, wenn es ein Ordner ist (`kredr <Ordner>`).
 #[tauri::command]
@@ -104,6 +144,7 @@ fn initial_project() -> Option<PathBuf> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(Terminals::default())
         .invoke_handler(tauri::generate_handler![
             terminal_open,
@@ -111,6 +152,10 @@ pub fn run() {
             terminal_resize,
             terminal_has_child_process,
             terminal_close,
+            terminal_shells,
+            resolve_files,
+            open_file,
+            open_url,
             initial_project,
         ])
         .run(tauri::generate_context!())

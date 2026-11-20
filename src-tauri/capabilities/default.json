@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Rechte der Projektfenster",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-set-title", "dialog:allow-open", "dialog:allow-message"]
+  "permissions": ["core:default", "core:window:allow-set-title", "dialog:allow-open", "dialog:allow-message", "clipboard-manager:allow-read-text", "clipboard-manager:allow-write-text"]
 }
