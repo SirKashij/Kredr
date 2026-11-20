@@ -426,3 +426,27 @@ test("ein Tab ohne gültiges Ziel bleibt, wo er ist", () => {
   const far = moveTab(arrangement, b1.id, { groupId: a.id, index: 99 });
   expect((far.root as Group).tabs.at(-1)).toEqual(b1);
 });
+
+test("ein neuer Agent öffnet sich als Tab, der als Agent erkennbar ist", () => {
+  const arrangement = openTab(single, true);
+
+  const [terminal, agent] = groupsOf(arrangement)[0].tabs;
+  expect(terminal.agent).toBeUndefined();
+  expect(agent.agent).toBe(true);
+  expect(groupsOf(arrangement)[0].activeTab).toBe(agent.id);
+});
+
+test("der erste Tab eines Fensters kann ein Agent sein", () => {
+  const arrangement = openTab(emptyArrangement, true);
+
+  expect(tabsOf(arrangement)).toMatchObject([{ agent: true }]);
+});
+
+test("ein Agent bleibt beim Verschieben in eine andere Gruppe ein Agent", () => {
+  const split = splitGroup(openTab(emptyArrangement, true), groupsOf(single)[0].id, "right");
+  const [left, right] = groupsOf(split);
+
+  const moved = moveTab(split, left.tabs[0].id, { groupId: right.id, index: 0 });
+
+  expect(groupsOf(moved)[0].tabs[0]).toMatchObject({ id: left.tabs[0].id, agent: true });
+});

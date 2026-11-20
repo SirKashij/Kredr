@@ -41,5 +41,9 @@
   "group.splitDown": "Split Down",
   "group.splitDownTooltip": "Split Down (Ctrl+K, Ctrl+\\)",
   "tab.close": "Close",
-  "tab.closeTooltip": "Close (Ctrl+F4)"
+  "tab.closeTooltip": "Close (Ctrl+F4)",
+  "agent.new": "New Agent",
+  "agent.newTooltip": "New Agent (Ctrl+Shift+A)",
+  "agent.name": "Agent",
+  "agent.missing": "The agent could not start: the program “{program}” was not found. Install Claude Code or change the agent start command in the settings, then choose “New Agent” again."
 }

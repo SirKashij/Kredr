@@ -55,7 +55,7 @@ impl Default for Settings {
             font_family: "\"Cascadia Mono\", \"Cascadia Code\", Consolas, monospace".into(),
             font_size: 13,
             default_shell: Shell::default(),
-            agent_command: "claude".into(),
+            agent_command: crate::agent::DEFAULT_START_COMMAND.into(),
         }
     }
 }

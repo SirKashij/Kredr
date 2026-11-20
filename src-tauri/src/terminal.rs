@@ -24,6 +24,9 @@ pub struct TerminalOptions {
     pub cwd: PathBuf,
     pub cols: u16,
     pub rows: u16,
+    /// Ein Befehl, den die Shell sofort ausführt, etwa der Start eines
+    /// Agenten. Danach bleibt die Shell offen.
+    pub start_command: Option<String>,
 }
 
 pub enum TerminalEvent {
@@ -76,6 +79,9 @@ impl Terminal {
 
         let mut command = CommandBuilder::new(powershell());
         command.arg("-NoLogo");
+        if let Some(start_command) = &options.start_command {
+            command.args(["-NoExit", "-Command", start_command]);
+        }
         command.cwd(&options.cwd);
         // Daran erkennen Programme wie Claude Code, dass 24-Bit-Farben gehen.
         command.env("COLORTERM", "truecolor");

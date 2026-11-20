@@ -41,5 +41,9 @@
   "group.splitDown": "Nach unten teilen",
   "group.splitDownTooltip": "Nach unten teilen (Strg+K, Strg+^)",
   "tab.close": "Schließen",
-  "tab.closeTooltip": "Schließen (Strg+F4)"
+  "tab.closeTooltip": "Schließen (Strg+F4)",
+  "agent.new": "Neuer Agent",
+  "agent.newTooltip": "Neuer Agent (Strg+Umschalt+A)",
+  "agent.name": "Agent",
+  "agent.missing": "Der Agent konnte nicht starten: Das Programm „{program}“ wurde nicht gefunden. Installiere Claude Code oder ändere den Agent-Startbefehl in den Einstellungen und wähle dann erneut „Neuer Agent“."
 }

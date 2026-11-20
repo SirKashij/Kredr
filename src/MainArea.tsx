@@ -50,8 +50,14 @@ interface Menu {
   items: MenuItem[];
 }
 
-const icons: Record<"new" | "splitRight" | "splitDown" | "close", ReactNode> = {
+const icons: Record<"new" | "agent" | "splitRight" | "splitDown" | "close", ReactNode> = {
   new: <path d="M8 3v10M3 8h10" />,
+  agent: (
+    <>
+      <rect x="3" y="6" width="10" height="7" rx="1.5" />
+      <path d="M8 6V3.5M6.3 9v1.2M9.7 9v1.2" />
+    </>
+  ),
   splitRight: (
     <>
       <rect x="2.5" y="3" width="11" height="10" rx="1" />
@@ -159,6 +165,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
   const { arrangement, update, onCloseTab, onOpenMenu, tabDrag } = shared;
 
   const newTerminal = () => update((current) => openTab(focusGroup(current, group.id)));
+  const newAgent = () => update((current) => openTab(focusGroup(current, group.id), true));
   const splitRight = () => update((current) => splitGroup(current, group.id, "right"));
   const splitDown = () => update((current) => splitGroup(current, group.id, "down"));
 
@@ -166,6 +173,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
     event.preventDefault();
     event.stopPropagation();
     const items: MenuItem[] = [
+      { label: t("agent.new"), onSelect: newAgent },
       { label: t("terminal.new"), onSelect: newTerminal },
       { label: t("group.splitRight"), onSelect: splitRight },
       { label: t("group.splitDown"), onSelect: splitDown },
@@ -206,8 +214,14 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
               }}
               onContextMenu={(event) => openMenu(event, tab.id)}
             >
-              <span className="tab-icon">›_</span>
-              <span>{t("terminal.powershell")}</span>
+              {tab.agent ? (
+                <span className="tab-icon agent">
+                  <Icon name="agent" />
+                </span>
+              ) : (
+                <span className="tab-icon">›_</span>
+              )}
+              <span>{t(tab.agent ? "agent.name" : "terminal.powershell")}</span>
               <button
                 className="tab-close"
                 title={t("tab.closeTooltip")}
@@ -223,6 +237,9 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
           ))}
         </div>
         <div className="tab-actions">
+          <button title={t("agent.newTooltip")} aria-label={t("agent.new")} onClick={newAgent}>
+            <Icon name="agent" />
+          </button>
           <button
             title={t("terminal.newTooltip")}
             aria-label={t("terminal.new")}
@@ -251,6 +268,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
         terminals={shared.terminals}
         tabId={group.activeTab}
         cwd={shared.cwd}
+        agent={group.tabs.some((tab) => tab.id === group.activeTab && tab.agent)}
         focused={group.id === arrangement.focusedGroup}
         focusRequest={shared.focusRequest}
       />
