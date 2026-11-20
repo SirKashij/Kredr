@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import {
   emptyArrangement,
+  filePathOf,
   focusedGroupOf,
   groupsOf,
   moveDivider,
@@ -65,7 +66,7 @@ test("Dateiansichten nicht mehr vorhandener Dateien fehlen, alles andere bleibt"
 
   const restored = restoreArrangement(stored(arrangement), (path) => path !== "weg.ts");
 
-  expect(tabsOf(restored).map((tab) => tab.content?.path)).toEqual([undefined, "da.ts"]);
+  expect(tabsOf(restored).map(filePathOf)).toEqual([undefined, "da.ts"]);
 });
 
 test("fehlt der sichtbare Tab, rückt sein rechter Nachbar nach, sonst der linke", () => {

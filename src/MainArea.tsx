@@ -10,10 +10,14 @@ import {
 import {
   activateTab,
   focusGroup,
+  groupsOf,
   keepTab,
+  maximizedGroupOf,
+  maximizeTab,
   moveDivider,
   openTab,
   renameTab,
+  restoreGroups,
   splitGroup,
   type Arrangement,
   type Group,
@@ -159,6 +163,12 @@ function SplitView({ split, ...shared }: Shared & { split: Split }) {
     );
   }
 
+  // Eine maximierte Gruppe verdeckt die übrigen; ausgeblendet behalten sie ihren Zustand.
+  const maximized = maximizedGroupOf(shared.arrangement);
+  const covered = (node: TreeNode): boolean =>
+    maximized !== null &&
+    (node.kind === "group" ? node !== maximized : node.children.every(covered));
+
   return (
     <div className={`split ${split.axis}`} ref={container}>
       {split.children.map((child, index) => (
@@ -166,6 +176,7 @@ function SplitView({ split, ...shared }: Shared & { split: Split }) {
           {index > 0 && (
             <div
               className="divider"
+              hidden={maximized !== null}
               onPointerDown={(event) => {
                 event.preventDefault();
                 event.currentTarget.setPointerCapture(event.pointerId);
@@ -173,7 +184,11 @@ function SplitView({ split, ...shared }: Shared & { split: Split }) {
               onPointerMove={(event) => drag(event, index - 1)}
             />
           )}
-          <div className="split-part" style={{ flexGrow: split.sizes[index] }}>
+          <div
+            className="split-part"
+            hidden={covered(child)}
+            style={{ flexGrow: split.sizes[index] }}
+          >
             <NodeView node={child} {...shared} />
           </div>
         </Fragment>
@@ -361,6 +376,25 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
           ))}
         </div>
         <div className="tab-actions">
+          {activeTab.content?.kind === "versionControl" &&
+            groupsOf(arrangement).length > 1 &&
+            (maximizedGroupOf(arrangement) === group ? (
+              <button
+                className="wide"
+                title={t("versionControl.showTerminalsTooltip")}
+                onClick={() => update(restoreGroups)}
+              >
+                {t("versionControl.showTerminals")}
+              </button>
+            ) : (
+              <button
+                className="wide"
+                title={t("versionControl.maximizeTooltip")}
+                onClick={() => update((current) => maximizeTab(current, activeTab.id))}
+              >
+                {t("versionControl.maximize")}
+              </button>
+            ))}
           <button title={t("agent.newTooltip")} aria-label={t("agent.new")} onClick={newAgent}>
             <Icon name="agent" />
           </button>

@@ -3,7 +3,7 @@
  * Markdown-Vorschau oder Bild. Entschieden wird allein nach der Endung.
  */
 
-import type { TabContent } from "./arrangement";
+import type { FileTabContent } from "./arrangement";
 import { fileName } from "./filePath";
 
 /**
@@ -41,7 +41,7 @@ export function isMarkdown(path: string): boolean {
 }
 
 /** Was ein Tab zeigt, wenn die Datei geöffnet wird: Bilder als Bild, alles andere als Dateiansicht. */
-export function contentFor(path: string): TabContent {
+export function contentFor(path: string): FileTabContent {
   return { kind: imageMimeType(path) ? "image" : "file", path };
 }
 
@@ -50,7 +50,7 @@ export function contentFor(path: string): TabContent {
  * Quelltext und Vorschau bei Markdown, Bild und Quelltext bei SVG. `null`,
  * wenn es nur eine Ansicht gibt.
  */
-export function alternateView({ kind, path }: TabContent): TabContent | null {
+export function alternateView({ kind, path }: FileTabContent): FileTabContent | null {
   if (isMarkdown(path)) {
     if (kind === "file") return { kind: "markdown", path };
     if (kind === "markdown") return { kind: "file", path };

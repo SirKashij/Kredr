@@ -6,6 +6,7 @@ import { FileView, useOpenFiles } from "./FileView";
 import { useT } from "./i18n/i18n";
 import { ImageView } from "./ImageView";
 import type { OpenFiles } from "./openFiles";
+import { VersionControlTab } from "./VersionControlTab";
 import { ViewSwitch } from "./ViewSwitch";
 
 /**
@@ -28,6 +29,13 @@ export function ContentTabFace({ tab, files }: { tab: ContentTab; files: OpenFil
   const t = useT();
   const { content } = tab;
   switch (content.kind) {
+    case "versionControl":
+      return (
+        <>
+          <span className="tab-icon">±</span>
+          <span className="tab-label">{t("activity.versionControl")}</span>
+        </>
+      );
     case "file":
     case "markdown":
     case "image": {
@@ -83,6 +91,8 @@ export function ContentTabBody({
 }) {
   const { content } = tab;
   switch (content.kind) {
+    case "versionControl":
+      return <VersionControlTab focused={focused} focusRequest={focusRequest} />;
     case "file":
       return (
         <ViewSwitch tab={tab} update={update}>

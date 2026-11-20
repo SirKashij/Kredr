@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { openContentBeside, showInTab, type Arrangement } from "./arrangement";
+import { openContentBeside, showInTab, showsFile, type Arrangement } from "./arrangement";
 import { alternateView } from "./fileKinds";
 import { useT } from "./i18n/i18n";
 import type { ContentTab } from "./tabViews";
@@ -21,14 +21,15 @@ export function ViewSwitch({
   children: ReactNode;
 }) {
   const t = useT();
-  const other = alternateView(tab.content);
-  if (!other) return children;
+  const { content } = tab;
+  const other = showsFile(content) ? alternateView(content) : null;
+  if (!other || !showsFile(content)) return children;
   const toSource = other.kind === "file";
   return (
     <div className="switched-view">
       <div className="view-switch">
-        <span className="view-path" title={tab.content.path}>
-          {tab.content.path}
+        <span className="view-path" title={content.path}>
+          {content.path}
         </span>
         <button onClick={() => update((current) => showInTab(current, tab.id, other))}>
           {t(toSource ? "view.showSource" : "view.showPreview")}

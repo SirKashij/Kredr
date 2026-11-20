@@ -4,7 +4,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { restoreArrangement, tabsOf, type Arrangement } from "./arrangement";
+import { filePathOf, restoreArrangement, tabsOf, type Arrangement } from "./arrangement";
 
 /** Fragt, welche der Pfade es gibt; die Antwort in derselben Reihenfolge. */
 type ExistenceCheck = (paths: string[]) => Promise<boolean[]>;
@@ -34,7 +34,7 @@ export async function loadArrangement(project: string): Promise<Arrangement> {
 export async function restoreStored(stored: unknown, exist: ExistenceCheck): Promise<Arrangement> {
   const paths = [
     ...new Set(
-      tabsOf(restoreArrangement(stored)).flatMap((tab) => [tab.cwd, tab.content?.path] as const),
+      tabsOf(restoreArrangement(stored)).flatMap((tab) => [tab.cwd, filePathOf(tab)] as const),
     ),
   ].filter((path) => path !== undefined);
   if (paths.length === 0) return restoreArrangement(stored);

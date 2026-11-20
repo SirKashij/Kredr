@@ -3,6 +3,7 @@ import {
   assignShell,
   closeTab,
   emptyArrangement,
+  filePathOf,
   focusedGroupOf,
   groupsOf,
   isTerminal,
@@ -76,7 +77,7 @@ test("ein dauerhafter Tab wird von einer Vorschau nicht ersetzt", () => {
 
   const arrangement = openContent(kept, file("b.ts"), true);
 
-  expect(tabsOf(arrangement).map((tab) => tab.content?.path)).toEqual([undefined, "a.ts", "b.ts"]);
+  expect(tabsOf(arrangement).map((tab) => filePathOf(tab))).toEqual([undefined, "a.ts", "b.ts"]);
 });
 
 test("dauerhaft öffnen ersetzt den Vorschau-Tab nicht", () => {
@@ -84,7 +85,7 @@ test("dauerhaft öffnen ersetzt den Vorschau-Tab nicht", () => {
 
   const arrangement = openContent(preview, file("b.ts"));
 
-  const paths = tabsOf(arrangement).map((tab) => tab.content?.path);
+  const paths = tabsOf(arrangement).map((tab) => filePathOf(tab));
   expect(paths).toContain("a.ts");
   expect(paths).toContain("b.ts");
 });
@@ -140,8 +141,8 @@ test("jede Gruppe ersetzt nur ihren eigenen Vorschau-Tab", () => {
   const arrangement = openContent(split, file("b.ts"), true);
 
   const [first, second] = groupsOf(arrangement);
-  expect(first.tabs.map((tab) => tab.content?.path)).toContain("a.ts");
-  expect(second.tabs.map((tab) => tab.content?.path)).toContain("b.ts");
+  expect(first.tabs.map((tab) => filePathOf(tab))).toContain("a.ts");
+  expect(second.tabs.map((tab) => filePathOf(tab))).toContain("b.ts");
 });
 
 test("Dateiansichten lassen sich wie Terminals verschieben und schließen", () => {

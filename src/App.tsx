@@ -12,6 +12,7 @@ import {
   closeTab,
   closesFileText,
   emptyArrangement,
+  filePathOf,
   focusAdjacentGroup,
   focusedGroupOf,
   focusGroupAt,
@@ -20,6 +21,8 @@ import {
   openContent,
   openTab,
   openTabIn,
+  showsFile,
+  showVersionControl,
   splitGroup,
   tabsOf,
   type Arrangement,
@@ -46,6 +49,9 @@ import { SettingsPage } from "./SettingsPage";
 import { availableShells, type Shell } from "./settingsStore";
 import { shellLabel, tabLabel } from "./tabLabel";
 import { useWaitingAlerts } from "./useWaitingAlerts";
+import { VersionControlProvider, VersionControlStore } from "./versionControl";
+import type { ChangedFile } from "./versionControlState";
+import { BranchStatus } from "./VersionControlView";
 import { alertBody } from "./waitingAlerts";
 
 /** Eine Datei, die als Dateiansicht geöffnet werden soll. */
@@ -94,6 +100,7 @@ export function App() {
   const [quickOpen, setQuickOpen] = useState(false);
   /** Die in diesem Fenster zuletzt geöffneten Dateien, die jüngste zuerst. */
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
+  const [versionControl] = useState(() => new VersionControlStore());
   /** Die Shells, die es auf diesem Rechner gibt; PowerShell immer. */
   const [shells, setShells] = useState<Shell[]>(["powershell"]);
   // Eine geänderte Standard-Shell gilt für das nächste neue Terminal.
@@ -166,7 +173,7 @@ export function App() {
 
   // Ebenso die offenen Dateien der Dateiansichten.
   useEffect(() => {
-    files.retain(tabsOf(arrangement).flatMap((tab) => (tab.content ? [tab.content.path] : [])));
+    files.retain(tabsOf(arrangement).flatMap((tab) => filePathOf(tab) ?? []));
   }, [arrangement, files]);
 
   // Ändert ein Agent eine offene Datei, lädt ihre Dateiansicht neu.
@@ -177,6 +184,10 @@ export function App() {
   useEffect(() => {
     if (project) return fileList.open(project);
   }, [project, fileList]);
+  // Die Versionskontrolle folgt dem Zustand des Projekts.
+  useEffect(() => {
+    if (project) return versionControl.watch(project);
+  }, [project, versionControl]);
 
   // Das Fenster schließt mit ungespeicherten Änderungen erst nach Rückfrage.
   useEffect(() => {
@@ -279,7 +290,8 @@ export function App() {
     const content = tabsOf(arrangement).find((tab) => tab.id === tabId)?.content;
     // Quelltext und Markdown-Vorschau zeigen denselben Text; gefragt wird erst,
     // wenn der letzte Tab schließt, der ihn hält.
-    if (content && closesFileText(arrangement, tabId) && !(await confirmCloseFile(content.path))) {
+    const closing = showsFile(content) && closesFileText(arrangement, tabId);
+    if (closing && !(await confirmCloseFile(content.path))) {
       refocusTerminal();
       return;
     }
@@ -298,12 +310,34 @@ export function App() {
     update((current) => closeTab(current, tabId));
   }
 
+  /**
+   * Zeigt die Versionskontrolle: die Änderungen in der Seitenleiste und, in
+   * einem Repository, den maximierten Tab „Versionskontrolle“ im Hauptbereich.
+   */
+  function openVersionControl() {
+    setView("versionControl");
+    setSidebarVisible(true);
+    if (versionControl.snapshot().state?.kind === "repository") {
+      update((current) => showVersionControl(current, true));
+    }
+  }
+
+  /** Zeigt den Diff einer Änderung im Tab „Versionskontrolle“; die Tastatur bleibt in der Liste. */
+  function showChange(file: ChangedFile) {
+    versionControl.select(file);
+    setArrangement((current) => settle(showVersionControl(current, false)));
+    setSettingsOpen(false);
+  }
+
   /** Zeigt eine Ansicht; ein Klick auf die bereits gezeigte blendet die Seitenleiste aus. */
   function selectView(next: View) {
-    setSidebarVisible(next !== view || !sidebarVisible);
+    const shows = next !== view || !sidebarVisible;
+    if (shows && next === "versionControl") return openVersionControl();
+    setSidebarVisible(shows);
     setView(next);
     if (next === "search") setSearchFocus((count) => count + 1);
   }
+
   /** „Neuer Agent“: öffnet ein Terminal, in dem sofort der Agent startet. */
   const newAgent = (current: Arrangement) => openTab(current, true);
 
@@ -345,6 +379,8 @@ export function App() {
         return setSidebarVisible(true);
       case "quickOpen":
         return setQuickOpen(true);
+      case "showVersionControl":
+        return openVersionControl();
       case "toggleSidebar":
         return setSidebarVisible((visible) => !visible);
       case "closeTab":
@@ -394,7 +430,7 @@ export function App() {
   /** Der sichtbare Tab der fokussierten Gruppe. */
   const activeTab = focusedGroup?.tabs.find((tab) => tab.id === focusedGroup.activeTab);
   /** Die Datei des sichtbaren Tabs der fokussierten Gruppe. */
-  const activeFile = activeTab?.content?.path ?? null;
+  const activeFile = filePathOf(activeTab) ?? null;
 
   async function openFolder() {
     const folder = await open({ directory: true, title: t("dialog.openFolderTitle") });
@@ -407,7 +443,7 @@ export function App() {
   }
 
   return (
-    <>
+    <VersionControlProvider store={versionControl}>
       <div className="workbench">
         <ActivityBar
           view={sidebarVisible ? view : null}
@@ -425,6 +461,7 @@ export function App() {
           onOpenFile={(path, preview) => openFile({ path, preview })}
           onOpenMatch={openFile}
           searchFocus={searchFocus}
+          onShowChange={showChange}
           statuses={statuses}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
           onNewAgent={project ? () => update(newAgent) : undefined}
@@ -472,12 +509,13 @@ export function App() {
         />
       )}
       <footer className="status">
+        <BranchStatus />
         <span>{project ? projectName(project) : t("status.noProject")}</span>
         <AgentCounters statuses={statuses} />
         {activeTab && isTerminal(activeTab) && (
           <span className="right">{shellLabel(activeTab.shell, t)}</span>
         )}
       </footer>
-    </>
+    </VersionControlProvider>
   );
 }

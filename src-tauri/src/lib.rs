@@ -10,6 +10,8 @@ mod projects;
 pub mod search;
 pub mod settings;
 pub mod terminal;
+pub mod version_control;
+mod version_control_commands;
 mod waiting_alerts;
 pub mod window_geometry;
 
@@ -524,6 +526,7 @@ pub fn run() {
         .manage(agent_status)
         .manage(ProjectWatchers::default())
         .manage(Searches::default())
+        .manage(version_control_commands::VersionControls::default())
         .manage(project_windows::ProjectWindows::default())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -541,6 +544,9 @@ pub fn run() {
                 projects::window_closed(window);
                 waiting_alerts::window_closed(window);
                 window.state::<Terminals>().close_all_of(window.label());
+                window
+                    .state::<version_control_commands::VersionControls>()
+                    .close_all_of(window.label());
                 window
                     .state::<ProjectWatchers>()
                     .close_all_of(window.label());
@@ -573,6 +579,9 @@ pub fn run() {
             project_files_unwatch,
             search_text,
             search_cancel,
+            version_control_commands::version_control_watch,
+            version_control_commands::version_control_unwatch,
+            version_control_commands::version_control_diff,
             projects::window_project,
             projects::recent_projects,
             projects::forget_project,

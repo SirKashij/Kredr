@@ -7,6 +7,8 @@ import { Explorer } from "./Explorer";
 import { useT } from "./i18n/i18n";
 import { SearchView, type SearchViewProps } from "./SearchView";
 import { tabLabel } from "./tabLabel";
+import type { ChangedFile } from "./versionControlState";
+import { VersionControlView } from "./VersionControlView";
 
 /** Zwischen diesen Breiten lässt sich die Seitenleiste ziehen (in Pixeln). */
 const MIN_WIDTH = 170;
@@ -41,6 +43,8 @@ interface SidebarProps extends AgentsViewProps {
   onOpenMatch: SearchViewProps["onOpenFile"];
   /** Steigt, wenn die Suche aufgerufen wird. */
   searchFocus: number;
+  /** Zeigt den Diff einer Änderung im Tab „Versionskontrolle“. */
+  onShowChange: (file: ChangedFile) => void;
 }
 
 export function Sidebar({
@@ -52,6 +56,7 @@ export function Sidebar({
   onOpenFile,
   onOpenMatch,
   searchFocus,
+  onShowChange,
   ...agents
 }: SidebarProps) {
   const t = useT();
@@ -74,14 +79,10 @@ export function Sidebar({
       <div className="side-body" hidden={showsExplorer || showsSearch}>
         {view === "agents" ? (
           <AgentsView {...agents} />
+        ) : view === "versionControl" && project !== null ? (
+          <VersionControlView onShowChange={onShowChange} />
         ) : (
-          <p className="hint">
-            {t(
-              view === "explorer" || view === "search"
-                ? "status.noProject"
-                : "sidebar.notAvailable",
-            )}
-          </p>
+          <p className="hint">{t("status.noProject")}</p>
         )}
       </div>
       {/* Der Explorer bleibt bestehen, damit er beim Wechsel der Ansicht nichts neu lesen muss. */}
