@@ -5,7 +5,7 @@
   "activity.versionControl": "Version Control",
   "activity.settings": "Settings",
   "sidebar.terminals": "Terminals",
-  "sidebar.noTerminals": "No terminal open.",
+  "terminal.none": "No terminal open.",
   "sidebar.notAvailable": "This view arrives in a later step.",
   "welcome.text": "Open a folder as a project to get started.",
   "welcome.openFolder": "Open Folder",

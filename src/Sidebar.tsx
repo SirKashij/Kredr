@@ -1,5 +1,5 @@
 import { views, type View } from "./ActivityBar";
-import { focusedGroupOf, groupsOf, type Arrangement } from "./arrangement";
+import { focusedGroupOf, tabsOf, type Arrangement } from "./arrangement";
 import { useT } from "./i18n/i18n";
 
 interface AgentsViewProps {
@@ -28,12 +28,12 @@ export function Sidebar({ view, ...agents }: { view: View } & AgentsViewProps) {
 /** Die Agenten-Ansicht; zeigt vorerst nur die gewöhnlichen Terminals. */
 function AgentsView({ arrangement, onSelectTab }: AgentsViewProps) {
   const t = useT();
-  const tabs = groupsOf(arrangement).flatMap((group) => group.tabs);
+  const tabs = tabsOf(arrangement);
   const selected = focusedGroupOf(arrangement)?.activeTab;
   return (
     <div className="cards">
       <div className="sect">{t("sidebar.terminals")}</div>
-      {tabs.length === 0 && <p className="hint">{t("sidebar.noTerminals")}</p>}
+      {tabs.length === 0 && <p className="hint">{t("terminal.none")}</p>}
       {tabs.map((tab) => (
         <button
           key={tab.id}

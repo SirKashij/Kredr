@@ -19,15 +19,15 @@ import {
 } from "./arrangement";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { useT } from "./i18n/i18n";
-import type { TerminalSessions } from "./terminalSessions";
+import type { RunningTerminals } from "./runningTerminals";
 import { TerminalView } from "./TerminalView";
 
 /** Schmaler lässt sich eine Gruppe mit der Trennlinie nicht ziehen (in Pixeln). */
 const MIN_GROUP_SIZE = 80;
 
-interface Shared {
+interface MainAreaProps {
   arrangement: Arrangement;
-  sessions: TerminalSessions;
+  terminals: RunningTerminals;
   /** Der Ordner des Projekts; darin starten die Terminals. */
   cwd: string;
   /** Steigt mit jeder Bedienung der Aufteilung; danach erhält das Terminal wieder den Fokus. */
@@ -36,8 +36,12 @@ interface Shared {
   update: (change: (arrangement: Arrangement) => Arrangement) => void;
   /** Schließt ein Terminal, bei laufendem Kindprozess nach Rückfrage. */
   onCloseTab: (tabId: string) => void;
-  onOpenMenu: (menu: Menu) => void;
+  /** Gibt dem Terminal die Tastatureingaben zurück, ohne die Aufteilung zu ändern. */
+  onRefocus: () => void;
 }
+
+/** Was jeder Teil des Baums braucht. */
+type Shared = MainAreaProps & { onOpenMenu: (menu: Menu) => void };
 
 interface Menu {
   x: number;
@@ -71,19 +75,19 @@ function Icon({ name }: { name: keyof typeof icons }) {
 }
 
 /** Der Hauptbereich: die Gruppen der Aufteilung mit ihren Tabs und Trennlinien. */
-export function MainArea(props: Omit<Shared, "onOpenMenu"> & { root: TreeNode }) {
-  const { root, ...shared } = props;
+export function MainArea(props: MainAreaProps) {
   const [menu, setMenu] = useState<Menu | null>(null);
+  const { root } = props.arrangement;
   return (
     <>
-      <NodeView node={root} {...shared} onOpenMenu={setMenu} />
+      {root && <NodeView node={root} {...props} onOpenMenu={setMenu} />}
       {menu && (
         <ContextMenu
           {...menu}
           onClose={() => {
             setMenu(null);
             // Der Rechtsklick hat dem Terminal den Fokus genommen.
-            shared.update((arrangement) => arrangement);
+            props.onRefocus();
           }}
         />
       )}
@@ -141,9 +145,9 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
   const t = useT();
   const { arrangement, update, onCloseTab, onOpenMenu } = shared;
 
-  const newTerminal = () => update((a) => openTab(focusGroup(a, group.id)));
-  const splitRight = () => update((a) => splitGroup(a, group.id, "right"));
-  const splitDown = () => update((a) => splitGroup(a, group.id, "down"));
+  const newTerminal = () => update((current) => openTab(focusGroup(current, group.id)));
+  const splitRight = () => update((current) => splitGroup(current, group.id, "right"));
+  const splitDown = () => update((current) => splitGroup(current, group.id, "down"));
 
   function openMenu(event: MouseEvent, tabId?: string) {
     event.preventDefault();
@@ -160,7 +164,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
   return (
     <section
       className={group.id === arrangement.focusedGroup ? "group focused" : "group"}
-      onPointerDownCapture={() => update((a) => focusGroup(a, group.id))}
+      onPointerDownCapture={() => update((current) => focusGroup(current, group.id))}
     >
       <div className="tabs" onContextMenu={(event) => openMenu(event)}>
         <div className="tab-list" role="tablist">
@@ -170,7 +174,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
               role="tab"
               aria-selected={tab.id === group.activeTab}
               className={tab.id === group.activeTab ? "tab on" : "tab"}
-              onClick={() => update((a) => activateTab(a, tab.id))}
+              onClick={() => update((current) => activateTab(current, tab.id))}
               onAuxClick={(event) => {
                 // Mittelklick schließt wie in VS Code.
                 if (event.button === 1) onCloseTab(tab.id);
@@ -194,7 +198,11 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
           ))}
         </div>
         <div className="tab-actions">
-          <button title={t("terminal.newTooltip")} aria-label={t("terminal.new")} onClick={newTerminal}>
+          <button
+            title={t("terminal.newTooltip")}
+            aria-label={t("terminal.new")}
+            onClick={newTerminal}
+          >
             <Icon name="new" />
           </button>
           <button
@@ -215,7 +223,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
       </div>
       <TerminalView
         key={group.activeTab}
-        sessions={shared.sessions}
+        terminals={shared.terminals}
         tabId={group.activeTab}
         cwd={shared.cwd}
         focused={group.id === arrangement.focusedGroup}

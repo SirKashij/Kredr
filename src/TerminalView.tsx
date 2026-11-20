@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { TerminalSessions } from "./terminalSessions";
+import type { RunningTerminals } from "./runningTerminals";
 
 /**
  * Zeigt das Terminal eines Tabs an; die Shell startet im Ordner `cwd`.
@@ -7,13 +7,13 @@ import type { TerminalSessions } from "./terminalSessions";
  * `focusRequest`.
  */
 export function TerminalView({
-  sessions,
+  terminals,
   tabId,
   cwd,
   focused,
   focusRequest,
 }: {
-  sessions: TerminalSessions;
+  terminals: RunningTerminals;
   tabId: string;
   cwd: string;
   focused: boolean;
@@ -23,15 +23,15 @@ export function TerminalView({
 
   useEffect(() => {
     const element = host.current!;
-    const session = sessions.get(tabId, cwd);
-    session.attach(element);
-    return () => session.detach(element);
-  }, [sessions, tabId, cwd]);
+    const terminal = terminals.get(tabId, cwd);
+    terminal.attach(element);
+    return () => terminal.detach(element);
+  }, [terminals, tabId, cwd]);
 
   // Erst nach dem Einhängen: Ein Terminal außerhalb des Dokuments nimmt keinen Fokus an.
   useEffect(() => {
-    if (focused) sessions.get(tabId, cwd).focus();
-  }, [focused, focusRequest, sessions, tabId, cwd]);
+    if (focused) terminals.get(tabId, cwd).focus();
+  }, [focused, focusRequest, terminals, tabId, cwd]);
 
   return <div className="terminal-view" ref={host} />;
 }

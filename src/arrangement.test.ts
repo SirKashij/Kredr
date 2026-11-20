@@ -7,11 +7,13 @@ import {
   focusAdjacentGroup,
   focusGroup,
   focusGroupAt,
+  focusGroupToward,
   groupsOf,
   moveDivider,
   openTab,
   splitGroup,
   type Arrangement,
+  type Group,
   type Split,
 } from "./arrangement";
 
@@ -159,8 +161,8 @@ test("beliebig tief teilen: gleiche Richtung reiht ein, andere Richtung schachte
   });
 });
 
-/** Drei Gruppen nebeneinander: a 25 %, c 25 %, b 50 %. */
-function threeColumns() {
+/** Drei Gruppen nebeneinander, von links: a 25 %, c 25 %, b 50 %. */
+function threeSideBySide() {
   const [a] = groupsOf(single);
   const once = splitGroup(single, a.id, "right");
   const b = groupsOf(once)[1];
@@ -170,7 +172,7 @@ function threeColumns() {
 }
 
 test("eine Trennlinie verschieben ändert nur die Größe ihrer beiden Nachbarn", () => {
-  const { arrangement, split } = threeColumns();
+  const { arrangement, split } = threeSideBySide();
 
   // Die zweite Trennlinie liegt bei 50 % und wandert auf 70 %.
   const moved = moveDivider(arrangement, split.id, 1, 0.7);
@@ -183,7 +185,7 @@ test("eine Trennlinie verschieben ändert nur die Größe ihrer beiden Nachbarn"
 });
 
 test("eine Trennlinie lässt jedem Nachbarn eine Mindestgröße", () => {
-  const { arrangement, split } = threeColumns();
+  const { arrangement, split } = threeSideBySide();
 
   const farLeft = (moveDivider(arrangement, split.id, 1, 0.1, 0.05).root as Split).sizes;
   expect(farLeft[0]).toBeCloseTo(0.25);
@@ -196,7 +198,7 @@ test("eine Trennlinie lässt jedem Nachbarn eine Mindestgröße", () => {
 });
 
 test("einen Tab anzeigen gibt seiner Gruppe den Fokus", () => {
-  const { arrangement, a, b } = threeColumns();
+  const { arrangement, a, b } = threeSideBySide();
   const two = openTab(focusGroup(arrangement, a.id));
   const b2 = splitGroup(two, b.id, "down");
   expect(b2.focusedGroup).not.toBe(a.id);
@@ -208,7 +210,7 @@ test("einen Tab anzeigen gibt seiner Gruppe den Fokus", () => {
 });
 
 test("der Fokus wandert reihum durch die Gruppen", () => {
-  const { arrangement, a, b, c } = threeColumns();
+  const { arrangement, a, b, c } = threeSideBySide();
   const atA = focusGroup(arrangement, a.id);
 
   expect(focusAdjacentGroup(atA, 1).focusedGroup).toBe(c.id);
@@ -217,7 +219,7 @@ test("der Fokus wandert reihum durch die Gruppen", () => {
 });
 
 test("der Fokus springt auf die Gruppe an einer Stelle; fehlt sie, bleibt er", () => {
-  const { arrangement, a, b } = threeColumns();
+  const { arrangement, a, b } = threeSideBySide();
 
   expect(focusGroupAt(arrangement, 2).focusedGroup).toBe(b.id);
   expect(focusGroupAt(arrangement, 0).focusedGroup).toBe(a.id);
@@ -235,7 +237,7 @@ test("in der fokussierten Gruppe wechselt der sichtbare Tab reihum", () => {
 });
 
 test("Operationen auf unbekannte Kennungen und auf den leeren Hauptbereich ändern nichts", () => {
-  const { arrangement } = threeColumns();
+  const { arrangement } = threeSideBySide();
 
   expect(closeTab(arrangement, "fehlt")).toBe(arrangement);
   expect(splitGroup(arrangement, "fehlt", "right")).toBe(arrangement);
@@ -247,7 +249,7 @@ test("Operationen auf unbekannte Kennungen und auf den leeren Hauptbereich ände
 });
 
 test("die Aufteilung übersteht den Weg durch JSON und bleibt bedienbar", () => {
-  const { arrangement, b } = threeColumns();
+  const { arrangement, b } = threeSideBySide();
 
   const restored: Arrangement = JSON.parse(JSON.stringify(arrangement));
 
@@ -255,4 +257,43 @@ test("die Aufteilung übersteht den Weg durch JSON und bleibt bedienbar", () => 
   expect(restored.version).toBe(1);
   expect(closeTab(restored, b.tabs[0].id)).toEqual(closeTab(arrangement, b.tabs[0].id));
   expect(splitGroup(restored, b.id, "down")).toEqual(splitGroup(arrangement, b.id, "down"));
+});
+
+test("der Fokus springt zur Gruppe, die in einer Richtung angrenzt", () => {
+  const [a] = groupsOf(single);
+  const right = splitGroup(single, a.id, "right");
+  const b = groupsOf(right)[1];
+  const nested = splitGroup(right, b.id, "down");
+  const c = groupsOf(nested)[2];
+  const arrangement = splitGroup(nested, c.id, "right");
+  const d = groupsOf(arrangement)[3];
+  // a links über die ganze Höhe; rechts b oben, darunter c und d nebeneinander.
+  const from = (group: Group) => focusGroup(arrangement, group.id);
+
+  expect(focusGroupToward(from(a), "right").focusedGroup).toBe(b.id);
+  expect(focusGroupToward(from(b), "down").focusedGroup).toBe(c.id);
+  expect(focusGroupToward(from(c), "right").focusedGroup).toBe(d.id);
+  expect(focusGroupToward(from(d), "up").focusedGroup).toBe(b.id);
+  expect(focusGroupToward(from(d), "left").focusedGroup).toBe(c.id);
+  expect(focusGroupToward(from(c), "left").focusedGroup).toBe(a.id);
+});
+
+test("grenzt in einer Richtung keine Gruppe an, bleibt der Fokus", () => {
+  const { arrangement, a, b } = threeSideBySide();
+
+  expect(focusGroupToward(focusGroup(arrangement, a.id), "left").focusedGroup).toBe(a.id);
+  expect(focusGroupToward(focusGroup(arrangement, b.id), "right").focusedGroup).toBe(b.id);
+  expect(focusGroupToward(arrangement, "up")).toBe(arrangement);
+  expect(focusGroupToward(emptyArrangement, "down")).toBe(emptyArrangement);
+});
+
+test("ein neuer Tab geht nie verloren, auch wenn keine gültige Gruppe den Fokus hat", () => {
+  const { arrangement, a } = threeSideBySide();
+  // So kann eine gespeicherte Aufteilung aussehen, die von Hand verändert wurde.
+  const stale: Arrangement = { ...arrangement, focusedGroup: "fehlt" };
+
+  const opened = openTab(stale);
+
+  expect(groupsOf(opened)[0].tabs).toHaveLength(2);
+  expect(opened.focusedGroup).toBe(a.id);
 });

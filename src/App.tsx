@@ -11,17 +11,18 @@ import {
   focusAdjacentGroup,
   focusedGroupOf,
   focusGroupAt,
-  groupsOf,
+  focusGroupToward,
   openTab,
   splitGroup,
+  tabsOf,
   type Arrangement,
 } from "./arrangement";
 import { useT } from "./i18n/i18n";
-import { resolveKey, type Command } from "./keybindings";
+import { isModifierKey, resolveKey, type Command } from "./keybindings";
 import { MainArea } from "./MainArea";
 import { projectName } from "./project";
 import { Sidebar } from "./Sidebar";
-import { TerminalSessions } from "./terminalSessions";
+import { RunningTerminals } from "./runningTerminals";
 
 export function App() {
   const t = useT();
@@ -34,7 +35,7 @@ export function App() {
   // Ein Sprachwechsel soll laufende Terminals nicht neu starten.
   const translate = useRef(t);
   translate.current = t;
-  const [sessions] = useState(() => new TerminalSessions(() => translate.current));
+  const [terminals] = useState(() => new RunningTerminals(() => translate.current));
 
   useEffect(() => {
     invoke<string | null>("initial_project").then((folder) => {
@@ -54,17 +55,21 @@ export function App() {
 
   // Terminals, deren Tab geschlossen wurde, enden.
   useEffect(() => {
-    const tabs = groupsOf(arrangement).flatMap((group) => group.tabs.map((tab) => tab.id));
-    sessions.retain(new Set(tabs));
-  }, [arrangement, sessions]);
+    terminals.retain(new Set(tabsOf(arrangement).map((tab) => tab.id)));
+  }, [arrangement, terminals]);
 
-  function update(change: (arrangement: Arrangement) => Arrangement) {
-    setArrangement(change);
+  /** Gibt dem sichtbaren Terminal der fokussierten Gruppe die Tastatureingaben zurück. */
+  function refocusTerminal() {
     setFocusRequest((count) => count + 1);
   }
 
+  function update(change: (arrangement: Arrangement) => Arrangement) {
+    setArrangement(change);
+    refocusTerminal();
+  }
+
   async function closeTerminal(tabId: string) {
-    if (await sessions.find(tabId)?.hasChildProcess()) {
+    if (await terminals.find(tabId)?.hasChildProcess()) {
       const confirmed = await confirm(t("terminal.closeConfirm.message"), {
         title: t("terminal.closeConfirm.title"),
         kind: "warning",
@@ -72,7 +77,7 @@ export function App() {
         cancelLabel: t("dialog.cancel"),
       });
       if (!confirmed) {
-        update((current) => current);
+        refocusTerminal();
         return;
       }
     }
@@ -95,6 +100,8 @@ export function App() {
         return update((current) => focusAdjacentGroup(current, 1));
       case "focusPreviousGroup":
         return update((current) => focusAdjacentGroup(current, -1));
+      case "focusGroupToward":
+        return update((current) => focusGroupToward(current, command.side));
       case "focusGroupAt":
         return update((current) => focusGroupAt(current, command.index));
       case "nextTab":
@@ -113,8 +120,7 @@ export function App() {
     if (!project) return;
     let chord = false;
     const onKeyDown = (event: KeyboardEvent) => {
-      // Strg, Umschalt, Alt und die Windows-Taste allein lösen nichts aus.
-      if ([16, 17, 18, 91, 92].includes(event.keyCode)) return;
+      if (isModifierKey(event.keyCode)) return;
       const wasChord = chord;
       const resolved = resolveKey(event, chord);
       chord = resolved === "chord";
@@ -152,17 +158,17 @@ export function App() {
             </div>
           ) : arrangement.root ? (
             <MainArea
-              root={arrangement.root}
               arrangement={arrangement}
-              sessions={sessions}
+              terminals={terminals}
               cwd={project}
               focusRequest={focusRequest}
               update={update}
+              onRefocus={refocusTerminal}
               onCloseTab={closeTerminal}
             />
           ) : (
             <div className="welcome">
-              <p>{t("sidebar.noTerminals")}</p>
+              <p>{t("terminal.none")}</p>
               <button className="btn" onClick={() => update(openTab)}>
                 {t("terminal.new")}
               </button>

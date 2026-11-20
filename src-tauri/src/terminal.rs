@@ -54,7 +54,8 @@ pub struct Terminal {
     writer: Mutex<Box<dyn Write + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     /// Prozesskennung der Shell.
-    shell: Option<u32>,
+    shell_pid: Option<u32>,
+    /// Ob sich die Shell beendet hat; ihre Prozesskennung kann dann neu vergeben sein.
     exited: Arc<AtomicBool>,
 }
 
@@ -80,7 +81,7 @@ impl Terminal {
         command.env("COLORTERM", "truecolor");
         let mut child = pair.slave.spawn_command(command).map_err(error)?;
         let killer = child.clone_killer();
-        let shell = child.process_id();
+        let shell_pid = child.process_id();
         let exited = Arc::new(AtomicBool::new(false));
         let shell_exited = exited.clone();
 
@@ -143,7 +144,7 @@ impl Terminal {
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
             killer: Mutex::new(killer),
-            shell,
+            shell_pid,
             exited,
         })
     }
@@ -167,7 +168,7 @@ impl Terminal {
         if self.exited.load(Ordering::Relaxed) {
             return false;
         }
-        self.shell.is_some_and(has_child)
+        self.shell_pid.is_some_and(has_child)
     }
 }
 

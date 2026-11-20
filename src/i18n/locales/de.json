@@ -5,7 +5,7 @@
   "activity.versionControl": "Versionskontrolle",
   "activity.settings": "Einstellungen",
   "sidebar.terminals": "Terminals",
-  "sidebar.noTerminals": "Kein Terminal geöffnet.",
+  "terminal.none": "Kein Terminal geöffnet.",
   "sidebar.notAvailable": "Diese Ansicht folgt in einem späteren Schritt.",
   "welcome.text": "Öffne einen Ordner als Projekt, um loszulegen.",
   "welcome.openFolder": "Ordner öffnen",

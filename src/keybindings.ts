@@ -1,3 +1,5 @@
+import type { Side } from "./arrangement";
+
 /** Ein Befehl, der sich per Tastenkürzel auslösen lässt. */
 export type Command =
   | {
@@ -11,7 +13,8 @@ export type Command =
         | "previousTab"
         | "closeTab";
     }
-  | { kind: "focusGroupAt"; index: number };
+  | { kind: "focusGroupAt"; index: number }
+  | { kind: "focusGroupToward"; side: Side };
 
 export interface KeyStroke {
   keyCode: number;
@@ -26,6 +29,11 @@ export interface KeyStroke {
  * Tastatur „Ö“ und auf einer amerikanischen „`“, `Oem5` ist „^“ bzw. „\“.
  */
 const Key = {
+  Shift: 16,
+  Control: 17,
+  Alt: 18,
+  WindowsLeft: 91,
+  WindowsRight: 92,
   PageUp: 33,
   PageDown: 34,
   Left: 37,
@@ -34,12 +42,19 @@ const Key = {
   Down: 40,
   Digit1: 49,
   Digit5: 53,
-  Digit9: 57,
+  Digit8: 56,
   K: 75,
   F4: 115,
   Oem3: 192,
   Oem5: 220,
 };
+
+const modifierKeys = [Key.Shift, Key.Control, Key.Alt, Key.WindowsLeft, Key.WindowsRight];
+
+/** Ob die Taste nur andere Tasten abwandelt (Strg, Umschalt, Alt, Windows-Taste). */
+export function isModifierKey(keyCode: number): boolean {
+  return modifierKeys.includes(keyCode);
+}
 
 /**
  * Ordnet einem Tastendruck seinen Befehl zu; die Kürzel entsprechen den
@@ -53,8 +68,10 @@ export function resolveKey(key: KeyStroke, chord: boolean): Command | "chord" | 
   if (chord) {
     if (!ctrlKey || shiftKey || altKey) return null;
     if (keyCode === Key.Oem5) return { kind: "splitDown" };
-    if (keyCode === Key.Right) return { kind: "focusNextGroup" };
-    if (keyCode === Key.Left) return { kind: "focusPreviousGroup" };
+    if (keyCode === Key.Left) return { kind: "focusGroupToward", side: "left" };
+    if (keyCode === Key.Right) return { kind: "focusGroupToward", side: "right" };
+    if (keyCode === Key.Up) return { kind: "focusGroupToward", side: "up" };
+    if (keyCode === Key.Down) return { kind: "focusGroupToward", side: "down" };
     return null;
   }
 
@@ -78,7 +95,7 @@ export function resolveKey(key: KeyStroke, chord: boolean): Command | "chord" | 
   if (keyCode === Key.PageDown) return { kind: "nextTab" };
   if (keyCode === Key.PageUp) return { kind: "previousTab" };
   if (keyCode === Key.F4) return { kind: "closeTab" };
-  if (keyCode >= Key.Digit1 && keyCode <= Key.Digit9) {
+  if (keyCode >= Key.Digit1 && keyCode <= Key.Digit8) {
     return { kind: "focusGroupAt", index: keyCode - Key.Digit1 };
   }
   return null;

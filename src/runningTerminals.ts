@@ -34,7 +34,7 @@ const theme = {
  * im Hauptbereich gerade angezeigt wird: Sein Element wird beim Umbau der
  * Aufteilung nur umgehängt, Inhalt und Prozess bleiben erhalten.
  */
-export class TerminalSession {
+export class RunningTerminal {
   private readonly element = document.createElement("div");
   private readonly xterm = new Terminal({
     theme,
@@ -171,31 +171,31 @@ export class TerminalSession {
 }
 
 /** Die laufenden Terminals eines Fensters, nach der Kennung ihres Tabs. */
-export class TerminalSessions {
-  private readonly sessions = new Map<string, TerminalSession>();
+export class RunningTerminals {
+  private readonly terminals = new Map<string, RunningTerminal>();
 
   constructor(private readonly translate: () => Translate) {}
 
   /** Das Terminal des Tabs; gibt es noch keines, entsteht es mit Startordner `cwd`. */
-  get(tabId: string, cwd: string): TerminalSession {
-    let session = this.sessions.get(tabId);
-    if (!session) {
-      session = new TerminalSession(cwd, this.translate);
-      this.sessions.set(tabId, session);
+  get(tabId: string, cwd: string): RunningTerminal {
+    let terminal = this.terminals.get(tabId);
+    if (!terminal) {
+      terminal = new RunningTerminal(cwd, this.translate);
+      this.terminals.set(tabId, terminal);
     }
-    return session;
+    return terminal;
   }
 
-  find(tabId: string): TerminalSession | undefined {
-    return this.sessions.get(tabId);
+  find(tabId: string): RunningTerminal | undefined {
+    return this.terminals.get(tabId);
   }
 
   /** Beendet alle Terminals, deren Tab es nicht mehr gibt. */
   retain(tabIds: ReadonlySet<string>) {
-    for (const [tabId, session] of this.sessions) {
+    for (const [tabId, terminal] of this.terminals) {
       if (tabIds.has(tabId)) continue;
-      session.dispose();
-      this.sessions.delete(tabId);
+      terminal.dispose();
+      this.terminals.delete(tabId);
     }
   }
 }

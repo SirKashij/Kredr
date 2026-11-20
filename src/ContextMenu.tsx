@@ -52,7 +52,8 @@ export function ContextMenu({
       role="menu"
       ref={menu}
       style={{ left: x, top: y }}
-      onContextMenu={(event) => event.preventDefault()}>
+      onContextMenu={(event) => event.preventDefault()}
+    >
       {items.map(({ label, onSelect }) => (
         <button
           key={label}
