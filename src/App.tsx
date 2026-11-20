@@ -23,6 +23,7 @@ import {
   tabsOf,
   type Arrangement,
 } from "./arrangement";
+import { ArrangementSaver, loadArrangement } from "./arrangementStore";
 import { fileName, fullPath, opensExternally, toProjectPath } from "./filePath";
 import { recordOpened } from "./fileSearch";
 import { saveFile } from "./FileView";
@@ -64,6 +65,9 @@ export function App() {
   /** Der Ordner des Projekts dieses Fensters. */
   const [project, setProject] = useState<string | null>(null);
   const [arrangement, setArrangement] = useState(emptyArrangement);
+  /** Ob die gespeicherte Aufteilung des Projekts geladen ist; erst dann wird gezeigt und gespeichert. */
+  const [restored, setRestored] = useState(false);
+  const [saver] = useState(() => new ArrangementSaver());
   /** Steigt mit jeder Bedienung der Aufteilung; danach erhält das Terminal wieder den Fokus. */
   const [focusRequest, setFocusRequest] = useState(0);
   // Ein Sprachwechsel soll laufende Terminals nicht neu starten.
@@ -123,10 +127,35 @@ export function App() {
     getCurrentWindow().setTitle(t("window.title", { project: projectName(project) }));
   }, [project, t]);
 
-  // Ein frisch geöffnetes Projekt beginnt mit einem Terminal.
+  // Ein Projekt öffnet sich mit seiner gespeicherten Aufteilung; ohne sie
+  // beginnt es mit einem Terminal.
   useEffect(() => {
-    if (project) setArrangement((current) => (current.root ? current : settle(openTab(current))));
+    if (!project) return;
+    let stale = false;
+    loadArrangement(project).then((stored) => {
+      if (stale) return;
+      setArrangement((current) =>
+        current.root ? current : settle(stored.root ? stored : openTab(current)),
+      );
+      setRestored(true);
+    });
+    return () => {
+      stale = true;
+    };
   }, [project]);
+
+  // Die Aufteilung wird laufend gespeichert, mit ihr Größe und Position des Fensters.
+  useEffect(() => {
+    if (restored) saver.changed(arrangement);
+  }, [arrangement, restored, saver]);
+  useEffect(() => {
+    const window = getCurrentWindow();
+    const listening = [
+      window.onMoved(() => saver.windowChanged()),
+      window.onResized(() => saver.windowChanged()),
+    ];
+    return () => listening.forEach((unlisten) => unlisten.then((stop) => stop()));
+  }, [saver]);
 
   // Terminals, deren Tab geschlossen wurde, enden.
   useEffect(() => {
@@ -150,7 +179,8 @@ export function App() {
   // Das Fenster schließt mit ungespeicherten Änderungen erst nach Rückfrage.
   useEffect(() => {
     const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
-      if (!files.anyDirty()) return;
+      // Was an der Aufteilung noch nicht gespeichert ist, geht mit dem Fenster nicht verloren.
+      if (!files.anyDirty()) return saver.flush();
       const t = translate.current;
       const discard = await confirm(t("file.closeWindowConfirm.message"), {
         title: t("file.closeConfirm.title"),
@@ -158,12 +188,13 @@ export function App() {
         okLabel: t("file.closeWindowConfirm.ok"),
         cancelLabel: t("dialog.cancel"),
       });
-      if (!discard) event.preventDefault();
+      if (!discard) return event.preventDefault();
+      await saver.flush();
     });
     return () => {
       unlisten.then((stop) => stop());
     };
-  }, [files]);
+  }, [files, saver]);
 
   useEffect(() => {
     terminals.setFont(settings.fontFamily, settings.fontSize);
@@ -399,7 +430,7 @@ export function App() {
         <main className="main">
           {!project ? (
             <StartPage onOpen={openProject} onOpenFolder={openFolder} />
-          ) : arrangement.root ? (
+          ) : !restored ? null : arrangement.root ? (
             <MainArea
               arrangement={arrangement}
               terminals={terminals}

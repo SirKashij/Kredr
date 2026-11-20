@@ -11,6 +11,7 @@ pub mod search;
 pub mod settings;
 pub mod terminal;
 mod waiting_alerts;
+pub mod window_geometry;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -286,6 +287,17 @@ fn project_files_read(project: PathBuf, path: String) -> Result<FileContent, Str
     project_files::read_file(&project.join(path)).map_err(|e| e.to_string())
 }
 
+/// Welche der Dateien und Ordner es gibt, in der Reihenfolge von `paths`;
+/// jeder Pfad wie bei `project_files_read`. Danach richtet sich, was von
+/// einer gespeicherten Aufteilung wiederhergestellt wird.
+#[tauri::command(async)]
+fn project_files_exist(project: PathBuf, paths: Vec<String>) -> Vec<bool> {
+    paths
+        .iter()
+        .map(|path| project.join(path).exists())
+        .collect()
+}
+
 /// Schreibt den Inhalt einer Datei; `path` wie bei `project_files_read`.
 #[tauri::command(async)]
 fn project_files_write(project: PathBuf, path: String, text: String) -> Result<(), String> {
@@ -537,6 +549,9 @@ pub fn run() {
             projects::open_project,
             waiting_alerts::waiting_alert,
             waiting_alerts::waiting_alert_clear,
+            project_files_exist,
+            projects::arrangement_load,
+            projects::arrangement_save,
         ])
         .run(tauri::generate_context!())
         .expect("Kredr konnte nicht gestartet werden");
