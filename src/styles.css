@@ -192,6 +192,7 @@ button {
   flex: 1;
   min-width: 0;
   display: flex;
+  position: relative;
 }
 
 /* Eine Teilung legt ihre Teilstücke neben- (row) oder untereinander (column). */
@@ -458,6 +459,98 @@ button {
 .btn:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+/* Einstellungsseite: liegt über dem Hauptbereich. */
+.settings {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  outline: none;
+}
+
+.settings-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 20px 24px 8px;
+}
+
+.settings-head h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 400;
+  color: #fff;
+}
+
+.settings-head button {
+  width: 26px;
+  height: 26px;
+  padding: 4px;
+  border-radius: 4px;
+  color: var(--dim);
+}
+
+.settings-head button:hover {
+  color: var(--text);
+  background: #ffffff1a;
+}
+
+.settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 24px 24px;
+}
+
+.setting {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 0;
+}
+
+.setting-label {
+  font-weight: 600;
+  color: #fff;
+}
+
+.setting-hint {
+  color: var(--dim);
+  margin-bottom: 4px;
+}
+
+.setting input,
+.setting select {
+  font: inherit;
+  color: var(--text);
+  background: #313131;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  padding: 4px 8px;
+  width: 100%;
+  max-width: 420px;
+}
+
+.setting input[type="number"] {
+  max-width: 100px;
+}
+
+.setting input:focus,
+.setting select:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 /* Statusleiste */
