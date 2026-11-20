@@ -387,19 +387,3 @@ pub fn move_to_trash(path: &Path) -> Result<(), FileOperationError> {
     }
     Ok(())
 }
-
-/// Öffnet den Windows-Explorer im Ordner des Eintrags und markiert ihn dort.
-pub fn reveal_in_file_manager(path: &Path) -> Result<(), FileOperationError> {
-    use std::os::windows::process::CommandExt;
-
-    if path.symlink_metadata().is_err() {
-        return Err(FileOperationError::NotFound);
-    }
-    let path = std::path::absolute(path)?;
-    // Der Explorer versteht nur genau diese Schreibweise; Anführungszeichen
-    // können in Windows-Pfaden nicht vorkommen.
-    std::process::Command::new("explorer.exe")
-        .raw_arg(format!("/select,\"{}\"", path.display()))
-        .spawn()?;
-    Ok(())
-}

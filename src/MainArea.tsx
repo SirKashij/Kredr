@@ -1,5 +1,6 @@
 import {
   Fragment,
+  useEffect,
   useRef,
   useState,
   type MouseEvent,
@@ -11,15 +12,19 @@ import {
   focusGroup,
   moveDivider,
   openTab,
+  renameTab,
   splitGroup,
   type Arrangement,
   type Group,
   type Split,
   type TreeNode,
 } from "./arrangement";
+import { AgentDot } from "./AgentStatusViews";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { useT } from "./i18n/i18n";
 import type { RunningTerminals } from "./runningTerminals";
+import type { Shell } from "./settingsStore";
+import { shellLabel, tabLabel } from "./tabLabel";
 import { TerminalView } from "./TerminalView";
 import { useTabDrag, type TabDrag } from "./useTabDrag";
 
@@ -31,6 +36,8 @@ interface MainAreaProps {
   terminals: RunningTerminals;
   /** Der Ordner des Projekts; darin starten die Terminals. */
   cwd: string;
+  /** Die Shells, die sich für ein neues Terminal wählen lassen. */
+  shells: Shell[];
   /** Steigt mit jeder Bedienung der Aufteilung; danach erhält das Terminal wieder den Fokus. */
   focusRequest: number;
   /** Wendet eine Operation auf die Aufteilung an. */
@@ -50,8 +57,11 @@ interface Menu {
   items: MenuItem[];
 }
 
-const icons: Record<"new" | "agent" | "splitRight" | "splitDown" | "close", ReactNode> = {
+type IconName = "new" | "chooseShell" | "agent" | "splitRight" | "splitDown" | "close";
+
+const icons: Record<IconName, ReactNode> = {
   new: <path d="M8 3v10M3 8h10" />,
+  chooseShell: <path d="m4.5 6.5 3.5 3.5 3.5-3.5" />,
   agent: (
     <>
       <rect x="3" y="6" width="10" height="7" rx="1.5" />
@@ -160,11 +170,59 @@ function SplitView({ split, ...shared }: Shared & { split: Split }) {
   );
 }
 
+/** Das Eingabefeld, in dem ein Tab seinen Namen erhält. `null` heißt: abgebrochen. */
+function TabNameInput({
+  initial,
+  onDone,
+}: {
+  initial: string;
+  onDone: (name: string | null) => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  /** Nach Eingabe oder Escape meldet der Verlust des Fokus nichts mehr. */
+  const done = useRef(false);
+
+  useEffect(() => {
+    input.current!.focus();
+    input.current!.select();
+  }, []);
+
+  function finish(name: string | null) {
+    if (done.current) return;
+    done.current = true;
+    onDone(name);
+  }
+
+  return (
+    <input
+      ref={input}
+      className="tab-name-input"
+      defaultValue={initial}
+      size={Math.max(initial.length, 8)}
+      spellCheck={false}
+      onBlur={(event) => finish(event.currentTarget.value)}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        if (event.key === "Enter") finish(event.currentTarget.value);
+        if (event.key === "Escape") finish(null);
+      }}
+      // Im Eingabefeld markiert die Maus Text und zieht nicht den Tab.
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+    />
+  );
+}
+
 function GroupView({ group, ...shared }: Shared & { group: Group }) {
   const t = useT();
-  const { arrangement, update, onCloseTab, onOpenMenu, tabDrag } = shared;
+  const { arrangement, terminals, shells, update, onCloseTab, onOpenMenu, tabDrag } = shared;
+  /** Der Tab, dessen Name gerade bearbeitet wird. */
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const activeTab = group.tabs.find((tab) => tab.id === group.activeTab)!;
 
-  const newTerminal = () => update((current) => openTab(focusGroup(current, group.id)));
+  const newTerminal = (shell?: Shell) =>
+    update((current) => openTab(focusGroup(current, group.id), false, shell));
   const newAgent = () => update((current) => openTab(focusGroup(current, group.id), true));
   const splitRight = () => update((current) => splitGroup(current, group.id, "right"));
   const splitDown = () => update((current) => splitGroup(current, group.id, "down"));
@@ -174,11 +232,38 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
     event.stopPropagation();
     const items: MenuItem[] = [
       { label: t("agent.new"), onSelect: newAgent },
-      { label: t("terminal.new"), onSelect: newTerminal },
+      { label: t("terminal.new"), onSelect: () => newTerminal() },
       { label: t("group.splitRight"), onSelect: splitRight },
       { label: t("group.splitDown"), onSelect: splitDown },
     ];
-    if (tabId) items.push({ label: t("tab.close"), onSelect: () => onCloseTab(tabId) });
+    if (tabId) {
+      items.push(
+        { label: t("tab.rename"), onSelect: () => setRenaming(tabId) },
+        { label: t("tab.close"), onSelect: () => onCloseTab(tabId) },
+      );
+    }
+    onOpenMenu({ x: event.clientX, y: event.clientY, items });
+  }
+
+  /** Das Menü unter dem Knopf, das die Shell des neuen Terminals wählen lässt. */
+  function openShellMenu(event: MouseEvent) {
+    const { left, bottom } = event.currentTarget.getBoundingClientRect();
+    const items = shells.map((shell) => ({
+      label: shellLabel(shell, t),
+      onSelect: () => newTerminal(shell),
+    }));
+    onOpenMenu({ x: left, y: bottom, items });
+  }
+
+  /** Rechtsklick ins Terminal: Kopieren und Einfügen. */
+  function openTerminalMenu(event: MouseEvent) {
+    event.preventDefault();
+    const terminal = terminals.find(activeTab.id);
+    if (!terminal) return;
+    const items: MenuItem[] = [{ label: t("terminal.paste"), onSelect: () => terminal.paste() }];
+    if (terminal.hasSelection()) {
+      items.unshift({ label: t("terminal.copy"), onSelect: () => terminal.copySelection() });
+    }
     onOpenMenu({ x: event.clientX, y: event.clientY, items });
   }
 
@@ -212,16 +297,36 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
                 // Mittelklick schließt wie in VS Code.
                 if (event.button === 1) onCloseTab(tab.id);
               }}
+              onDoubleClick={() => setRenaming(tab.id)}
               onContextMenu={(event) => openMenu(event, tab.id)}
             >
               {tab.agent ? (
-                <span className="tab-icon agent">
-                  <Icon name="agent" />
-                </span>
+                <AgentDot
+                  statuses={shared.terminals.statuses}
+                  tabId={tab.id}
+                  fallback={
+                    <span className="tab-icon agent">
+                      <Icon name="agent" />
+                    </span>
+                  }
+                />
               ) : (
                 <span className="tab-icon">›_</span>
               )}
-              <span>{t(tab.agent ? "agent.name" : "terminal.powershell")}</span>
+              {tab.id === renaming ? (
+                <TabNameInput
+                  initial={tabLabel(tab, t)}
+                  onDone={(name) => {
+                    setRenaming(null);
+                    // Auch ohne Änderung: Das Terminal erhält die Eingaben zurück.
+                    update((current) =>
+                      name === null ? current : renameTab(current, tab.id, name),
+                    );
+                  }}
+                />
+              ) : (
+                <span title={t("tab.renameTooltip")}>{tabLabel(tab, t)}</span>
+              )}
               <button
                 className="tab-close"
                 title={t("tab.closeTooltip")}
@@ -243,10 +348,20 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
           <button
             title={t("terminal.newTooltip")}
             aria-label={t("terminal.new")}
-            onClick={newTerminal}
+            onClick={() => newTerminal()}
           >
             <Icon name="new" />
           </button>
+          {shells.length > 1 && (
+            <button
+              className="narrow"
+              title={t("terminal.chooseShell")}
+              aria-label={t("terminal.chooseShell")}
+              onClick={openShellMenu}
+            >
+              <Icon name="chooseShell" />
+            </button>
+          )}
           <button
             title={t("group.splitRightTooltip")}
             aria-label={t("group.splitRight")}
@@ -266,11 +381,12 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
       <TerminalView
         key={group.activeTab}
         terminals={shared.terminals}
-        tabId={group.activeTab}
-        cwd={group.tabs.find((tab) => tab.id === group.activeTab)?.cwd ?? shared.cwd}
-        agent={group.tabs.some((tab) => tab.id === group.activeTab && tab.agent)}
-        focused={group.id === arrangement.focusedGroup}
+        tab={activeTab}
+        cwd={activeTab.cwd ?? shared.cwd}
+        // Solange ein Tab seinen Namen erhält, gehören die Eingaben dem Eingabefeld.
+        focused={group.id === arrangement.focusedGroup && renaming === null}
         focusRequest={shared.focusRequest}
+        onContextMenu={openTerminalMenu}
       />
     </section>
   );

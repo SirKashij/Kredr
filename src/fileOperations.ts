@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { MessageKey } from "./i18n/i18n";
 import type { Entry } from "./projectFiles";
 
@@ -36,7 +37,7 @@ export function revealEntry(project: string, path: string): Promise<void> {
 
 /** Legt den Text in die Zwischenablage. */
 export function copyText(text: string): Promise<void> {
-  return navigator.clipboard.writeText(text);
+  return writeText(text);
 }
 
 /** Der Schlüssel und die Platzhalter der Meldung zu einer gescheiterten Dateioperation. */

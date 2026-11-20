@@ -11,8 +11,10 @@ import {
   groupsOf,
   moveDivider,
   moveTab,
+  assignShell,
   openTab,
   openTabIn,
+  renameTab,
   splitGroup,
   tabsOf,
   type Arrangement,
@@ -472,4 +474,54 @@ test("„Agent hier starten“ öffnet den Tab als Agent, auch als ersten Tab ü
   expect(tabsOf(arrangement)).toEqual([
     { id: groupsOf(arrangement)[0].activeTab, agent: true, cwd: "C:\\Projekt\\docs" },
   ]);
+});
+
+test("ein neues Terminal merkt sich die gewählte Shell", () => {
+  const arrangement = openTab(openTab(emptyArrangement, false, "gitBash"));
+
+  const [first, second] = tabsOf(arrangement);
+  expect(first.shell).toBe("gitBash");
+  expect(second.shell).toBeUndefined();
+});
+
+test("Terminals ohne gewählte Shell erhalten die Standard-Shell", () => {
+  const chosen = openTab(emptyArrangement, false, "gitBash");
+  const split = splitGroup(openTab(chosen), groupsOf(chosen)[0].id, "right");
+
+  const assigned = assignShell(split, "powershell");
+
+  expect(tabsOf(assigned).map((tab) => tab.shell)).toEqual(["gitBash", "powershell", "powershell"]);
+  // Ändert sich später die Standard-Shell, behält jedes Terminal seine Shell.
+  expect(assignShell(assigned, "gitBash")).toBe(assigned);
+});
+
+test("ein Terminal lässt sich umbenennen", () => {
+  const two = openTab(openTab(emptyArrangement));
+  const [first, second] = tabsOf(two);
+
+  const renamed = renameTab(two, second.id, "  Agent Suche ");
+
+  expect(tabsOf(renamed)).toEqual([first, { ...second, name: "Agent Suche" }]);
+});
+
+test("ein leerer Name stellt den Standardnamen wieder her", () => {
+  const named = renameTab(single, tabsOf(single)[0].id, "Build");
+
+  const reset = renameTab(named, tabsOf(named)[0].id, "   ");
+
+  expect(tabsOf(reset)[0].name).toBeUndefined();
+});
+
+test("umbenennen eines unbekannten Tabs ändert nichts", () => {
+  expect(renameTab(single, "gibt-es-nicht", "Name")).toBe(single);
+});
+
+test("der Name wandert beim Verschieben mit dem Tab", () => {
+  const split = splitGroup(single, groupsOf(single)[0].id, "right");
+  const [left, right] = groupsOf(split);
+  const named = renameTab(split, left.tabs[0].id, "Agent");
+
+  const moved = moveTab(named, left.tabs[0].id, { groupId: right.id, index: 1 });
+
+  expect(tabsOf(moved).map((tab) => tab.name)).toEqual([undefined, "Agent"]);
 });

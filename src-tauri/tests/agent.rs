@@ -2,9 +2,9 @@
 //! Ordner als Suchpfad.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use kredr_lib::agent::{missing_program, DEFAULT_START_COMMAND};
+use kredr_lib::agent::{missing_program, with_status_settings, DEFAULT_START_COMMAND};
 
 /// Ein leerer Ordner, der als Suchpfad dient.
 fn search_folder(name: &str) -> PathBuf {
@@ -85,4 +85,50 @@ fn was_kein_schlichter_programmname_ist_entscheidet_die_shell() {
     );
     assert_eq!(missing_program("$env:AGENT", &empty), None);
     assert_eq!(missing_program("   ", &empty), None);
+}
+
+#[test]
+fn der_startbefehl_bekommt_die_konfiguration_fuer_den_agentenstatus_mit() {
+    let settings = Path::new(r"C:\Temp\kredr\terminal-3.json");
+
+    assert_eq!(
+        with_status_settings("claude", settings),
+        r"claude --settings 'C:\Temp\kredr\terminal-3.json'"
+    );
+    // Zusätze des Nutzers bleiben erhalten und stehen weiter am Ende.
+    assert_eq!(
+        with_status_settings("claude --model opus; echo fertig", settings),
+        r"claude --settings 'C:\Temp\kredr\terminal-3.json' --model opus; echo fertig"
+    );
+    assert_eq!(
+        with_status_settings(r"  C:\Werkzeuge\Claude.exe -c", settings),
+        r"C:\Werkzeuge\Claude.exe --settings 'C:\Temp\kredr\terminal-3.json' -c"
+    );
+}
+
+#[test]
+fn ein_pfad_mit_leerzeichen_und_apostroph_bleibt_ein_argument() {
+    let settings = Path::new(r"C:\Users\Max O'Neil\Temp\terminal-3.json");
+
+    assert_eq!(
+        with_status_settings("claude", settings),
+        r"claude --settings 'C:\Users\Max O''Neil\Temp\terminal-3.json'"
+    );
+}
+
+#[test]
+fn andere_programme_als_claude_code_starten_unveraendert() {
+    let settings = Path::new(r"C:\Temp\kredr\terminal-3.json");
+
+    // Der Agentenstatus gilt nur für Claude Code; ein fremdes Programm
+    // könnte an der unbekannten Option scheitern.
+    for command in [
+        "anderer-agent --schnell",
+        "claude-wrapper",
+        "$env:AGENT",
+        r#"& "C:\Mit Leerzeichen\claude.exe""#,
+        "",
+    ] {
+        assert_eq!(with_status_settings(command, settings), command);
+    }
 }

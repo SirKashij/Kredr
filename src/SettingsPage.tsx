@@ -16,7 +16,7 @@ const languageLabels: Record<Language, MessageKey> = {
 
 const shellLabels: Record<Shell, MessageKey> = {
   powershell: "terminal.powershell",
-  gitBash: "settings.shell.gitBash",
+  gitBash: "terminal.gitBash",
 };
 
 /**
