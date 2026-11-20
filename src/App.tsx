@@ -23,9 +23,13 @@ import { MainArea } from "./MainArea";
 import { projectName } from "./project";
 import { Sidebar } from "./Sidebar";
 import { RunningTerminals } from "./runningTerminals";
+import { useSettings } from "./settings";
+import { SettingsPage } from "./SettingsPage";
 
 export function App() {
   const t = useT();
+  const { settings } = useSettings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<View>("agents");
   /** Der Ordner des Projekts dieses Fensters. */
   const [project, setProject] = useState<string | null>(null);
@@ -58,6 +62,10 @@ export function App() {
     terminals.retain(new Set(tabsOf(arrangement).map((tab) => tab.id)));
   }, [arrangement, terminals]);
 
+  useEffect(() => {
+    terminals.setFont(settings.fontFamily, settings.fontSize);
+  }, [terminals, settings.fontFamily, settings.fontSize]);
+
   /** Gibt dem sichtbaren Terminal der fokussierten Gruppe die Tastatureingaben zurück. */
   function refocusTerminal() {
     setFocusRequest((count) => count + 1);
@@ -65,6 +73,13 @@ export function App() {
 
   function update(change: (arrangement: Arrangement) => Arrangement) {
     setArrangement(change);
+    // Wer die Aufteilung bedient, will sie sehen.
+    setSettingsOpen(false);
+    refocusTerminal();
+  }
+
+  function closeSettings() {
+    setSettingsOpen(false);
     refocusTerminal();
   }
 
@@ -85,6 +100,9 @@ export function App() {
   }
 
   function run(command: Command) {
+    if (command.kind === "openSettings") return setSettingsOpen(true);
+    // Alle übrigen Befehle bedienen die Aufteilung eines Projekts.
+    if (!project) return;
     const focused = focusedGroupOf(arrangement);
     switch (command.kind) {
       case "newTerminal":
@@ -117,7 +135,6 @@ export function App() {
 
   // Die Kürzel gelten im ganzen Fenster und greifen, bevor das Terminal die Taste sieht.
   useEffect(() => {
-    if (!project) return;
     let chord = false;
     const onKeyDown = (event: KeyboardEvent) => {
       if (isModifierKey(event.keyCode)) return;
@@ -132,7 +149,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [project]);
+  }, []);
 
   async function openFolder() {
     const folder = await open({ directory: true, title: t("dialog.openFolderTitle") });
@@ -142,7 +159,12 @@ export function App() {
   return (
     <>
       <div className="workbench">
-        <ActivityBar view={view} onSelect={setView} />
+        <ActivityBar
+          view={view}
+          onSelect={setView}
+          settingsOpen={settingsOpen}
+          onToggleSettings={() => (settingsOpen ? closeSettings() : setSettingsOpen(true))}
+        />
         <Sidebar
           view={view}
           arrangement={arrangement}
@@ -174,6 +196,7 @@ export function App() {
               </button>
             </div>
           )}
+          {settingsOpen && <SettingsPage onClose={closeSettings} />}
         </main>
       </div>
       <footer className="status">

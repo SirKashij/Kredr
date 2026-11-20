@@ -11,7 +11,8 @@ export type Command =
         | "focusPreviousGroup"
         | "nextTab"
         | "previousTab"
-        | "closeTab";
+        | "closeTab"
+        | "openSettings";
     }
   | { kind: "focusGroupAt"; index: number }
   | { kind: "focusGroupToward"; side: Side };
@@ -45,6 +46,7 @@ const Key = {
   Digit8: 56,
   K: 75,
   F4: 115,
+  Comma: 188,
   Oem3: 192,
   Oem5: 220,
 };
@@ -95,6 +97,7 @@ export function resolveKey(key: KeyStroke, chord: boolean): Command | "chord" | 
   if (keyCode === Key.PageDown) return { kind: "nextTab" };
   if (keyCode === Key.PageUp) return { kind: "previousTab" };
   if (keyCode === Key.F4) return { kind: "closeTab" };
+  if (keyCode === Key.Comma) return { kind: "openSettings" };
   if (keyCode >= Key.Digit1 && keyCode <= Key.Digit8) {
     return { kind: "focusGroupAt", index: keyCode - Key.Digit1 };
   }
