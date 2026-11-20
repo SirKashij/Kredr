@@ -16,6 +16,7 @@ export type Command =
         | "showExplorer"
         | "showSearch"
         | "toggleSidebar"
+        | "quickOpen"
         | "openSettings";
     }
   | { kind: "focusGroupAt"; index: number }
@@ -53,6 +54,7 @@ const Key = {
   E: 69,
   F: 70,
   K: 75,
+  P: 80,
   F4: 115,
   Comma: 188,
   Oem3: 192,
@@ -106,6 +108,7 @@ export function resolveKey(key: KeyStroke, chord: boolean): Command | "chord" | 
 
   if (keyCode === Key.K) return "chord";
   if (keyCode === Key.B) return { kind: "toggleSidebar" };
+  if (keyCode === Key.P) return { kind: "quickOpen" };
   if (keyCode === Key.Oem5) return { kind: "splitRight" };
   if (keyCode === Key.PageDown) return { kind: "nextTab" };
   if (keyCode === Key.PageUp) return { kind: "previousTab" };

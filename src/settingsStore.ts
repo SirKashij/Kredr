@@ -16,6 +16,8 @@ export interface Settings {
   defaultShell: Shell;
   /** Der Befehl, mit dem „Neuer Agent“ Claude Code startet. */
   agentCommand: string;
+  /** Ob Kredr sich meldet, wenn ein Agent wartet und das Fenster nicht im Vordergrund ist. */
+  notifications: boolean;
 }
 
 /** Gilt nur, bis die Einstellungen aus dem Kern geladen sind. */
@@ -25,6 +27,7 @@ export const defaultSettings: Settings = {
   fontSize: 13,
   defaultShell: "powershell",
   agentCommand: "claude",
+  notifications: true,
 };
 
 export const fontSizeRange = { min: 6, max: 32 };
