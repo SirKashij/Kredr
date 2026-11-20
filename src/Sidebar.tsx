@@ -5,6 +5,7 @@ import { AgentCardStatus, AgentCardTop } from "./AgentStatusViews";
 import { focusedGroupOf, isTerminal, tabsOf, type Arrangement, type Tab } from "./arrangement";
 import { Explorer } from "./Explorer";
 import { useT } from "./i18n/i18n";
+import { SearchView, type SearchViewProps } from "./SearchView";
 import { tabLabel } from "./tabLabel";
 import type { ChangedFile } from "./versionControlState";
 import { VersionControlView } from "./VersionControlView";
@@ -38,6 +39,10 @@ interface SidebarProps extends AgentsViewProps {
   activeFile: string | null;
   /** Öffnet eine Datei des Projekts als Dateiansicht, mit `preview` als Vorschau-Tab. */
   onOpenFile: (path: string, preview: boolean) => void;
+  /** Öffnet eine Datei an einer Fundstelle der Suche. */
+  onOpenMatch: SearchViewProps["onOpenFile"];
+  /** Steigt, wenn die Suche aufgerufen wird. */
+  searchFocus: number;
   /** Zeigt den Diff einer Änderung im Tab „Versionskontrolle“. */
   onShowChange: (file: ChangedFile) => void;
 }
@@ -49,6 +54,8 @@ export function Sidebar({
   onOpenTerminalIn,
   activeFile,
   onOpenFile,
+  onOpenMatch,
+  searchFocus,
   onShowChange,
   ...agents
 }: SidebarProps) {
@@ -57,6 +64,7 @@ export function Sidebar({
   const sidebar = useRef<HTMLElement>(null);
   const title = views.find(({ id }) => id === view)!.label;
   const showsExplorer = view === "explorer" && project !== null;
+  const showsSearch = view === "search" && project !== null;
 
   function resize(event: PointerEvent<HTMLDivElement>) {
     if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
@@ -68,15 +76,13 @@ export function Sidebar({
   return (
     <aside className="sidebar" ref={sidebar} hidden={!visible} style={{ width }}>
       <div className="side-title">{t(title)}</div>
-      <div className="side-body" hidden={showsExplorer}>
+      <div className="side-body" hidden={showsExplorer || showsSearch}>
         {view === "agents" ? (
           <AgentsView {...agents} />
         ) : view === "versionControl" && project !== null ? (
           <VersionControlView onShowChange={onShowChange} />
         ) : (
-          <p className="hint">
-            {t(view === "explorer" ? "status.noProject" : "sidebar.notAvailable")}
-          </p>
+          <p className="hint">{t("status.noProject")}</p>
         )}
       </div>
       {/* Der Explorer bleibt bestehen, damit er beim Wechsel der Ansicht nichts neu lesen muss. */}
@@ -88,6 +94,16 @@ export function Sidebar({
           onOpenTerminalIn={onOpenTerminalIn}
           activeFile={activeFile}
           onOpenFile={onOpenFile}
+        />
+      )}
+      {/* Auch die Suche behält beim Wechsel der Ansicht Eingabe und Trefferliste. */}
+      {project !== null && (
+        <SearchView
+          key={`search:${project}`}
+          project={project}
+          hidden={!showsSearch}
+          focusRequest={searchFocus}
+          onOpenFile={onOpenMatch}
         />
       )}
       <div

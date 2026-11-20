@@ -46,7 +46,7 @@ const icons: Record<View | "settings", ReactNode> = {
 export const views: { id: View; label: MessageKey; tooltip?: MessageKey }[] = [
   { id: "agents", label: "activity.agents" },
   { id: "explorer", label: "activity.explorer", tooltip: "activity.explorerTooltip" },
-  { id: "search", label: "activity.search" },
+  { id: "search", label: "activity.search", tooltip: "activity.searchTooltip" },
   {
     id: "versionControl",
     label: "activity.versionControl",

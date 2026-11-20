@@ -27,7 +27,17 @@ windows-sys = { version = "0.61", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 notify = "8"
+ignore = "0.4"
 tauri-plugin-single-instance = "2"
+grep-searcher = "0.1.17"
+grep-regex = "0.1.14"
+grep-matcher = "0.1.9"
+# Dieselbe Fassung, die Tauri ohnehin mitbringt.
+windows = { version = "0.62", features = [
+  "Data_Xml_Dom",
+  "Foundation",
+  "UI_Notifications",
+] }
 
 [profile.release]
 codegen-units = 1

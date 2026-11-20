@@ -38,9 +38,24 @@ test("Strg+B blendet die Seitenleiste ein und aus", () => {
   expect(resolveKey(key(B, { ctrlKey: true }), false)).toEqual({ kind: "toggleSidebar" });
 });
 
+test("Strg+P öffnet „Datei per Namen öffnen“", () => {
+  const P = 80;
+  expect(resolveKey(key(P, { ctrlKey: true }), false)).toEqual({ kind: "quickOpen" });
+  expect(resolveKey(key(P), false)).toBeNull();
+  expect(resolveKey(key(P, { ctrlKey: true, altKey: true }), false)).toBeNull();
+});
+
 test("E und B ohne Strg bleiben gewöhnliche Eingaben", () => {
   expect(resolveKey(key(E, { shiftKey: true }), false)).toBeNull();
   expect(resolveKey(key(B), false)).toBeNull();
   // Strg+Alt ist AltGr.
   expect(resolveKey(key(B, { ctrlKey: true, altKey: true }), false)).toBeNull();
+});
+
+test("Strg+Umschalt+F zeigt die Suche", () => {
+  const F = 70;
+  expect(resolveKey(key(F, { ctrlKey: true, shiftKey: true }), false)).toEqual({
+    kind: "showSearch",
+  });
+  expect(resolveKey(key(F, { ctrlKey: true }), false)).toBe(null);
 });

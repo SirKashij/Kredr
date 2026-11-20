@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, message, open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityBar, type View } from "./ActivityBar";
 import { AgentStatuses } from "./agentStatus";
 import { AgentCounters } from "./AgentStatusViews";
@@ -25,7 +25,9 @@ import {
   tabsOf,
   type Arrangement,
 } from "./arrangement";
+import { ArrangementSaver, loadArrangement } from "./arrangementStore";
 import { fileName, fullPath, opensExternally, toProjectPath } from "./filePath";
+import { recordOpened } from "./fileSearch";
 import { saveFile } from "./FileView";
 import { useT } from "./i18n/i18n";
 import { isModifierKey, resolveKey, type Command } from "./keybindings";
@@ -33,17 +35,21 @@ import { MainArea } from "./MainArea";
 import { OpenFiles, type FilePosition } from "./openFiles";
 import { openFileExternally, openUrl } from "./openExternally";
 import { projectName } from "./project";
+import { ProjectFileList } from "./projectFileList";
 import { watchProjectFiles } from "./projectFiles";
+import { QuickOpen } from "./QuickOpen";
 import { Sidebar } from "./Sidebar";
 import { StartPage } from "./StartPage";
 import { RunningTerminals } from "./runningTerminals";
 import { useSettings } from "./settings";
 import { SettingsPage } from "./SettingsPage";
 import { availableShells, type Shell } from "./settingsStore";
-import { shellLabel } from "./tabLabel";
+import { shellLabel, tabLabel } from "./tabLabel";
+import { useWaitingAlerts } from "./useWaitingAlerts";
 import { VersionControlProvider, VersionControlStore } from "./versionControl";
 import type { ChangedFile } from "./versionControlState";
 import { BranchStatus } from "./VersionControlView";
+import { alertBody } from "./waitingAlerts";
 
 /** Eine Datei, die als Dateiansicht geöffnet werden soll. */
 export interface FileRequest extends Partial<FilePosition> {
@@ -59,9 +65,14 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<View>("agents");
   const [sidebarVisible, setSidebarVisible] = useState(true);
+  /** Steigt mit jedem Aufruf der Suche; danach erhält ihr Suchfeld die Tastatur. */
+  const [searchFocus, setSearchFocus] = useState(0);
   /** Der Ordner des Projekts dieses Fensters. */
   const [project, setProject] = useState<string | null>(null);
   const [arrangement, setArrangement] = useState(emptyArrangement);
+  /** Ob die gespeicherte Aufteilung des Projekts geladen ist; erst dann wird gezeigt und gespeichert. */
+  const [restored, setRestored] = useState(false);
+  const [saver] = useState(() => new ArrangementSaver());
   /** Steigt mit jeder Bedienung der Aufteilung; danach erhält das Terminal wieder den Fokus. */
   const [focusRequest, setFocusRequest] = useState(0);
   // Ein Sprachwechsel soll laufende Terminals nicht neu starten.
@@ -81,6 +92,11 @@ export function App() {
       ),
   );
   const [files] = useState(() => new OpenFiles());
+  /** Die Dateiliste des Projekts für „Datei per Namen öffnen“. */
+  const [fileList] = useState(() => new ProjectFileList());
+  const [quickOpen, setQuickOpen] = useState(false);
+  /** Die in diesem Fenster zuletzt geöffneten Dateien, die jüngste zuerst. */
+  const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [versionControl] = useState(() => new VersionControlStore());
   /** Die Shells, die es auf diesem Rechner gibt; PowerShell immer. */
   const [shells, setShells] = useState<Shell[]>(["powershell"]);
@@ -117,10 +133,35 @@ export function App() {
     getCurrentWindow().setTitle(t("window.title", { project: projectName(project) }));
   }, [project, t]);
 
-  // Ein frisch geöffnetes Projekt beginnt mit einem Terminal.
+  // Ein Projekt öffnet sich mit seiner gespeicherten Aufteilung; ohne sie
+  // beginnt es mit einem Terminal.
   useEffect(() => {
-    if (project) setArrangement((current) => (current.root ? current : settle(openTab(current))));
+    if (!project) return;
+    let stale = false;
+    loadArrangement(project).then((stored) => {
+      if (stale) return;
+      setArrangement((current) =>
+        current.root ? current : settle(stored.root ? stored : openTab(current)),
+      );
+      setRestored(true);
+    });
+    return () => {
+      stale = true;
+    };
   }, [project]);
+
+  // Die Aufteilung wird laufend gespeichert, mit ihr Größe und Position des Fensters.
+  useEffect(() => {
+    if (restored) saver.changed(arrangement);
+  }, [arrangement, restored, saver]);
+  useEffect(() => {
+    const window = getCurrentWindow();
+    const listening = [
+      window.onMoved(() => saver.windowChanged()),
+      window.onResized(() => saver.windowChanged()),
+    ];
+    return () => listening.forEach((unlisten) => unlisten.then((stop) => stop()));
+  }, [saver]);
 
   // Terminals, deren Tab geschlossen wurde, enden.
   useEffect(() => {
@@ -137,6 +178,9 @@ export function App() {
     if (project) return watchProjectFiles(project, (changes) => files.projectChanged(changes));
   }, [project, files]);
 
+  useEffect(() => {
+    if (project) return fileList.open(project);
+  }, [project, fileList]);
   // Die Versionskontrolle folgt dem Zustand des Projekts.
   useEffect(() => {
     if (project) return versionControl.watch(project);
@@ -145,7 +189,8 @@ export function App() {
   // Das Fenster schließt mit ungespeicherten Änderungen erst nach Rückfrage.
   useEffect(() => {
     const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
-      if (!files.anyDirty()) return;
+      // Was an der Aufteilung noch nicht gespeichert ist, geht mit dem Fenster nicht verloren.
+      if (!files.anyDirty()) return saver.flush();
       const t = translate.current;
       const discard = await confirm(t("file.closeWindowConfirm.message"), {
         title: t("file.closeConfirm.title"),
@@ -153,12 +198,13 @@ export function App() {
         okLabel: t("file.closeWindowConfirm.ok"),
         cancelLabel: t("dialog.cancel"),
       });
-      if (!discard) event.preventDefault();
+      if (!discard) return event.preventDefault();
+      await saver.flush();
     });
     return () => {
       unlisten.then((stop) => stop());
     };
-  }, [files]);
+  }, [files, saver]);
 
   useEffect(() => {
     terminals.setFont(settings.fontFamily, settings.fontSize);
@@ -189,6 +235,7 @@ export function App() {
   function openFile({ path, preview = false, line, ...position }: FileRequest) {
     if (!project) return;
     const file = toProjectPath(project, path);
+    setRecentFiles((recent) => recordOpened(recent, file));
     // PDFs und Office-Dateien gehören ins Windows-Standardprogramm; nur die
     // Vorschau beim Durchklicken startet kein anderes Programm.
     if (!preview && opensExternally(file)) {
@@ -206,6 +253,12 @@ export function App() {
     }
     if (line !== undefined) files.get(project, file).reveal({ line, ...position });
   }
+
+  /** Schließt „Datei per Namen öffnen“; die Tastatur geht zurück in den Hauptbereich. */
+  const closeQuickOpen = useCallback(() => {
+    setQuickOpen(false);
+    setFocusRequest((count) => count + 1);
+  }, []);
 
   const openFileRequest = useRef(openFile);
   openFileRequest.current = openFile;
@@ -274,6 +327,7 @@ export function App() {
     if (shows && next === "versionControl") return openVersionControl();
     setSidebarVisible(shows);
     setView(next);
+    if (next === "search") setSearchFocus((count) => count + 1);
   }
 
   /** „Neuer Agent“: öffnet ein Terminal, in dem sofort der Agent startet. */
@@ -311,6 +365,12 @@ export function App() {
       case "showExplorer":
         setView("explorer");
         return setSidebarVisible(true);
+      case "showSearch":
+        setView("search");
+        setSearchFocus((count) => count + 1);
+        return setSidebarVisible(true);
+      case "quickOpen":
+        return setQuickOpen(true);
       case "showVersionControl":
         return openVersionControl();
       case "toggleSidebar":
@@ -321,6 +381,24 @@ export function App() {
   }
   const runCommand = useRef(run);
   runCommand.current = run;
+
+  useWaitingAlerts({
+    statuses,
+    enabled: settings.notifications,
+    describe: (tabIds) => {
+      const tabs = tabsOf(arrangement);
+      const waiting = tabIds.flatMap((tabId) => tabs.find((tab) => tab.id === tabId) ?? []);
+      return {
+        title: project ? projectName(project) : "",
+        body: alertBody(
+          waiting.map((tab) => tabLabel(tab, t)),
+          t,
+        ),
+      };
+    },
+    // Wie der Klick auf die Karte des Agenten in der Agenten-Ansicht.
+    onSelect: (tabId) => update((current) => activateTab(current, tabId)),
+  });
 
   // Die Kürzel gelten im ganzen Fenster und greifen, bevor das Terminal die Taste sieht.
   useEffect(() => {
@@ -373,6 +451,8 @@ export function App() {
           arrangement={arrangement}
           activeFile={activeFile}
           onOpenFile={(path, preview) => openFile({ path, preview })}
+          onOpenMatch={openFile}
+          searchFocus={searchFocus}
           onShowChange={showChange}
           statuses={statuses}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
@@ -385,7 +465,7 @@ export function App() {
         <main className="main">
           {!project ? (
             <StartPage onOpen={openProject} onOpenFolder={openFolder} />
-          ) : arrangement.root ? (
+          ) : !restored ? null : arrangement.root ? (
             <MainArea
               arrangement={arrangement}
               terminals={terminals}
@@ -411,6 +491,14 @@ export function App() {
           {settingsOpen && <SettingsPage onClose={closeSettings} />}
         </main>
       </div>
+      {quickOpen && project && (
+        <QuickOpen
+          files={fileList}
+          recent={recentFiles}
+          onOpen={(path) => openFile({ path })}
+          onClose={closeQuickOpen}
+        />
+      )}
       <footer className="status">
         <BranchStatus />
         <span>{project ? projectName(project) : t("status.noProject")}</span>

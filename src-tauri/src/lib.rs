@@ -2,13 +2,18 @@ pub mod agent;
 pub mod agent_status;
 pub mod arrangement_store;
 pub mod external;
+pub mod file_list;
+pub mod notifications;
 pub mod project_files;
 pub mod project_windows;
 mod projects;
+pub mod search;
 pub mod settings;
 pub mod terminal;
 pub mod version_control;
 mod version_control_commands;
+mod waiting_alerts;
+pub mod window_geometry;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -22,6 +27,7 @@ use agent_status::{AgentStatus, StatusUpdate};
 use project_files::{
     Entry, FileContent, FileOperationError, ProjectChanges, ProjectWatcher, Subscription,
 };
+use search::{FileMatches, SearchError, SearchOutcome, Searches, TextQuery};
 use settings::{Settings, SettingsStore, Shell};
 use terminal::{Terminal, TerminalEvent, TerminalOptions};
 
@@ -269,11 +275,29 @@ fn project_files_list(project: PathBuf, folder: String) -> Result<Vec<Entry>, St
     project_files::list_folder(&project.join(folder)).map_err(|e| e.to_string())
 }
 
+/// Die Dateiliste des Projekts für „Datei per Namen öffnen“: alle nicht
+/// ignorierten Dateien, relativ zum Projektordner.
+#[tauri::command(async)]
+fn project_file_list(project: PathBuf) -> Vec<String> {
+    file_list::list_files(&project)
+}
+
 /// Liest eine Datei für die Dateiansicht. `path` ist relativ zum
 /// Projektordner; ein voller Pfad (Datei außerhalb des Projekts) gilt unverändert.
 #[tauri::command(async)]
 fn project_files_read(project: PathBuf, path: String) -> Result<FileContent, String> {
     project_files::read_file(&project.join(path)).map_err(|e| e.to_string())
+}
+
+/// Welche der Dateien und Ordner es gibt, in der Reihenfolge von `paths`;
+/// jeder Pfad wie bei `project_files_read`. Danach richtet sich, was von
+/// einer gespeicherten Aufteilung wiederhergestellt wird.
+#[tauri::command(async)]
+fn project_files_exist(project: PathBuf, paths: Vec<String>) -> Vec<bool> {
+    paths
+        .iter()
+        .map(|path| project.join(path).exists())
+        .collect()
 }
 
 /// Schreibt den Inhalt einer Datei; `path` wie bei `project_files_read`.
@@ -366,6 +390,55 @@ fn project_files_unwatch(watchers: State<'_, ProjectWatchers>, id: u32) -> Resul
     Ok(())
 }
 
+/// Durchsucht die Dateien des Projekts nach einem Text. Die Treffer kommen
+/// bündelweise über `on_matches`, solange die Suche läuft; sie endet auch,
+/// wenn das Fenster eine neuere Suche beginnt oder `search_cancel` ruft.
+/// `id` zählt die Suchen des Fensters aufsteigend ab 1.
+#[tauri::command(async)]
+fn search_text(
+    window: tauri::Window,
+    searches: State<'_, Searches>,
+    project: PathBuf,
+    id: u32,
+    query: TextQuery,
+    on_matches: Channel<Vec<FileMatches>>,
+) -> Result<SearchOutcome, SearchError> {
+    let cancelled = SearchOutcome {
+        cancelled: true,
+        limit_reached: false,
+    };
+    let Some(cancellation) = searches.begin(window.label(), id) else {
+        return Ok(cancelled);
+    };
+    let (found, files) = std::sync::mpsc::channel();
+    let outcome = std::thread::scope(|scope| {
+        let search = scope.spawn(|| {
+            search::search_text(&project, &query, &cancellation, move |file| {
+                let _ = found.send(file);
+            })
+        });
+        // Was in kurzer Zeit zusammenkommt, geht als ein Bündel an die Oberfläche.
+        while let Ok(first) = files.recv() {
+            let mut batch = vec![first];
+            batch.extend(files.try_iter());
+            // Scheitert das Senden, ist das Fenster bereits geschlossen.
+            if on_matches.send(batch).is_err() {
+                cancellation.cancel();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+        search.join().unwrap_or(Ok(cancelled))
+    });
+    searches.finish(window.label(), id);
+    outcome
+}
+
+/// Bricht die Suche `id` des Fensters ab, auch wenn sie noch nicht begonnen hat.
+#[tauri::command]
+fn search_cancel(window: tauri::Window, searches: State<'_, Searches>, id: u32) {
+    searches.cancel(window.label(), id);
+}
+
 /// Prüft, welche Texte aus einem Terminal vorhandene Dateien bezeichnen:
 /// je Text der volle Pfad oder nichts. Relative Angaben gelten ab `base`.
 #[tauri::command]
@@ -423,6 +496,7 @@ pub fn run() {
         .manage(Terminals::default())
         .manage(agent_status)
         .manage(ProjectWatchers::default())
+        .manage(Searches::default())
         .manage(version_control_commands::VersionControls::default())
         .manage(project_windows::ProjectWindows::default())
         .setup(|app| {
@@ -433,11 +507,13 @@ pub fn run() {
             });
             app.manage(settings);
             projects::start(app.handle())?;
+            waiting_alerts::start(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
                 projects::window_closed(window);
+                waiting_alerts::window_closed(window);
                 window.state::<Terminals>().close_all_of(window.label());
                 window
                     .state::<version_control_commands::VersionControls>()
@@ -445,6 +521,7 @@ pub fn run() {
                 window
                     .state::<ProjectWatchers>()
                     .close_all_of(window.label());
+                window.state::<Searches>().close_all_of(window.label());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -460,6 +537,7 @@ pub fn run() {
             settings_set,
             available_shells,
             project_files_list,
+            project_file_list,
             project_files_read,
             project_files_write,
             project_files_create_file,
@@ -469,6 +547,8 @@ pub fn run() {
             project_files_reveal,
             project_files_watch,
             project_files_unwatch,
+            search_text,
+            search_cancel,
             version_control_commands::version_control_watch,
             version_control_commands::version_control_unwatch,
             version_control_commands::version_control_diff,
@@ -476,6 +556,11 @@ pub fn run() {
             projects::recent_projects,
             projects::forget_project,
             projects::open_project,
+            waiting_alerts::waiting_alert,
+            waiting_alerts::waiting_alert_clear,
+            project_files_exist,
+            projects::arrangement_load,
+            projects::arrangement_save,
         ])
         .run(tauri::generate_context!())
         .expect("Kredr konnte nicht gestartet werden");

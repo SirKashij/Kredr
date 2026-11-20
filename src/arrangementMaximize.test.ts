@@ -11,6 +11,7 @@ import {
   maximizeTab,
   openContent,
   openTab,
+  restoreArrangement,
   restoreGroups,
   showVersionControl,
   splitGroup,
@@ -115,6 +116,18 @@ test("mit dem Schließen des Tabs endet das Maximieren", () => {
   expect(arrangement.maximized).toBeUndefined();
   expect(maximizedGroupOf(arrangement)).toBeNull();
   expect(groupsOf(arrangement)).toHaveLength(2);
+});
+
+test("der Tab der Versionskontrolle überdauert das Schließen des Fensters, das Maximieren nicht", () => {
+  const maximized = showVersionControl(two, false);
+  const stored: unknown = JSON.parse(JSON.stringify(maximized));
+
+  const arrangement = restoreArrangement(stored);
+
+  expect(versionControlTabs(arrangement)).toHaveLength(1);
+  expect(focusedGroupOf(arrangement)!.activeTab).toBe(versionControlTabs(arrangement)[0].id);
+  expect(arrangement.maximized).toBeUndefined();
+  expect(maximizedGroupOf(arrangement)).toBeNull();
 });
 
 test("eine Datei und die Versionskontrolle sind verschiedene Inhalte", () => {

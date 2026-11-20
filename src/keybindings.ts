@@ -14,8 +14,10 @@ export type Command =
         | "previousTab"
         | "closeTab"
         | "showExplorer"
+        | "showSearch"
         | "showVersionControl"
         | "toggleSidebar"
+        | "quickOpen"
         | "openSettings";
     }
   | { kind: "focusGroupAt"; index: number }
@@ -51,8 +53,10 @@ const Key = {
   A: 65,
   B: 66,
   E: 69,
+  F: 70,
   G: 71,
   K: 75,
+  P: 80,
   F4: 115,
   Comma: 188,
   Oem3: 192,
@@ -100,12 +104,14 @@ export function resolveKey(key: KeyStroke, chord: boolean): Command | "chord" | 
     if (keyCode === Key.A) return { kind: "newAgent" };
     if (keyCode === Key.Digit5) return { kind: "splitRight" };
     if (keyCode === Key.E) return { kind: "showExplorer" };
+    if (keyCode === Key.F) return { kind: "showSearch" };
     if (keyCode === Key.G) return { kind: "showVersionControl" };
     return null;
   }
 
   if (keyCode === Key.K) return "chord";
   if (keyCode === Key.B) return { kind: "toggleSidebar" };
+  if (keyCode === Key.P) return { kind: "quickOpen" };
   if (keyCode === Key.Oem5) return { kind: "splitRight" };
   if (keyCode === Key.PageDown) return { kind: "nextTab" };
   if (keyCode === Key.PageUp) return { kind: "previousTab" };

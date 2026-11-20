@@ -32,6 +32,7 @@ fn changed() -> Settings {
         font_size: 16,
         default_shell: Shell::GitBash,
         agent_command: "claude --model opus".into(),
+        notifications: false,
     }
 }
 
@@ -47,6 +48,15 @@ fn ohne_datei_gelten_die_standardwerte() {
     assert_eq!(settings.font_size, 13);
     assert_eq!(settings.default_shell, Shell::Powershell);
     assert_eq!(settings.agent_command, "claude");
+    assert!(settings.notifications);
+}
+
+#[test]
+fn abgeschaltete_benachrichtigungen_bleiben_abgeschaltet() {
+    let dir = temp_dir("benachrichtigungen");
+    write_file(&dir, r#"{ "version": 1, "notifications": false }"#);
+
+    assert!(!open(&dir).get().notifications);
 }
 
 #[test]
