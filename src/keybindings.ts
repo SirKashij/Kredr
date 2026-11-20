@@ -11,7 +11,9 @@ export type Command =
         | "focusPreviousGroup"
         | "nextTab"
         | "previousTab"
-        | "closeTab";
+        | "closeTab"
+        | "showExplorer"
+        | "toggleSidebar";
     }
   | { kind: "focusGroupAt"; index: number }
   | { kind: "focusGroupToward"; side: Side };
@@ -43,6 +45,8 @@ const Key = {
   Digit1: 49,
   Digit5: 53,
   Digit8: 56,
+  B: 66,
+  E: 69,
   K: 75,
   F4: 115,
   Oem3: 192,
@@ -87,10 +91,12 @@ export function resolveKey(key: KeyStroke, chord: boolean): Command | "chord" | 
   if (shiftKey) {
     if (keyCode === Key.Oem3) return { kind: "newTerminal" };
     if (keyCode === Key.Digit5) return { kind: "splitRight" };
+    if (keyCode === Key.E) return { kind: "showExplorer" };
     return null;
   }
 
   if (keyCode === Key.K) return "chord";
+  if (keyCode === Key.B) return { kind: "toggleSidebar" };
   if (keyCode === Key.Oem5) return { kind: "splitRight" };
   if (keyCode === Key.PageDown) return { kind: "nextTab" };
   if (keyCode === Key.PageUp) return { kind: "previousTab" };

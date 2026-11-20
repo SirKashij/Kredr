@@ -40,22 +40,28 @@ const icons: Record<View | "settings", ReactNode> = {
 };
 
 /** Die Ansichten der Symbolleiste in ihrer festgelegten Reihenfolge. */
-export const views: { id: View; label: MessageKey }[] = [
+export const views: { id: View; label: MessageKey; tooltip?: MessageKey }[] = [
   { id: "agents", label: "activity.agents" },
-  { id: "explorer", label: "activity.explorer" },
+  { id: "explorer", label: "activity.explorer", tooltip: "activity.explorerTooltip" },
   { id: "search", label: "activity.search" },
   { id: "versionControl", label: "activity.versionControl" },
 ];
 
-export function ActivityBar({ view, onSelect }: { view: View; onSelect: (view: View) => void }) {
+interface ActivityBarProps {
+  /** Die gezeigte Ansicht; `null`, solange die Seitenleiste ausgeblendet ist. */
+  view: View | null;
+  onSelect: (view: View) => void;
+}
+
+export function ActivityBar({ view, onSelect }: ActivityBarProps) {
   const t = useT();
   return (
     <nav className="actbar">
-      {views.map(({ id, label }) => (
+      {views.map(({ id, label, tooltip }) => (
         <button
           key={id}
           className={id === view ? "on" : ""}
-          title={t(label)}
+          title={t(tooltip ?? label)}
           aria-label={t(label)}
           aria-pressed={id === view}
           onClick={() => onSelect(id)}
