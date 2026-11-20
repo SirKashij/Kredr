@@ -25,6 +25,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 notify = "8"
+ignore = "0.4"
 tauri-plugin-single-instance = "2"
 # Dieselbe Fassung, die Tauri ohnehin mitbringt.
 windows = { version = "0.62", features = [

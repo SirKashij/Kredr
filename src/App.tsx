@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, message, open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityBar, type View } from "./ActivityBar";
 import { AgentStatuses } from "./agentStatus";
 import { AgentCounters } from "./AgentStatusViews";
@@ -24,6 +24,7 @@ import {
   type Arrangement,
 } from "./arrangement";
 import { fileName, fullPath, opensExternally, toProjectPath } from "./filePath";
+import { recordOpened } from "./fileSearch";
 import { saveFile } from "./FileView";
 import { useT } from "./i18n/i18n";
 import { isModifierKey, resolveKey, type Command } from "./keybindings";
@@ -31,7 +32,9 @@ import { MainArea } from "./MainArea";
 import { OpenFiles, type FilePosition } from "./openFiles";
 import { openFileExternally, openUrl } from "./openExternally";
 import { projectName } from "./project";
+import { ProjectFileList } from "./projectFileList";
 import { watchProjectFiles } from "./projectFiles";
+import { QuickOpen } from "./QuickOpen";
 import { Sidebar } from "./Sidebar";
 import { StartPage } from "./StartPage";
 import { RunningTerminals } from "./runningTerminals";
@@ -78,6 +81,11 @@ export function App() {
       ),
   );
   const [files] = useState(() => new OpenFiles());
+  /** Die Dateiliste des Projekts für „Datei per Namen öffnen“. */
+  const [fileList] = useState(() => new ProjectFileList());
+  const [quickOpen, setQuickOpen] = useState(false);
+  /** Die in diesem Fenster zuletzt geöffneten Dateien, die jüngste zuerst. */
+  const [recentFiles, setRecentFiles] = useState<string[]>([]);
   /** Die Shells, die es auf diesem Rechner gibt; PowerShell immer. */
   const [shells, setShells] = useState<Shell[]>(["powershell"]);
   // Eine geänderte Standard-Shell gilt für das nächste neue Terminal.
@@ -133,6 +141,10 @@ export function App() {
     if (project) return watchProjectFiles(project, (changes) => files.projectChanged(changes));
   }, [project, files]);
 
+  useEffect(() => {
+    if (project) return fileList.open(project);
+  }, [project, fileList]);
+
   // Das Fenster schließt mit ungespeicherten Änderungen erst nach Rückfrage.
   useEffect(() => {
     const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
@@ -180,6 +192,7 @@ export function App() {
   function openFile({ path, preview = false, line, ...position }: FileRequest) {
     if (!project) return;
     const file = toProjectPath(project, path);
+    setRecentFiles((recent) => recordOpened(recent, file));
     // PDFs und Office-Dateien gehören ins Windows-Standardprogramm; nur die
     // Vorschau beim Durchklicken startet kein anderes Programm.
     if (!preview && opensExternally(file)) {
@@ -197,6 +210,12 @@ export function App() {
     }
     if (line !== undefined) files.get(project, file).reveal({ line, ...position });
   }
+
+  /** Schließt „Datei per Namen öffnen“; die Tastatur geht zurück in den Hauptbereich. */
+  const closeQuickOpen = useCallback(() => {
+    setQuickOpen(false);
+    setFocusRequest((count) => count + 1);
+  }, []);
 
   const openFileRequest = useRef(openFile);
   openFileRequest.current = openFile;
@@ -280,6 +299,8 @@ export function App() {
       case "showExplorer":
         setView("explorer");
         return setSidebarVisible(true);
+      case "quickOpen":
+        return setQuickOpen(true);
       case "toggleSidebar":
         return setSidebarVisible((visible) => !visible);
       case "closeTab":
@@ -395,6 +416,14 @@ export function App() {
           {settingsOpen && <SettingsPage onClose={closeSettings} />}
         </main>
       </div>
+      {quickOpen && project && (
+        <QuickOpen
+          files={fileList}
+          recent={recentFiles}
+          onOpen={(path) => openFile({ path })}
+          onClose={closeQuickOpen}
+        />
+      )}
       <footer className="status">
         <span>{project ? projectName(project) : t("status.noProject")}</span>
         <AgentCounters statuses={statuses} />

@@ -22,6 +22,8 @@
   "explorer.error.notFound": "„{name}“ gibt es nicht mehr; der Eintrag oder sein Ordner wurde inzwischen entfernt.",
   "explorer.error.failed": "Das hat nicht geklappt: {details}",
   "activity.search": "Suche",
+  "quickOpen.placeholder": "Datei per Namen öffnen",
+  "quickOpen.noResults": "Keine passende Datei gefunden.",
   "activity.versionControl": "Versionskontrolle",
   "activity.settings": "Einstellungen",
   "activity.settingsTooltip": "Einstellungen (Strg+,)",

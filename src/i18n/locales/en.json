@@ -22,6 +22,8 @@
   "explorer.error.notFound": "“{name}” no longer exists; the entry or its folder has been removed.",
   "explorer.error.failed": "That did not work: {details}",
   "activity.search": "Search",
+  "quickOpen.placeholder": "Open file by name",
+  "quickOpen.noResults": "No matching file found.",
   "activity.versionControl": "Version Control",
   "activity.settings": "Settings",
   "activity.settingsTooltip": "Settings (Ctrl+,)",
