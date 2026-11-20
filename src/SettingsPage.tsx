@@ -117,6 +117,13 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             onCommit={(agentCommand) => change({ agentCommand })}
           />
         </SettingRow>
+        <SettingRow label={t("settings.notifications")} hint={t("settings.notifications.hint")}>
+          <input
+            type="checkbox"
+            checked={settings.notifications}
+            onChange={(event) => change({ notifications: event.target.checked })}
+          />
+        </SettingRow>
       </div>
     </section>
   );
