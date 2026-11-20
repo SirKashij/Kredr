@@ -5,8 +5,15 @@
  * nur aus einfachen Daten und lässt sich deshalb als JSON speichern.
  */
 
+/** Die Shell eines Terminals. */
+export type Shell = "powershell" | "gitBash";
+
 export interface Tab {
   id: string;
+  /** Der selbst vergebene Name; ohne ihn heißt das Terminal wie seine Shell. */
+  name?: string;
+  /** Die gewählte Shell; ohne Angabe die Standard-Shell. */
+  shell?: Shell;
 }
 
 /** Eine Gruppe: ein Teilstück des Hauptbereichs mit eigener Tab-Leiste. */
@@ -70,24 +77,29 @@ function groupOfTab(arrangement: Arrangement, tabId: string): Group | undefined 
   return groupsOf(arrangement).find((group) => group.tabs.some((tab) => tab.id === tabId));
 }
 
+function newTab(nextId: number, shell?: Shell): Tab {
+  return shell ? { id: `t${nextId}`, shell } : { id: `t${nextId}` };
+}
+
 /** Eine neue Gruppe mit einem neuen Tab; sie verbraucht zwei Kennungen. */
-function newGroup(nextId: number): Group {
-  const tab: Tab = { id: `t${nextId}` };
+function newGroup(nextId: number, shell?: Shell): Group {
+  const tab = newTab(nextId, shell);
   return { kind: "group", id: `g${nextId + 1}`, tabs: [tab], activeTab: tab.id };
 }
 
 /**
  * Öffnet einen neuen Tab in der fokussierten Gruppe und zeigt ihn an. Ohne
  * Gruppen entsteht die erste; hat keine Gruppe den Fokus, nimmt ihn die erste.
+ * Mit `shell` startet darin diese Shell statt der Standard-Shell.
  */
-export function openTab(arrangement: Arrangement): Arrangement {
+export function openTab(arrangement: Arrangement, shell?: Shell): Arrangement {
   const { root, nextId } = arrangement;
   if (!root) {
-    const group = newGroup(nextId);
+    const group = newGroup(nextId, shell);
     return { ...arrangement, root: group, focusedGroup: group.id, nextId: nextId + 2 };
   }
   const target = focusedGroupOf(arrangement) ?? groupsOf(arrangement)[0];
-  const tab: Tab = { id: `t${nextId}` };
+  const tab = newTab(nextId, shell);
   return {
     ...arrangement,
     root: replaceGroup(root, target.id, (group) => ({
@@ -139,6 +151,22 @@ export function closeTab(arrangement: Arrangement, tabId: string): Arrangement {
   const position = before.indexOf(group);
   const heir = before[position - 1] ?? before[position + 1];
   return { ...arrangement, root, focusedGroup: heir?.id ?? null };
+}
+
+/**
+ * Gibt dem Tab einen eigenen Namen. Ein leerer Name nimmt ihn wieder weg;
+ * der Tab heißt dann wie seine Shell.
+ */
+export function renameTab(arrangement: Arrangement, tabId: string, name: string): Arrangement {
+  const group = groupOfTab(arrangement, tabId);
+  if (!arrangement.root || !group) return arrangement;
+  const trimmed = name.trim();
+  const rename = ({ name: _, ...tab }: Tab): Tab => (trimmed ? { ...tab, name: trimmed } : tab);
+  const tabs = group.tabs.map((tab) => (tab.id === tabId ? rename(tab) : tab));
+  return {
+    ...arrangement,
+    root: replaceGroup(arrangement.root, group.id, () => ({ ...group, tabs })),
+  };
 }
 
 /** Wohin ein Tab verschoben wird. */

@@ -11,6 +11,10 @@
   "welcome.openFolder": "Open Folder",
   "dialog.openFolderTitle": "Open folder as project",
   "terminal.powershell": "PowerShell",
+  "terminal.gitBash": "Git Bash",
+  "terminal.chooseShell": "New Terminal with Selected Shell",
+  "terminal.copy": "Copy",
+  "terminal.paste": "Paste",
   "terminal.exited": "The process has exited.",
   "terminal.startFailed": "The terminal could not be started: {details}",
   "status.noProject": "No project open",
@@ -25,6 +29,8 @@
   "group.splitRightTooltip": "Split Right (Ctrl+Shift+5)",
   "group.splitDown": "Split Down",
   "group.splitDownTooltip": "Split Down (Ctrl+K, Ctrl+\\)",
+  "tab.rename": "Rename",
+  "tab.renameTooltip": "Double-click to rename",
   "tab.close": "Close",
   "tab.closeTooltip": "Close (Ctrl+F4)"
 }

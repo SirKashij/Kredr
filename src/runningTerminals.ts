@@ -2,8 +2,29 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal } from "@xterm/xterm";
+import type { Shell } from "./arrangement";
 import type { Translate } from "./i18n/i18n";
+import { clipboardCommand } from "./terminalClipboard";
+import { linkProvider, type LinkActions } from "./terminalLinkProvider";
+
+/** Was ein Terminal von seinem Fenster braucht. */
+export interface TerminalHost extends LinkActions {
+  /**
+   * Liefert die Übersetzungsfunktion der aktuellen Sprache; ein Sprachwechsel
+   * soll die laufende Shell nicht neu starten.
+   */
+  translate: () => Translate;
+}
+
+/** Womit ein Terminal startet. */
+export interface TerminalStart {
+  /** Startordner der Shell. */
+  cwd: string;
+  /** Ohne Angabe die Standard-Shell. */
+  shell?: Shell;
+}
 
 /** Terminalfarben des dunklen VS-Code-Standardthemas. */
 const theme = {
@@ -42,6 +63,8 @@ export class RunningTerminal {
     fontSize: 13,
     scrollback: 10_000,
     allowProposedApi: true,
+    // Links, die ein Programm selbst auszeichnet (OSC 8); nur Web-Adressen.
+    linkHandler: { activate: (_event, url) => this.host.openUrl(url) },
   });
   private readonly fitAddon = new FitAddon();
   private readonly observer = new ResizeObserver(() => {
@@ -57,16 +80,23 @@ export class RunningTerminal {
   // schon auf die Antwort von xterm.js auf seine Cursorabfrage.
   private earlyInput = "";
 
-  /**
-   * @param cwd Startordner der Shell.
-   * @param translate Liefert die Übersetzungsfunktion der aktuellen Sprache;
-   *   ein Sprachwechsel soll die laufende Shell nicht neu starten.
-   */
   constructor(
-    private readonly cwd: string,
-    private readonly translate: () => Translate,
+    private readonly options: TerminalStart,
+    private readonly host: TerminalHost,
   ) {
     this.xterm.loadAddon(this.fitAddon);
+    this.xterm.registerLinkProvider(linkProvider(this.xterm, options.cwd, host));
+    this.xterm.attachCustomKeyEventHandler((event) => {
+      const command = clipboardCommand(event, this.xterm.hasSelection());
+      if (!command) return true;
+      // Die Taste geht nicht an die Shell, und der Browser fügt nicht selbst ein.
+      event.preventDefault();
+      if (event.type === "keydown") {
+        if (command === "copy") this.copySelection();
+        else this.paste();
+      }
+      return false;
+    });
     // Breiten von Sonderzeichen und Emoji wie in aktuellen Terminals.
     this.xterm.loadAddon(new Unicode11Addon());
     this.xterm.unicode.activeVersion = "11";
@@ -110,6 +140,31 @@ export class RunningTerminal {
     this.xterm.focus();
   }
 
+  hasSelection(): boolean {
+    return this.xterm.hasSelection();
+  }
+
+  /**
+   * Kopiert den markierten Text in die Zwischenablage und hebt die Markierung
+   * auf; das nächste Strg+C erreicht damit wieder das laufende Programm.
+   */
+  copySelection() {
+    const text = this.xterm.getSelection();
+    if (!text) return;
+    writeText(text).catch(() => {});
+    this.xterm.clearSelection();
+  }
+
+  /** Fügt den Text der Zwischenablage als Eingabe ein. */
+  paste() {
+    readText()
+      .then((text) => {
+        if (text && !this.closed) this.xterm.paste(text);
+      })
+      // Die Zwischenablage ist leer oder enthält keinen Text.
+      .catch(() => {});
+  }
+
   /** Ob in der Shell gerade ein Programm läuft, etwa ein Agent. */
   async hasChildProcess(): Promise<boolean> {
     if (this.id === null) return false;
@@ -132,10 +187,11 @@ export class RunningTerminal {
     });
     const onExit = new Channel<null>(() => {
       if (this.closed) return;
-      this.xterm.write(`\r\n\x1b[90m${this.translate()("terminal.exited")}\x1b[0m\r\n`);
+      this.xterm.write(`\r\n\x1b[90m${this.host.translate()("terminal.exited")}\x1b[0m\r\n`);
     });
     const { cols, rows } = this.xterm;
-    invoke<number>("terminal_open", { cwd: this.cwd, cols, rows, onOutput, onExit })
+    const { cwd, shell } = this.options;
+    invoke<number>("terminal_open", { shell, cwd, cols, rows, onOutput, onExit })
       .then((id) => {
         if (this.closed) {
           invoke("terminal_close", { id });
@@ -148,7 +204,9 @@ export class RunningTerminal {
       })
       .catch((details) => {
         if (this.closed) return;
-        const message = this.translate()("terminal.startFailed", { details: String(details) });
+        const message = this.host.translate()("terminal.startFailed", {
+          details: String(details),
+        });
         this.xterm.write(`\x1b[31m${message}\x1b[0m`);
       });
   }
@@ -174,13 +232,13 @@ export class RunningTerminal {
 export class RunningTerminals {
   private readonly terminals = new Map<string, RunningTerminal>();
 
-  constructor(private readonly translate: () => Translate) {}
+  constructor(private readonly host: TerminalHost) {}
 
-  /** Das Terminal des Tabs; gibt es noch keines, entsteht es mit Startordner `cwd`. */
-  get(tabId: string, cwd: string): RunningTerminal {
+  /** Das Terminal des Tabs; gibt es noch keines, entsteht es und startet mit `start`. */
+  get(tabId: string, start: TerminalStart): RunningTerminal {
     let terminal = this.terminals.get(tabId);
     if (!terminal) {
-      terminal = new RunningTerminal(cwd, this.translate);
+      terminal = new RunningTerminal(start, this.host);
       this.terminals.set(tabId, terminal);
     }
     return terminal;

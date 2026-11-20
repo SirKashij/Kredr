@@ -12,6 +12,7 @@ import {
   moveDivider,
   moveTab,
   openTab,
+  renameTab,
   splitGroup,
   tabsOf,
   type Arrangement,
@@ -425,4 +426,44 @@ test("ein Tab ohne gültiges Ziel bleibt, wo er ist", () => {
   // Eine Stelle jenseits der Tab-Leiste meint ihr Ende.
   const far = moveTab(arrangement, b1.id, { groupId: a.id, index: 99 });
   expect((far.root as Group).tabs.at(-1)).toEqual(b1);
+});
+
+test("ein neues Terminal merkt sich die gewählte Shell", () => {
+  const arrangement = openTab(openTab(emptyArrangement, "gitBash"));
+
+  const [first, second] = tabsOf(arrangement);
+  expect(first.shell).toBe("gitBash");
+  // Ohne Wahl gilt die Standard-Shell; sie wird nicht festgeschrieben.
+  expect(second.shell).toBeUndefined();
+});
+
+test("ein Terminal lässt sich umbenennen", () => {
+  const two = openTab(openTab(emptyArrangement));
+  const [first, second] = tabsOf(two);
+
+  const renamed = renameTab(two, second.id, "  Agent Suche ");
+
+  expect(tabsOf(renamed)).toEqual([first, { ...second, name: "Agent Suche" }]);
+});
+
+test("ein leerer Name stellt den Standardnamen wieder her", () => {
+  const named = renameTab(single, tabsOf(single)[0].id, "Build");
+
+  const reset = renameTab(named, tabsOf(named)[0].id, "   ");
+
+  expect(tabsOf(reset)[0].name).toBeUndefined();
+});
+
+test("umbenennen eines unbekannten Tabs ändert nichts", () => {
+  expect(renameTab(single, "gibt-es-nicht", "Name")).toBe(single);
+});
+
+test("der Name wandert beim Verschieben mit dem Tab", () => {
+  const split = splitGroup(single, groupsOf(single)[0].id, "right");
+  const [left, right] = groupsOf(split);
+  const named = renameTab(split, left.tabs[0].id, "Agent");
+
+  const moved = moveTab(named, left.tabs[0].id, { groupId: right.id, index: 1 });
+
+  expect(tabsOf(moved).map((tab) => tab.name)).toEqual([undefined, "Agent"]);
 });

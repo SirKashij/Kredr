@@ -1,6 +1,7 @@
 import { views, type View } from "./ActivityBar";
 import { focusedGroupOf, tabsOf, type Arrangement } from "./arrangement";
 import { useT } from "./i18n/i18n";
+import { tabLabel } from "./tabLabel";
 
 interface AgentsViewProps {
   arrangement: Arrangement;
@@ -41,7 +42,7 @@ function AgentsView({ arrangement, onSelectTab }: AgentsViewProps) {
           onClick={() => onSelectTab(tab.id)}
         >
           <span className="dot" />
-          <span>{t("terminal.powershell")}</span>
+          <span>{tabLabel(tab, t)}</span>
         </button>
       ))}
     </div>
