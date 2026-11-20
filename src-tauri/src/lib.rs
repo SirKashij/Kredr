@@ -1,3 +1,4 @@
+pub mod settings;
 pub mod terminal;
 
 use std::collections::HashMap;
@@ -6,8 +7,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 
+use settings::{Settings, SettingsStore, Shell};
 use terminal::{Terminal, TerminalEvent, TerminalOptions};
 
 /// Die laufenden Terminals, nach Kennung.
@@ -101,10 +103,37 @@ fn initial_project() -> Option<PathBuf> {
     std::path::absolute(folder).ok()
 }
 
+#[tauri::command]
+fn settings_get(settings: State<'_, SettingsStore>) -> Settings {
+    settings.get()
+}
+
+/// Speichert die Einstellungen; alle Fenster erfahren davon über das
+/// Ereignis `settings-changed`.
+#[tauri::command]
+fn settings_set(settings: State<'_, SettingsStore>, value: Settings) -> Result<Settings, String> {
+    settings.set(value).map_err(|e| e.to_string())
+}
+
+/// Die Shells, die die Einstellungsseite zur Wahl stellt.
+#[tauri::command]
+fn available_shells() -> Vec<Shell> {
+    settings::available_shells()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Terminals::default())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let settings = SettingsStore::open(app.path().app_data_dir()?, move |settings| {
+                // Scheitert das Senden, ist kein Fenster mehr offen.
+                let _ = handle.emit("settings-changed", settings);
+            });
+            app.manage(settings);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             terminal_open,
             terminal_write,
@@ -112,6 +141,9 @@ pub fn run() {
             terminal_has_child_process,
             terminal_close,
             initial_project,
+            settings_get,
+            settings_set,
+            available_shells,
         ])
         .run(tauri::generate_context!())
         .expect("Kredr konnte nicht gestartet werden");
