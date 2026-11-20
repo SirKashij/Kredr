@@ -43,6 +43,10 @@ _Vermeiden_: Layout, Sitzungszustand
 Ein Tab im Hauptbereich, der eine Datei mit Syntaxfarben zeigt und einfache Korrekturen erlaubt.
 _Vermeiden_: Editor
 
+**Vorschau-Tab**:
+Ein Tab, der eine Datei nur zum Durchsehen zeigt und von der nächsten so geöffneten Datei ersetzt wird. Ein Doppelklick oder eine Bearbeitung macht ihn dauerhaft.
+_Vermeiden_: temporärer Tab, Preview
+
 **Versionskontrolle**:
 Die Ansicht, in der Änderungen eines Projekts geprüft, festgeschrieben und mit GitHub abgeglichen werden.
 _Vermeiden_: Source Control, Git-Panel
