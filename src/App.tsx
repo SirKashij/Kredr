@@ -84,11 +84,16 @@ export function App() {
     update((current) => closeTab(current, tabId));
   }
 
+  /** „Neuer Agent“: öffnet ein Terminal, in dem sofort der Agent startet. */
+  const newAgent = (current: Arrangement) => openTab(current, true);
+
   function run(command: Command) {
     const focused = focusedGroupOf(arrangement);
     switch (command.kind) {
       case "newTerminal":
         return update(openTab);
+      case "newAgent":
+        return update(newAgent);
       case "splitRight":
       case "splitDown": {
         // Ohne Gruppe gibt es nichts zu teilen; dann entsteht das erste Terminal.
@@ -147,6 +152,8 @@ export function App() {
           view={view}
           arrangement={arrangement}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
+          onNewAgent={project ? () => update(newAgent) : undefined}
+          onNewTerminal={project ? () => update(openTab) : undefined}
         />
         <main className="main">
           {!project ? (
@@ -169,7 +176,10 @@ export function App() {
           ) : (
             <div className="welcome">
               <p>{t("terminal.none")}</p>
-              <button className="btn" onClick={() => update(openTab)}>
+              <button className="btn" onClick={() => update(newAgent)}>
+                {t("agent.new")}
+              </button>
+              <button className="btn ghost" onClick={() => update(openTab)}>
                 {t("terminal.new")}
               </button>
             </div>
