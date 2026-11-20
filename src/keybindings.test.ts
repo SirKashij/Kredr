@@ -43,3 +43,11 @@ test("E und B ohne Strg bleiben gewöhnliche Eingaben", () => {
   // Strg+Alt ist AltGr.
   expect(resolveKey(key(B, { ctrlKey: true, altKey: true }), false)).toBeNull();
 });
+
+test("Strg+Umschalt+F zeigt die Suche", () => {
+  const F = 70;
+  expect(resolveKey(key(F, { ctrlKey: true, shiftKey: true }), false)).toEqual({
+    kind: "showSearch",
+  });
+  expect(resolveKey(key(F, { ctrlKey: true }), false)).toBe(null);
+});
