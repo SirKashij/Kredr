@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use kredr_lib::agent::{missing_program, with_status_settings, DEFAULT_START_COMMAND};
+use kredr_lib::terminal::Shell;
 
 /// Ein leerer Ordner, der als Suchpfad dient.
 fn search_folder(name: &str) -> PathBuf {
@@ -92,16 +93,20 @@ fn der_startbefehl_bekommt_die_konfiguration_fuer_den_agentenstatus_mit() {
     let settings = Path::new(r"C:\Temp\kredr\terminal-3.json");
 
     assert_eq!(
-        with_status_settings("claude", settings),
+        with_status_settings("claude", settings, Shell::Powershell),
         r"claude --settings 'C:\Temp\kredr\terminal-3.json'"
     );
     // Zusätze des Nutzers bleiben erhalten und stehen weiter am Ende.
     assert_eq!(
-        with_status_settings("claude --model opus; echo fertig", settings),
+        with_status_settings(
+            "claude --model opus; echo fertig",
+            settings,
+            Shell::Powershell
+        ),
         r"claude --settings 'C:\Temp\kredr\terminal-3.json' --model opus; echo fertig"
     );
     assert_eq!(
-        with_status_settings(r"  C:\Werkzeuge\Claude.exe -c", settings),
+        with_status_settings(r"  C:\Werkzeuge\Claude.exe -c", settings, Shell::Powershell),
         r"C:\Werkzeuge\Claude.exe --settings 'C:\Temp\kredr\terminal-3.json' -c"
     );
 }
@@ -111,8 +116,31 @@ fn ein_pfad_mit_leerzeichen_und_apostroph_bleibt_ein_argument() {
     let settings = Path::new(r"C:\Users\Max O'Neil\Temp\terminal-3.json");
 
     assert_eq!(
-        with_status_settings("claude", settings),
+        with_status_settings("claude", settings, Shell::Powershell),
         r"claude --settings 'C:\Users\Max O''Neil\Temp\terminal-3.json'"
+    );
+}
+
+#[test]
+fn in_git_bash_ist_der_pfad_nach_den_regeln_der_bash_zitiert() {
+    // Backslashes und Leerzeichen bleiben in einfachen Anführungszeichen,
+    // wie sie sind.
+    assert_eq!(
+        with_status_settings(
+            "claude --model opus",
+            Path::new(r"C:\Users\Max Muster\Temp\terminal-3.json"),
+            Shell::GitBash
+        ),
+        r"claude --settings 'C:\Users\Max Muster\Temp\terminal-3.json' --model opus"
+    );
+    // Ein verdoppelter Apostroph wie in PowerShell ginge in Bash verloren.
+    assert_eq!(
+        with_status_settings(
+            "claude",
+            Path::new(r"C:\Users\Max O'Neil\Temp\terminal-3.json"),
+            Shell::GitBash
+        ),
+        r"claude --settings 'C:\Users\Max O'\''Neil\Temp\terminal-3.json'"
     );
 }
 
@@ -129,6 +157,8 @@ fn andere_programme_als_claude_code_starten_unveraendert() {
         r#"& "C:\Mit Leerzeichen\claude.exe""#,
         "",
     ] {
-        assert_eq!(with_status_settings(command, settings), command);
+        for shell in [Shell::Powershell, Shell::GitBash] {
+            assert_eq!(with_status_settings(command, settings, shell), command);
+        }
     }
 }

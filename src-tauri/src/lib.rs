@@ -98,6 +98,8 @@ fn terminal_open(
     on_agent_status: Channel<StatusUpdate>,
 ) -> Result<OpenedTerminal, String> {
     let id = terminals.next_id.fetch_add(1, Ordering::Relaxed);
+    // Ohne Angabe gilt die Standard-Shell aus den Einstellungen.
+    let shell = shell.unwrap_or_else(|| settings.get().default_shell);
     let mut start_command = agent.then(|| agent_start_command(&settings));
     let search_path = std::env::var_os("PATH").unwrap_or_default();
     let missing_agent_program = start_command
@@ -118,12 +120,11 @@ fn terminal_open(
             let _ = on_agent_status.send(update);
         });
         if let Ok(settings_file) = settings_file {
-            *command = agent::with_status_settings(command, &settings_file);
+            *command = agent::with_status_settings(command, &settings_file, shell);
         }
     }
     let options = TerminalOptions {
-        // Ohne Angabe gilt die Standard-Shell aus den Einstellungen.
-        shell: shell.unwrap_or_else(|| settings.get().default_shell),
+        shell,
         cwd,
         cols,
         rows,
