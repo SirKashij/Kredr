@@ -1,8 +1,10 @@
 //! Aufteilungsspeicher: merkt sich im Benutzerdatenverzeichnis von Kredr,
-//! was über das Schließen eines Fensters hinaus erhalten bleibt. Bisher ist
-//! das die Liste zuletzt geöffneter Projekte; Aufteilung und
-//! Fenstergeometrie pro Projekt kommen als weitere Felder desselben
-//! Projekteintrags dazu.
+//! was über das Schließen eines Fensters hinaus erhalten bleibt: die Liste
+//! zuletzt geöffneter Projekte (`projects.json`) und pro Projekt seine
+//! Aufteilung samt Fenstergeometrie (je eine Datei unter `arrangements/`).
+//! Jedes Projekt hat seine eigene Datei, damit das laufende Speichern eines
+//! Fensters weder die Projektliste noch die Aufteilung eines anderen
+//! Projekts neu schreibt und eine beschädigte Datei nur ein Projekt trifft.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -10,11 +12,34 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::window_geometry::WindowGeometry;
+
 /// Die Version des Dateiformats. Eine Datei anderer Version gilt als nicht lesbar.
 const VERSION: u32 = 1;
 const FILE_NAME: &str = "projects.json";
 /// So viele Projekte behält die Liste; ältere fallen heraus.
 const MAX_PROJECTS: usize = 20;
+/// Der Ordner mit je einer Datei pro Projekt.
+const ARRANGEMENTS_DIR: &str = "arrangements";
+
+/// Was Kredr sich zu einem Projekt über das Schließen seines Fensters hinaus merkt.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProjectState {
+    /// Die Aufteilung im Format der Oberfläche (`src/arrangement.ts`), das
+    /// seine eigene Versionsnummer trägt; der Kern deutet sie nicht.
+    pub arrangement: Option<serde_json::Value>,
+    /// Größe und Position des Fensters.
+    pub window: Option<WindowGeometry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StoredState {
+    version: u32,
+    /// Der Projektordner, zu dem die Datei gehört.
+    project: PathBuf,
+    arrangement: Option<serde_json::Value>,
+    window: Option<WindowGeometry>,
+}
 
 /// Ein Eintrag der Liste zuletzt geöffneter Projekte.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -83,10 +108,58 @@ impl ArrangementStore {
         let mut projects = self.load();
         let before = projects.len();
         projects.retain(|project| !same_project(&project.path, folder));
+        // Mit dem Eintrag geht auch die Aufteilung des Projekts.
+        let _ = std::fs::remove_file(self.state_file(folder));
         if projects.len() == before {
             return Ok(());
         }
         self.save(projects)
+    }
+
+    /// Aufteilung und Fenstergeometrie des Projekts. Eine fehlende, nicht
+    /// lesbare oder in einer anderen Version geschriebene Datei ergibt
+    /// nichts von beidem.
+    pub fn project_state(&self, folder: &Path) -> ProjectState {
+        let _guard = self.lock.lock();
+        let Ok(bytes) = std::fs::read(self.state_file(folder)) else {
+            return ProjectState::default();
+        };
+        match serde_json::from_slice::<StoredState>(&bytes) {
+            Ok(stored) if stored.version == VERSION && same_project(&stored.project, folder) => {
+                ProjectState {
+                    arrangement: stored.arrangement,
+                    window: stored.window,
+                }
+            }
+            _ => ProjectState::default(),
+        }
+    }
+
+    /// Merkt sich Aufteilung und Fenstergeometrie des Projekts.
+    pub fn save_project_state(&self, folder: &Path, state: &ProjectState) -> io::Result<()> {
+        let _guard = self.lock.lock();
+        let stored = StoredState {
+            version: VERSION,
+            project: normalize(folder),
+            arrangement: state.arrangement.clone(),
+            window: state.window,
+        };
+        let json = serde_json::to_vec_pretty(&stored).map_err(io::Error::other)?;
+        write_whole(&self.state_file(folder), json)
+    }
+
+    /// Die Datei des Projekts. Ihr Name folgt aus dem Projektpfad, gleich in
+    /// welcher Schreibweise.
+    fn state_file(&self, folder: &Path) -> PathBuf {
+        // FNV-1a: über Versionen von Rust und Kredr hinweg derselbe Name.
+        let hash = key(folder)
+            .bytes()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+            });
+        self.dir
+            .join(ARRANGEMENTS_DIR)
+            .join(format!("{hash:016x}.json"))
     }
 
     fn file(&self) -> PathBuf {
@@ -103,19 +176,26 @@ impl ArrangementStore {
         }
     }
 
-    /// Schreibt erst daneben und benennt dann um: ein Absturz mitten im
-    /// Schreiben hinterlässt die alte Datei, keine halbe.
     fn save(&self, projects: Vec<StoredProject>) -> io::Result<()> {
         let stored = StoredFile {
             version: VERSION,
             projects,
         };
         let json = serde_json::to_vec_pretty(&stored).map_err(io::Error::other)?;
-        std::fs::create_dir_all(&self.dir)?;
-        let temporary = self.dir.join(format!("{FILE_NAME}.tmp"));
-        std::fs::write(&temporary, json)?;
-        std::fs::rename(temporary, self.file())
+        write_whole(&self.file(), json)
     }
+}
+
+/// Schreibt erst daneben und benennt dann um: ein Absturz mitten im
+/// Schreiben hinterlässt die alte Datei, keine halbe.
+fn write_whole(file: &Path, content: Vec<u8>) -> io::Result<()> {
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut temporary = file.as_os_str().to_owned();
+    temporary.push(".tmp");
+    std::fs::write(&temporary, content)?;
+    std::fs::rename(temporary, file)
 }
 
 /// Ob beide Pfade denselben Ordner als Projekt meinen. Windows unterscheidet
