@@ -1,0 +1,2 @@
+# Einheitliche Zeilenenden, unabhängig von der Git-Einstellung des Rechners.
+* text=auto eol=lf

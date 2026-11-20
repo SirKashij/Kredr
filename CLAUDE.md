@@ -18,6 +18,7 @@ Single-context: ein `GLOSSARY.md` und `docs/adr/` im Hauptverzeichnis. See `docs
 
 - Entwicklung starten: `npm run tauri dev`
 - Typprüfung der Oberfläche: `npm run typecheck`
+- Formatierung der Oberfläche: `npm run format` (prüfen: `npm run format:check`)
 - Tests der Oberfläche: `npm test`
 - Tests des Kerns (starten echte PowerShell): `cargo test` in `src-tauri/`
 - Installer bauen: `npm run tauri build` (Ergebnis in `src-tauri/target/release/bundle/nsis/`)
