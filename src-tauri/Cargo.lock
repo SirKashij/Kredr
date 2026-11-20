@@ -2204,6 +2204,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tempfile",
  "tiny_http",
+ "windows",
  "windows-sys 0.61.2",
 ]
 
