@@ -25,7 +25,8 @@ use tauri::{Emitter, Manager, State};
 
 use agent_status::{AgentStatus, StatusUpdate};
 use project_files::{
-    Entry, FileContent, FileOperationError, ProjectChanges, ProjectWatcher, Subscription,
+    Entry, FileContent, FileOperationError, ImageContent, ProjectChanges, ProjectWatcher,
+    Subscription,
 };
 use search::{FileMatches, SearchError, SearchOutcome, Searches, TextQuery};
 use settings::{Settings, SettingsStore, Shell};
@@ -289,6 +290,34 @@ fn project_files_read(project: PathBuf, path: String) -> Result<FileContent, Str
     project_files::read_file(&project.join(path)).map_err(|e| e.to_string())
 }
 
+/// Warum ein Bild nicht geliefert wird.
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum ImageUnavailable {
+    NotAnImage,
+    TooLarge { size: u64 },
+    Missing,
+    Failed { details: String },
+}
+
+/// Liest eine Bilddatei als rohe Bytes; `path` wie bei `project_files_read`.
+/// Nur Dateien mit Bildendung werden geliefert.
+#[tauri::command(async)]
+fn project_files_read_image(
+    project: PathBuf,
+    path: String,
+) -> Result<tauri::ipc::Response, ImageUnavailable> {
+    match project_files::read_image(&project.join(path)) {
+        Ok(ImageContent::Image { bytes }) => Ok(tauri::ipc::Response::new(bytes)),
+        Ok(ImageContent::NotAnImage) => Err(ImageUnavailable::NotAnImage),
+        Ok(ImageContent::TooLarge { size }) => Err(ImageUnavailable::TooLarge { size }),
+        Ok(ImageContent::Missing) => Err(ImageUnavailable::Missing),
+        Err(e) => Err(ImageUnavailable::Failed {
+            details: e.to_string(),
+        }),
+    }
+}
+
 /// Welche der Dateien und Ordner es gibt, in der Reihenfolge von `paths`;
 /// jeder Pfad wie bei `project_files_read`. Danach richtet sich, was von
 /// einer gespeicherten Aufteilung wiederhergestellt wird.
@@ -539,6 +568,7 @@ pub fn run() {
             project_files_list,
             project_file_list,
             project_files_read,
+            project_files_read_image,
             project_files_write,
             project_files_create_file,
             project_files_create_folder,

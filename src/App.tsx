@@ -10,6 +10,7 @@ import {
   activateTab,
   assignShell,
   closeTab,
+  closesFileText,
   emptyArrangement,
   filePathOf,
   focusAdjacentGroup,
@@ -20,12 +21,14 @@ import {
   openContent,
   openTab,
   openTabIn,
+  showsFile,
   showVersionControl,
   splitGroup,
   tabsOf,
   type Arrangement,
 } from "./arrangement";
 import { ArrangementSaver, loadArrangement } from "./arrangementStore";
+import { contentFor } from "./fileKinds";
 import { fileName, fullPath, opensExternally, toProjectPath } from "./filePath";
 import { recordOpened } from "./fileSearch";
 import { saveFile } from "./FileView";
@@ -241,17 +244,19 @@ export function App() {
     if (!preview && opensExternally(file)) {
       return openFileExternally({ path: fullPath(project, file) });
     }
-    const open = (current: Arrangement) =>
-      openContent(current, { kind: "file", path: file }, preview);
+    // Bilder öffnen sich als Bild, alles andere als Dateiansicht.
+    const content = contentFor(file);
+    const isFileView = content.kind === "file";
+    const open = (current: Arrangement) => openContent(current, content, preview);
     if (preview) {
       // Die Vorschau zeigt die Datei nur; die Tastatur bleibt, wo sie ist.
       setArrangement((current) => settle(open(current)));
       setSettingsOpen(false);
     } else {
-      files.get(project, file).wantFocus();
+      if (isFileView) files.get(project, file).wantFocus();
       update(open);
     }
-    if (line !== undefined) files.get(project, file).reveal({ line, ...position });
+    if (isFileView && line !== undefined) files.get(project, file).reveal({ line, ...position });
   }
 
   /** Schließt „Datei per Namen öffnen“; die Tastatur geht zurück in den Hauptbereich. */
@@ -283,7 +288,10 @@ export function App() {
 
   async function closeTerminal(tabId: string) {
     const content = tabsOf(arrangement).find((tab) => tab.id === tabId)?.content;
-    if (content?.kind === "file" && !(await confirmCloseFile(content.path))) {
+    // Quelltext und Markdown-Vorschau zeigen denselben Text; gefragt wird erst,
+    // wenn der letzte Tab schließt, der ihn hält.
+    const closing = showsFile(content) && closesFileText(arrangement, tabId);
+    if (closing && !(await confirmCloseFile(content.path))) {
       refocusTerminal();
       return;
     }
@@ -475,6 +483,7 @@ export function App() {
               focusRequest={focusRequest}
               update={update}
               onRefocus={refocusTerminal}
+              onOpenFile={(path) => openFile({ path })}
               onCloseTab={closeTerminal}
             />
           ) : (

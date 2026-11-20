@@ -135,6 +135,63 @@ pub fn write_file(path: &Path, text: &str) -> Result<(), ProjectFilesError> {
     std::fs::write(path, text).map_err(error)
 }
 
+/// Größere Bilder zeigt Kredr nicht an.
+pub const MAX_IMAGE_SIZE: u64 = 100 * 1024 * 1024;
+
+/// Die Endungen der Dateien, die als Bild gelesen werden dürfen.
+pub const IMAGE_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico", "avif",
+];
+
+/// Was beim Lesen eines Bildes herauskommt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageContent {
+    /// Der Inhalt der Bilddatei, Byte für Byte.
+    Image { bytes: Vec<u8> },
+    /// Die Datei hat keine Endung aus [`IMAGE_EXTENSIONS`]; sie wurde nicht gelesen.
+    NotAnImage,
+    /// Größer als [`MAX_IMAGE_SIZE`]; der Inhalt wurde nicht gelesen.
+    TooLarge { size: u64 },
+    /// Die Datei gibt es nicht (mehr).
+    Missing,
+}
+
+/// Liest eine Bilddatei für die Anzeige als Bild. Anders als [`read_file`]
+/// liefert es rohe Bytes und erlaubt größere Dateien, gibt dafür aber nur
+/// Dateien mit Bildendung heraus.
+pub fn read_image(path: &Path) -> Result<ImageContent, ProjectFilesError> {
+    let is_image = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            IMAGE_EXTENSIONS
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(extension))
+        });
+    if !is_image {
+        return Ok(ImageContent::NotAnImage);
+    }
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(ImageContent::Missing),
+        Err(e) => return Err(error(e)),
+    };
+    if metadata.is_dir() {
+        return Err(error("is a folder"));
+    }
+    if metadata.len() > MAX_IMAGE_SIZE {
+        return Ok(ImageContent::TooLarge {
+            size: metadata.len(),
+        });
+    }
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(ImageContent::Image { bytes }),
+        // Zwischen Prüfung und Lesen gelöscht.
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(ImageContent::Missing),
+        Err(e) => Err(error(e)),
+    }
+}
+
 /// So lange werden Änderungen gesammelt, bevor sie als ein Ereignis
 /// weitergehen. Kurz genug, dass eine neue Datei ohne spürbare Verzögerung
 /// erscheint; lang genug, dass ein Agent, der hunderte Dateien schreibt, nur

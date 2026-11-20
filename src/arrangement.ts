@@ -28,28 +28,66 @@ export interface Tab {
  * Versionskontrolle, Bild …) ist ein weiterer Fall mit eigenem `kind`.
  */
 export type TabContent =
-  | {
-      /** Eine Dateiansicht. */
-      kind: "file";
-      /** Relativ zum Projektordner und mit `/` getrennt; außerhalb des Projekts der volle Pfad. */
-      path: string;
-    }
+  | FileTabContent
   /** Die Versionskontrolle mit dem großen Diff; es gibt sie nur einmal. */
   | { kind: "versionControl" };
+
+/** Der Inhalt eines Tabs, der eine Datei zeigt. */
+export interface FileTabContent {
+  /**
+   * `file`: eine Dateiansicht. `markdown`: die gerenderte Vorschau einer
+   * Markdown-Datei. `image`: eine Bilddatei als Bild.
+   */
+  kind: "file" | "markdown" | "image";
+  /** Relativ zum Projektordner und mit `/` getrennt; außerhalb des Projekts der volle Pfad. */
+  path: string;
+}
+
+/** Ob der Tab eine Datei zeigt, in welcher Ansicht auch immer. */
+export function showsFile(content: TabContent | undefined): content is FileTabContent {
+  return content !== undefined && content.kind !== "versionControl";
+}
+
+/**
+ * Ob der Tab den Text einer Datei hält, samt ungespeicherter Änderungen: ihre
+ * Dateiansicht und ihre Markdown-Vorschau (beide zeigen denselben Text).
+ */
+export function holdsFileText(content: TabContent): content is FileTabContent {
+  return content.kind === "file" || content.kind === "markdown";
+}
+
+/**
+ * Ob mit dem Tab der letzte schließt, der den Text seiner Datei hält; erst
+ * dann gingen ungespeicherte Änderungen verloren.
+ */
+export function closesFileText(arrangement: Arrangement, tabId: string): boolean {
+  const tabs = tabsOf(arrangement);
+  const content = tabs.find((tab) => tab.id === tabId)?.content;
+  if (!content || !holdsFileText(content)) return false;
+  const path = content.path.toLowerCase();
+  return !tabs.some(
+    (tab) =>
+      tab.id !== tabId &&
+      tab.content &&
+      holdsFileText(tab.content) &&
+      tab.content.path.toLowerCase() === path,
+  );
+}
 
 /** Ob der Tab ein Terminal ist (gewöhnlich oder mit Agent). */
 export function isTerminal(tab: Tab): boolean {
   return !tab.content;
 }
 
-/** Der Pfad der Datei, wenn der Tab eine Dateiansicht ist. */
+/** Der Pfad der Datei, die der Tab zeigt; fehlt bei Terminals und der Versionskontrolle. */
 export function filePathOf(tab: Tab | undefined): string | undefined {
-  return tab?.content?.kind === "file" ? tab.content.path : undefined;
+  return showsFile(tab?.content) ? tab?.content.path : undefined;
 }
 
 /** Ob beide dasselbe zeigen; ein Inhalt ist im Hauptbereich nur einmal offen. */
 export function sameContent(a: TabContent, b: TabContent): boolean {
-  if (a.kind !== "file" || b.kind !== "file") return a.kind === b.kind;
+  if (a.kind !== b.kind) return false;
+  if (!showsFile(a) || !showsFile(b)) return true;
   // Windows unterscheidet bei Pfaden keine Groß- und Kleinschreibung.
   return a.path.toLowerCase() === b.path.toLowerCase();
 }
@@ -455,6 +493,49 @@ export function keepTab(arrangement: Arrangement, tabId: string): Arrangement {
 }
 
 /**
+ * Lässt den Tab an Ort und Stelle etwas anderes zeigen, etwa die Vorschau
+ * statt des Quelltexts. Ist der Inhalt schon in einem anderen Tab offen, wird
+ * stattdessen jener angezeigt.
+ */
+export function showInTab(
+  arrangement: Arrangement,
+  tabId: string,
+  content: TabContent,
+): Arrangement {
+  const group = groupOfTab(arrangement, tabId);
+  if (!arrangement.root || !group) return arrangement;
+  const existing = tabsOf(arrangement).find(
+    (tab) => tab.content && sameContent(tab.content, content),
+  );
+  if (existing) return activateTab(arrangement, existing.id);
+  const tabs = group.tabs.map((tab) => (tab.id === tabId ? { ...tab, content } : tab));
+  return {
+    ...arrangement,
+    root: replaceGroup(arrangement.root, group.id, () => ({ ...group, tabs })),
+  };
+}
+
+/**
+ * Öffnet einen Inhalt in einer neuen Gruppe rechts neben der fokussierten,
+ * etwa die Vorschau neben dem Quelltext. Der Fokus bleibt, wo er ist. Ist der
+ * Inhalt schon offen, wird stattdessen jener Tab angezeigt.
+ */
+export function openContentBeside(arrangement: Arrangement, content: TabContent): Arrangement {
+  const origin = focusedGroupOf(arrangement);
+  const existing = tabsOf(arrangement).some(
+    (tab) => tab.content && sameContent(tab.content, content),
+  );
+  if (!origin || existing) return openContent(arrangement, content);
+  const opened = openContent(arrangement, content);
+  const moved = moveTab(opened, focusedGroupOf(opened)!.activeTab, {
+    groupId: origin.id,
+    side: "right",
+  });
+  // In der alten Gruppe bleibt sichtbar, was sichtbar war.
+  return activateTab(moved, origin.activeTab);
+}
+
+/**
  * Verschiebt die Trennlinie hinter dem Teilstück `index` einer Teilung an die
  * Stelle `position` (0 bis 1 entlang der Teilung). Nur die beiden Nachbarn der
  * Trennlinie ändern ihre Größe; jedem bleibt mindestens `minSize`.
@@ -616,8 +697,11 @@ function restoreContent(value: unknown, exists: (path: string) => boolean): TabC
   const raw = rawObject(value);
   switch (raw.kind) {
     case "file":
+    // Markdown-Vorschau und Bild zeigen wie die Dateiansicht eine Datei.
+    case "markdown":
+    case "image":
       return typeof raw.path === "string" && exists(raw.path)
-        ? { kind: "file", path: raw.path }
+        ? { kind: raw.kind, path: raw.path }
         : null;
     // Der Tab kommt zurück, aber nicht maximiert (`maximized` wird nicht
     // übernommen): Ein frisch geöffnetes Projekt zeigt seine Terminals.
