@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Emitter, Manager, State};
 
-use project_files::{Entry, ProjectChanges, ProjectWatcher, Subscription};
+use project_files::{Entry, FileOperationError, ProjectChanges, ProjectWatcher, Subscription};
 use settings::{Settings, SettingsStore, Shell};
 use terminal::{Terminal, TerminalEvent, TerminalOptions};
 
@@ -189,6 +189,49 @@ fn project_files_list(project: PathBuf, folder: String) -> Result<Vec<Entry>, St
     project_files::list_folder(&project.join(folder)).map_err(|e| e.to_string())
 }
 
+/// Legt im Ordner `folder` des Projekts eine leere Datei an.
+#[tauri::command(async)]
+fn project_files_create_file(
+    project: PathBuf,
+    folder: String,
+    name: String,
+) -> Result<(), FileOperationError> {
+    project_files::create_file(&project.join(folder), &name)
+}
+
+/// Legt im Ordner `folder` des Projekts einen leeren Ordner an.
+#[tauri::command(async)]
+fn project_files_create_folder(
+    project: PathBuf,
+    folder: String,
+    name: String,
+) -> Result<(), FileOperationError> {
+    project_files::create_folder(&project.join(folder), &name)
+}
+
+/// Gibt dem Eintrag `path` des Projekts in seinem Ordner einen neuen Namen.
+#[tauri::command(async)]
+fn project_files_rename(
+    project: PathBuf,
+    path: String,
+    new_name: String,
+) -> Result<(), FileOperationError> {
+    project_files::rename(&project.join(path), &new_name)
+}
+
+/// Verschiebt den Eintrag `path` des Projekts in den Windows-Papierkorb.
+#[tauri::command(async)]
+fn project_files_trash(project: PathBuf, path: String) -> Result<(), FileOperationError> {
+    project_files::move_to_trash(&project.join(path))
+}
+
+/// Markiert den Eintrag `path` des Projekts im Windows-Explorer; ein leerer
+/// Pfad meint den Projektordner selbst.
+#[tauri::command(async)]
+fn project_files_reveal(project: PathBuf, path: String) -> Result<(), FileOperationError> {
+    project_files::reveal_in_file_manager(&project.join(path))
+}
+
 /// Abonniert den Ereignisstrom des Projekts und liefert die Kennung des Abonnements.
 #[tauri::command]
 fn project_files_watch(
@@ -277,6 +320,11 @@ pub fn run() {
             settings_set,
             available_shells,
             project_files_list,
+            project_files_create_file,
+            project_files_create_folder,
+            project_files_rename,
+            project_files_trash,
+            project_files_reveal,
             project_files_watch,
             project_files_unwatch,
             projects::window_project,
