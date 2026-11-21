@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { FileView, useOpenFiles } from "./FileView";
+import { fileName } from "./filePath";
+import { FileBanners, FileView, useOpenFiles } from "./FileView";
 import { useT } from "./i18n/i18n";
 import { codeLanguage, headingSlug, renderMarkdown, resolveImage, resolveLink } from "./markdown";
 import { loadMonaco } from "./monacoLoader";
@@ -179,13 +180,16 @@ export function MarkdownPreview({
   }
 
   return (
-    <div className="markdown-view" ref={view} tabIndex={-1}>
-      <div
-        className="markdown-body"
-        ref={content}
-        onClick={follow}
-        onKeyDown={(event) => event.key === "Enter" && follow(event)}
-      />
+    <div className="file-view">
+      <FileBanners file={file} name={fileName(path)} />
+      <div className="markdown-view" ref={view} tabIndex={-1}>
+        <div
+          className="markdown-body"
+          ref={content}
+          onClick={follow}
+          onKeyDown={(event) => event.key === "Enter" && follow(event)}
+        />
+      </div>
     </div>
   );
 }

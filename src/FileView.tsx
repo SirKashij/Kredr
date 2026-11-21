@@ -79,6 +79,31 @@ export function FileView({
 
   return (
     <div className="file-view">
+      <FileBanners file={file} name={name} />
+      {model && (
+        <FileEditor
+          file={file}
+          model={model}
+          focused={focused}
+          focusRequest={focusRequest}
+          saveFailed={(details) => t("file.saveFailed", { name, details })}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Die Hinweise über dem Text einer offenen Datei, in der Dateiansicht wie in
+ * der Markdown-Vorschau: Die Datei wurde auf der Festplatte geändert, während
+ * es ungespeicherte Änderungen gibt (mit der Wahl zwischen beiden Fassungen),
+ * oder sie wurde gelöscht.
+ */
+export function FileBanners({ file, name }: { file: OpenFile; name: string }) {
+  const t = useT();
+  const { state } = file;
+  return (
+    <>
       {state.conflict !== null && (
         <div className="file-banner" role="alert">
           <span>{t("file.conflict", { name })}</span>
@@ -95,16 +120,7 @@ export function FileView({
           <span>{t("file.deleted", { name })}</span>
         </div>
       )}
-      {model && (
-        <FileEditor
-          file={file}
-          model={model}
-          focused={focused}
-          focusRequest={focusRequest}
-          saveFailed={(details) => t("file.saveFailed", { name, details })}
-        />
-      )}
-    </div>
+    </>
   );
 }
 
