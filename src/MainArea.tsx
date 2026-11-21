@@ -254,7 +254,13 @@ function TerminalTabName({ tab, statuses }: { tab: Tab; statuses: AgentStatuses 
   const label = terminalTabLabel(tab, assignment, settings.showAssignment, t);
   const rename = t("tab.renameTooltip");
   const title = label.assignment ? `${label.assignment}\n\n${rename}` : rename;
-  if (!label.kicker) return <span title={title}>{label.text}</span>;
+  if (!label.kicker) {
+    return (
+      <span className="tab-name" title={title}>
+        {label.text}
+      </span>
+    );
+  }
   return (
     <span className="tab-name two-line" title={title}>
       <small>{label.kicker}</small>

@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "format": "prettier --write .",
+    "format": "prettier --write . && cargo fmt --manifest-path src-tauri/Cargo.toml",
     "format:check": "prettier --check .",
     "check": "node scripts/check.mjs",
     "tauri": "tauri",

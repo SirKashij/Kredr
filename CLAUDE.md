@@ -21,7 +21,7 @@ Build-Cache, Prüfen und Warten auf CI nach jedem Merge: `docs/agents/integratio
 ## Befehle
 
 - Alles prüfen wie CI (Formatierung, Typen, Tests, Build, Clippy, Kern-Tests): `npm run check`
-- Formatieren: `npm run format` bzw. `cargo fmt` in `src-tauri/`
+- Formatieren (Oberfläche und Kern): `npm run format`
 - Entwicklung starten: `npm run tauri dev`
 - Installer bauen: `npm run tauri build` (Ergebnis in `src-tauri/target/release/bundle/nsis/`)
 - Bauen und über die eigene Installation installieren: `npm run installieren` (wartet, bis die Person Kredr schließt; nur auf Wunsch starten)

@@ -1,18 +1,52 @@
 // Steuert die laufende Entwicklungsfassung von Kredr über das Chrome DevTools Protocol.
 // Verbindet sich mit dem Port aus start.ps1 und sammelt dabei Ausnahmen und console.error.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+/** Was start.ps1 zuletzt gestartet hat: `port`, `kredr` (PID), `vite`. */
+function laufend() {
+  const datei = join(tmpdir(), "kredr-steuern", "laufend.json");
+  return JSON.parse(readFileSync(datei, "utf8").replace(/^﻿/, ""));
+}
 
 /** Der Port, den start.ps1 zuletzt vergeben hat. */
 function laufenderPort() {
   try {
-    const datei = join(tmpdir(), "kredr-steuern", "laufend.json");
-    return JSON.parse(readFileSync(datei, "utf8").replace(/^﻿/, "")).port;
+    return laufend().port;
   } catch {
     return 9333;
   }
+}
+
+/**
+ * Meldet dem zuletzt gestarteten Agenten ein Hook-Ereignis, als käme es von Claude Code
+ * (etwa `UserPromptSubmit` mit `{ prompt }`, `Stop`, `SessionEnd` mit `{ reason: "clear" }`).
+ * So lässt sich der Agentenstatus ohne Modellaufruf durchspielen. Wartet danach kurz,
+ * bis die Oberfläche die Meldung gezeichnet hat.
+ */
+export async function agentMelden(ereignis, felder = {}) {
+  const ordner = join(tmpdir(), `kredr-${laufend().kredr}`);
+  const konfiguration = readdirSync(ordner)
+    .filter((name) => name.startsWith("terminal-"))
+    .map((name) => join(ordner, name))
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+  if (!konfiguration) throw new Error("Kein Agent gestartet: " + ordner);
+  const url = JSON.parse(readFileSync(konfiguration, "utf8")).hooks[ereignis]?.[0].hooks[0].url;
+  if (!url) throw new Error("Kein Hook für " + ereignis);
+  const antwort = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      hook_event_name: ereignis,
+      session_id: "skript",
+      cwd: ordner,
+      ...felder,
+    }),
+  });
+  if (!antwort.ok) throw new Error(`${ereignis} abgewiesen: ${antwort.status}`);
+  await new Promise((r) => setTimeout(r, 300));
 }
 
 /** Die Oberfläche ist verschwunden: Eine ungefangene Ausnahme hat `#root` geleert. */
