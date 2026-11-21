@@ -29,6 +29,12 @@ export interface RepositoryState {
   /** Der aktuelle Commit; `null`, solange es noch keinen gibt. */
   commit: string | null;
   files: ChangedFile[];
+  /**
+   * Was Git ignoriert: Pfade wie in `files`. Ein ignorierter Ordner steht für
+   * alles darin; der leere Pfad ist der Projektordner selbst. Der Kern liefert
+   * die Liste immer; fehlt sie, ist nichts ignoriert.
+   */
+  ignored?: string[];
 }
 
 export type ErrorReason =

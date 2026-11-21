@@ -1313,6 +1313,24 @@ button {
   color: var(--git-conflicted);
 }
 
+/* Der Explorer zeichnet Ignoriertes ausgegraut wie VS Code. */
+.git-ignored {
+  color: #8c8c8c;
+}
+
+/* Kürzel des Git-Status am rechten Rand einer Zeile des Explorers. */
+.tree-badge {
+  flex: none;
+  width: 12px;
+  margin-left: auto;
+  text-align: center;
+  font-size: 11px;
+}
+
+.tree-row .tree-name {
+  min-width: 0;
+}
+
 /* Die Zahl der geänderten Dateien am Symbol der Versionskontrolle. */
 .actbar .badge.changes {
   background: var(--accent);

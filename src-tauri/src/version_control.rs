@@ -133,6 +133,10 @@ pub struct RepositoryState {
     /// Alle Änderungen im Projektordner, in der Reihenfolge von Git: erst die
     /// Git bekannten Dateien nach Pfad, dann die unbekannten.
     pub files: Vec<ChangedFile>,
+    /// Was Git ignoriert, nach Pfad sortiert: Pfade ab dem Projektordner mit
+    /// `/`. Ein ignorierter Ordner steht für alles darin und wird nicht
+    /// Datei für Datei aufgeführt; der leere Pfad ist der Projektordner selbst.
+    pub ignored: Vec<String>,
 }
 
 /// Der Zustand oder der Grund, warum es keinen gibt (kein Git, kein
@@ -181,6 +185,9 @@ impl VersionControl {
                 "--branch",
                 "-z",
                 "--untracked-files=all",
+                // Ignorierte Ordner nur nennen, nicht durchsuchen: Sonst
+                // kostete `node_modules` jede Abfrage ein Vielfaches.
+                "--ignored=matching",
                 "--",
                 ".",
             ],
@@ -542,6 +549,7 @@ fn parse_status(output: &[u8], prefix: &str) -> RepositoryState {
         branch: None,
         commit: None,
         files: Vec::new(),
+        ignored: Vec::new(),
     };
     let mut untracked = Vec::new();
     let mut records = text.split('\0');
@@ -587,10 +595,12 @@ fn parse_status(output: &[u8], prefix: &str) -> RepositoryState {
                 status: FileStatus::Untracked,
                 staged: false,
             }),
+            "!" => state.ignored.push(ignored_path(prefix, rest)),
             _ => {}
         }
     }
     state.files.append(&mut untracked);
+    state.ignored.sort();
     state
 }
 
@@ -627,6 +637,16 @@ fn project_path(prefix: &str, path: &str) -> String {
         // Außerhalb des Projektordners (der frühere Pfad einer Umbenennung).
         None => format!("{}{path}", "../".repeat(prefix.matches('/').count())),
     }
+}
+
+/// Macht aus einem ignorierten Pfad ab dem Repository einen Pfad ab dem
+/// Projektordner. Ordner nennt Git mit `/` am Ende; hier stehen sie ohne.
+fn ignored_path(prefix: &str, path: &str) -> String {
+    // Der Projektordner selbst oder ein Ordner über ihm ist ignoriert.
+    if path.ends_with('/') && prefix.starts_with(path) {
+        return String::new();
+    }
+    project_path(prefix, path.strip_suffix('/').unwrap_or(path))
 }
 
 /// Ein Branch, zu dem sich wechseln lässt.
