@@ -162,4 +162,27 @@ impl TestProject {
         self.git(&["push", "--set-upstream", "origin", "HEAD"]);
         remote
     }
+
+    /// Führt Git in einem beliebigen Ordner des Tests aus, etwa im „Remote“.
+    pub fn git_at(&self, folder: &Path, args: &[&str]) -> String {
+        self.git_in(folder, args)
+    }
+
+    /// Jemand anderes schreibt die Datei fest und pusht sie auf den Branch
+    /// `main` des „Remote“ (`add_remote` muss vorher gelaufen sein): aus
+    /// einem zweiten Arbeitsordner neben dem Projekt, wie ein Kollege oder
+    /// ein anderer Rechner.
+    pub fn push_from_elsewhere(&self, path: &str, content: &str) {
+        let elsewhere = self.root.path().join("elsewhere");
+        if !elsewhere.exists() {
+            self.git_in(self.root.path(), &["clone", "remote.git", "elsewhere"]);
+        }
+        self.git_in(&elsewhere, &["pull", "--ff-only", "origin", "main"]);
+        let file = elsewhere.join(path);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, content).unwrap();
+        self.git_in(&elsewhere, &["add", "--all"]);
+        self.git_in(&elsewhere, &["commit", "--message", "Commit von anderswo"]);
+        self.git_in(&elsewhere, &["push", "origin", "HEAD:main"]);
+    }
 }

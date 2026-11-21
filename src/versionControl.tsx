@@ -2,7 +2,13 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
 import type { ShownCommitFile } from "./commitHistory";
 import type { FileContent } from "./fileState";
-import { followSelection, type ChangedFile, type VersionControlState } from "./versionControlState";
+import {
+  followSelection,
+  type ChangedFile,
+  type Operation,
+  type VersionControlError,
+  type VersionControlState,
+} from "./versionControlState";
 
 /** Eine Fassung einer Datei im Diff, wie sie das Kern-Modul liefert. */
 export type Version = Exclude<FileContent, { kind: "error" }>;
@@ -30,7 +36,16 @@ export interface VersionControlSnapshot {
   commitFile: ShownCommitFile | null;
   /** Ob der Diff beide Fassungen nebeneinander zeigt statt untereinander. */
   sideBySide: boolean;
+  /** Die eingegebene Commit-Nachricht. */
+  message: string;
+  /** Was gerade ausgeführt wird; solange sind alle Knöpfe gesperrt. */
+  busy: Operation | null;
+  /** Warum die letzte Operation scheiterte; `null` nach einer gelungenen. */
+  failure: VersionControlError | null;
 }
+
+/** Ein Aufruf an den Kern; Tests antworten an seiner Stelle. */
+export type CoreCall = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 /**
  * Die Versionskontrolle eines Fensters: die eine Stelle der Oberfläche, die
@@ -44,8 +59,18 @@ export class VersionControlStore {
     selected: null,
     commitFile: null,
     sideBySide: true,
+    message: "",
+    busy: null,
+    failure: null,
   };
   private readonly listeners = new Set<() => void>();
+
+  constructor(
+    private readonly call: CoreCall = invoke,
+    project: string | null = null,
+  ) {
+    this.current = { ...this.current, project };
+  }
 
   /** Der aktuelle Stand; er wird nie verändert, nur ersetzt. */
   snapshot = (): VersionControlSnapshot => this.current;
@@ -59,7 +84,15 @@ export class VersionControlStore {
   /** Folgt dem Zustand des Projekts, bis der Rückgabewert aufgerufen wird. */
   watch(project: string): () => void {
     let stopped = false;
-    this.replace({ ...this.current, project, state: null, selected: null, commitFile: null });
+    this.replace({
+      ...this.current,
+      project,
+      state: null,
+      selected: null,
+      commitFile: null,
+      message: "",
+      failure: null,
+    });
     const onState = new Channel<VersionControlState>();
     onState.onmessage = (state) => {
       if (stopped) return;
@@ -92,10 +125,95 @@ export class VersionControlStore {
     this.replace({ ...this.current, sideBySide });
   }
 
+  setMessage(message: string) {
+    this.replace({ ...this.current, message });
+  }
+
+  /** Blendet die Meldung der letzten gescheiterten Operation aus. */
+  dismissFailure() {
+    this.replace({ ...this.current, failure: null });
+  }
+
+  /** Wählt die Änderungen zum Festschreiben aus; ohne Angabe alle. */
+  stage(files?: ChangedFile[]): Promise<void> {
+    return this.run("stage", "version_control_stage", { files: files ?? null });
+  }
+
+  /** Wählt die Änderungen wieder ab; ohne Angabe alle. */
+  unstage(files?: ChangedFile[]): Promise<void> {
+    return this.run("unstage", "version_control_unstage", { files: files ?? null });
+  }
+
+  /** Verwirft die Änderung; die Rückfrage stellt der Aufrufer vorher. */
+  discard(file: ChangedFile): Promise<void> {
+    return this.run("discard", "version_control_discard", { file });
+  }
+
+  /** Schreibt mit der eingegebenen Nachricht fest. */
+  commit(): Promise<void> {
+    const { message } = this.current;
+    return this.run("commit", "version_control_commit", { message }, () => this.setMessage(""));
+  }
+
+  /** „Commit & Push“: ein Schritt im Kern. Scheitert nur der Push, bleibt der Commit. */
+  commitAndPush(): Promise<void> {
+    const { message } = this.current;
+    return this.run("commitAndPush", "version_control_commit_and_push", { message }, (result) => {
+      const { pushError } = result as { pushError: VersionControlError | null };
+      this.replace({ ...this.current, message: "", failure: pushError });
+    });
+  }
+
+  push(): Promise<void> {
+    return this.run("push", "version_control_push", {});
+  }
+
+  pull(): Promise<void> {
+    return this.run("pull", "version_control_pull", {});
+  }
+
+  /** „Erst holen, dann pushen“: der Ausweg nach einem abgelehnten Push. */
+  pullAndPush(): Promise<void> {
+    return this.run("pullAndPush", "version_control_pull_and_push", {});
+  }
+
+  /**
+   * Führt eine Operation im Kern aus. Läuft bereits eine, geschieht nichts:
+   * Das schützt vor Doppelklicks und davor, dass sich zwei Git-Aufrufe im
+   * selben Repository in die Quere kommen. Das Ergebnis im Repository kommt
+   * über den abonnierten Zustand.
+   */
+  private async run(
+    operation: Operation,
+    command: string,
+    args: Record<string, unknown>,
+    onDone?: (result: unknown) => void,
+  ): Promise<void> {
+    const { project, busy } = this.current;
+    if (project === null || busy !== null) return;
+    this.replace({ ...this.current, busy: operation, failure: null });
+    try {
+      const result = await this.call(command, { project, ...args });
+      onDone?.(result);
+    } catch (reason) {
+      this.replace({ ...this.current, failure: asError(reason) });
+    } finally {
+      this.replace({ ...this.current, busy: null });
+    }
+  }
+
   private replace(next: VersionControlSnapshot) {
     this.current = next;
     for (const listener of this.listeners) listener();
   }
+}
+
+/** Der Kern scheitert mit Grund und Originaltext; alles andere ist ein unerwarteter Fehler. */
+function asError(reason: unknown): VersionControlError {
+  if (typeof reason === "object" && reason !== null && "reason" in reason && "details" in reason) {
+    return reason as VersionControlError;
+  }
+  return { reason: "failed", details: String(reason) };
 }
 
 const VersionControlContext = createContext<VersionControlStore | null>(null);

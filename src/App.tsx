@@ -50,6 +50,7 @@ import { SettingsPage } from "./SettingsPage";
 import { availableShells, type Shell } from "./settingsStore";
 import { shellLabel, tabLabel } from "./tabLabel";
 import { useWaitingAlerts } from "./useWaitingAlerts";
+import { SyncStatus } from "./SyncStatus";
 import { VersionControlProvider, VersionControlStore } from "./versionControl";
 import type { ChangedFile } from "./versionControlState";
 import { BranchStatus } from "./VersionControlView";
@@ -514,6 +515,7 @@ export function App() {
       {branchPicker && project && <BranchPicker project={project} onClose={closeQuickOpen} />}
       <footer className="status">
         <BranchStatus onSwitch={() => setBranchPicker(true)} />
+        <SyncStatus />
         <span>{project ? projectName(project) : t("status.noProject")}</span>
         <AgentCounters statuses={statuses} />
         {activeTab && isTerminal(activeTab) && (

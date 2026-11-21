@@ -7,7 +7,16 @@ function change(path: string, status: FileStatus, staged = false): ChangedFile {
 }
 
 function repository(files: ChangedFile[], ignored: string[] = []): VersionControlState {
-  return { kind: "repository", branch: "main", commit: null, files, ignored };
+  return {
+    kind: "repository",
+    branch: "main",
+    commit: null,
+    files,
+    ignored,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+  };
 }
 
 const file = (path: string) => ({ path, kind: "file" as const });

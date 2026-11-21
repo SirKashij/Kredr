@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -12,8 +13,8 @@ use tauri::State;
 
 use crate::project_files::ProjectWatcher;
 use crate::version_control::{
-    Branch, ChangedFile, Diff, RepositoryState, StateResult, StateSubscription, StateWatch,
-    VersionControl, VersionControlError,
+    BackgroundFetch, Branch, ChangedFile, Committed, Diff, RepositoryState, StateResult,
+    StateSubscription, StateWatch, VersionControl, VersionControlError,
 };
 use crate::ProjectWatchers;
 
@@ -52,6 +53,8 @@ struct Watching {
 
 struct WatchedProject {
     state: StateWatch,
+    /// Fragt den Stand gegenüber GitHub ab, solange das Projekt beobachtet wird.
+    _fetching: BackgroundFetch,
     /// Hält den Beobachter der Projektdateien am Leben, solange der Zustand ihm folgt.
     _watcher: Arc<ProjectWatcher>,
 }
@@ -104,10 +107,12 @@ pub(crate) fn version_control_watch(
     if !watching.projects.contains_key(&project) {
         let watcher = watchers.for_project(&project)?;
         let state = VersionControl::open(&project).watch(&watcher);
+        let fetching = VersionControl::open(&project).fetch_regularly(FETCH_INTERVAL);
         watching.projects.insert(
             project.clone(),
             WatchedProject {
                 state,
+                _fetching: fetching,
                 _watcher: watcher,
             },
         );
@@ -147,6 +152,78 @@ pub(crate) fn version_control_diff(
     file: ChangedFile,
 ) -> Result<Diff, VersionControlError> {
     VersionControl::open(&project).diff(&file)
+}
+
+/// So oft wird der Stand gegenüber GitHub im Hintergrund abgefragt (wie in
+/// VS Code).
+const FETCH_INTERVAL: Duration = Duration::from_secs(180);
+
+// Festschreiben und Abgleichen. Jeder Befehl läuft abseits des Haupt-Threads;
+// das Ergebnis im Repository erfährt die Oberfläche über den abonnierten Zustand.
+
+/// Wählt die Änderungen aus; ohne `files` alle.
+#[tauri::command(async)]
+pub(crate) fn version_control_stage(
+    project: PathBuf,
+    files: Option<Vec<ChangedFile>>,
+) -> Result<(), VersionControlError> {
+    let version_control = VersionControl::open(&project);
+    match files {
+        Some(files) => version_control.stage(&files),
+        None => version_control.stage_all(),
+    }
+}
+
+/// Wählt die Änderungen ab; ohne `files` alle.
+#[tauri::command(async)]
+pub(crate) fn version_control_unstage(
+    project: PathBuf,
+    files: Option<Vec<ChangedFile>>,
+) -> Result<(), VersionControlError> {
+    let version_control = VersionControl::open(&project);
+    match files {
+        Some(files) => version_control.unstage(&files),
+        None => version_control.unstage_all(),
+    }
+}
+
+#[tauri::command(async)]
+pub(crate) fn version_control_discard(
+    project: PathBuf,
+    file: ChangedFile,
+) -> Result<(), VersionControlError> {
+    VersionControl::open(&project).discard(&file)
+}
+
+#[tauri::command(async)]
+pub(crate) fn version_control_commit(
+    project: PathBuf,
+    message: String,
+) -> Result<(), VersionControlError> {
+    VersionControl::open(&project).commit(&message)
+}
+
+#[tauri::command(async)]
+pub(crate) fn version_control_commit_and_push(
+    project: PathBuf,
+    message: String,
+) -> Result<Committed, VersionControlError> {
+    VersionControl::open(&project).commit_and_push(&message)
+}
+
+#[tauri::command(async)]
+pub(crate) fn version_control_push(project: PathBuf) -> Result<(), VersionControlError> {
+    VersionControl::open(&project).push()
+}
+
+#[tauri::command(async)]
+pub(crate) fn version_control_pull(project: PathBuf) -> Result<(), VersionControlError> {
+    VersionControl::open(&project).pull()
+}
+
+#[tauri::command(async)]
+pub(crate) fn version_control_pull_and_push(project: PathBuf) -> Result<(), VersionControlError> {
+    VersionControl::open(&project).pull_and_push()
 }
 
 /// Commits des aktuellen Branches, die neuesten zuerst: höchstens `limit`
