@@ -85,6 +85,33 @@ pub struct StatusUpdate {
     /// Ob sich das Gespräch, mit dem der Agent startete, nicht fortsetzen
     /// ließ. Die Fehlermeldung des Agenten steht dann in der Shell.
     pub resume_failed: bool,
+    /// Die Subagenten des Agenten in der Reihenfolge ihres Starts: die
+    /// laufenden und die seit dem letzten Prompt der Person fertigen.
+    pub subagents: Vec<Subagent>,
+}
+
+/// Der Zustand eines Subagenten.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SubagentState {
+    Working,
+    Done,
+}
+
+/// Ein Subagent, wie die Person ihn beim Agenten sieht.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Subagent {
+    /// Die Kennung, mit der Claude Code seine Ereignisse meldet (`agent_id`).
+    pub id: String,
+    /// Sein Typ, etwa `Explore` (`agent_type`).
+    pub kind: String,
+    /// Die Beschreibung, die der Agent ihm mitgegeben hat; `None`, solange
+    /// sie nicht bekannt ist.
+    pub description: Option<String>,
+    pub state: SubagentState,
+    /// Was der Subagent zuletzt getan oder am Ende gesagt hat.
+    pub last_action: Option<String>,
 }
 
 /// Ein gespeichertes Gespräch, das ein Agent beim Start fortsetzt.
@@ -187,6 +214,11 @@ struct Known {
     /// Die offenen Rückfragen von Subagenten, die älteste zuerst. Sie
     /// stehen im Terminal des Agenten, er wartet also.
     questions: Vec<Question>,
+    /// Die Subagenten, die die Person sieht.
+    subagents: Vec<Subagent>,
+    /// Die Aufrufe des `Agent`-Werkzeugs, deren Subagent noch nicht
+    /// gestartet ist, der älteste zuerst.
+    launches: Vec<Launch>,
     /// Der Auftrag des laufenden Gesprächs.
     assignment: Option<String>,
     /// Die Kennung des laufenden Gesprächs.
@@ -201,6 +233,17 @@ struct Question {
     /// Wonach er fragt, wie die letzte Aktion.
     action: Option<String>,
 }
+
+/// Ein Aufruf des `Agent`-Werkzeugs, mit dem der Agent einen Subagenten startet.
+#[derive(Clone, PartialEq, Eq)]
+struct Launch {
+    tool_use: Option<String>,
+    kind: String,
+    description: Option<String>,
+}
+
+/// Der Typ, den Claude Code einem Subagenten ohne Angabe gibt.
+const DEFAULT_SUBAGENT_TYPE: &str = "general-purpose";
 
 impl Known {
     /// Zustand und letzte Aktion, wie die Person sie sieht: Eine offene
@@ -222,6 +265,7 @@ impl Registration {
                 known.shown(),
                 known.assignment.clone(),
                 known.conversation.clone(),
+                known.subagents.clone(),
             )
         };
         if visible(&next) == visible(&self.known) {
@@ -247,6 +291,7 @@ impl Registration {
             assignment: self.known.assignment.clone(),
             conversation: self.known.conversation.clone(),
             resume_failed,
+            subagents: self.known.subagents.clone(),
         });
     }
 }
@@ -433,9 +478,109 @@ fn next_known(known: &Known, event: &Value) -> Known {
             }
         }
     }
+    next_subagents(&mut next, subagent, event);
     next.assignment = next_assignment(&known.assignment, event);
     next.conversation = next_conversation(&known.conversation, event);
     next
+}
+
+/// Führt die Subagenten und die offenen Aufrufe des `Agent`-Werkzeugs nach
+/// dem Ereignis `event` fort; `subagent` ist die Kennung, falls es von einem
+/// Subagenten stammt.
+///
+/// Ein Subagent entsteht mit `SubagentStart` und ist mit `SubagentStop`
+/// fertig. Claude Code meldet auch eigene Nebenläufe ohne Typ; sie und
+/// Ereignisse unbekannter Kennungen zählen nicht. Die Beschreibung steht nur
+/// im Aufruf des Agenten: Sicher verknüpft sie `PostToolUse(Agent)` mit der
+/// Kennung; bis dahin gilt der älteste offene Aufruf gleichen Typs.
+fn next_subagents(next: &mut Known, subagent: Option<&str>, event: &Value) {
+    let name = event["hook_event_name"].as_str().unwrap_or_default();
+    let Some(id) = subagent else {
+        let agent_tool = event["tool_name"] == "Agent";
+        let tool_use = event["tool_use_id"].as_str().map(str::to_owned);
+        match name {
+            "PreToolUse" if agent_tool => {
+                let input = &event["tool_input"];
+                next.launches.push(Launch {
+                    tool_use,
+                    kind: input["subagent_type"]
+                        .as_str()
+                        .filter(|kind| !kind.is_empty())
+                        .unwrap_or(DEFAULT_SUBAGENT_TYPE)
+                        .to_owned(),
+                    description: input["description"].as_str().and_then(one_line),
+                });
+            }
+            "PostToolUse" | "PostToolUseFailure" if agent_tool => {
+                if tool_use.is_some() {
+                    next.launches.retain(|launch| launch.tool_use != tool_use);
+                }
+                let response = &event["tool_response"];
+                let description = response["description"]
+                    .as_str()
+                    .or_else(|| event["tool_input"]["description"].as_str())
+                    .and_then(one_line);
+                let started = response["agentId"]
+                    .as_str()
+                    .and_then(|id| next.subagents.iter_mut().find(|known| known.id == id));
+                if let (Some(started), Some(description)) = (started, description) {
+                    started.description = Some(description);
+                }
+            }
+            // Ein Prompt der Person beginnt eine neue Runde: Die fertigen
+            // Subagenten der letzten verschwinden.
+            "UserPromptSubmit" => {
+                let notification = event["prompt"]
+                    .as_str()
+                    .is_some_and(|prompt| prompt.trim_start().starts_with(TASK_NOTIFICATION));
+                if !notification {
+                    next.subagents
+                        .retain(|known| known.state != SubagentState::Done);
+                }
+            }
+            "SessionEnd" => {
+                next.subagents.clear();
+                next.launches.clear();
+            }
+            _ => {}
+        }
+        return;
+    };
+    if name == "SubagentStart" {
+        let kind = event["agent_type"].as_str().unwrap_or_default();
+        if kind.is_empty() || next.subagents.iter().any(|known| known.id == id) {
+            return;
+        }
+        let launch = next
+            .launches
+            .iter()
+            .position(|launch| launch.kind == kind)
+            .map(|index| next.launches.remove(index));
+        next.subagents.push(Subagent {
+            id: id.to_owned(),
+            kind: kind.to_owned(),
+            description: launch.and_then(|launch| launch.description),
+            state: SubagentState::Working,
+            last_action: None,
+        });
+        return;
+    }
+    let Some(known) = next.subagents.iter_mut().find(|known| known.id == id) else {
+        return;
+    };
+    match name {
+        "PreToolUse" | "PermissionRequest" => {
+            known.state = SubagentState::Working;
+            known.last_action = tool_action(event);
+        }
+        "SubagentStop" => {
+            known.state = SubagentState::Done;
+            if let Some(message) = event["last_assistant_message"].as_str().and_then(one_line) {
+                known.last_action = Some(message);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Die Rückfrage, die das Ereignis `event` an die Person stellt, als letzte

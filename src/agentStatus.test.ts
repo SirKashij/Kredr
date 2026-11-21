@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { AgentStatuses, conversationOf, countStates, duration } from "./agentStatus";
+import {
+  AgentStatuses,
+  conversationOf,
+  countStates,
+  duration,
+  subagentLabel,
+  subagentTooltip,
+} from "./agentStatus";
 
 const working = {
   state: "working",
@@ -8,6 +15,7 @@ const working = {
   assignment: null,
   conversation: null,
   resumeFailed: false,
+  subagents: [],
 } as const;
 
 describe("Agentenstatus eines Fensters", () => {
@@ -30,6 +38,7 @@ describe("Agentenstatus eines Fensters", () => {
         assignment: null,
         conversation: null,
         resumeFailed: false,
+        subagents: [],
       },
       2_000,
     );
@@ -38,11 +47,13 @@ describe("Agentenstatus eines Fensters", () => {
       state: "working",
       lastAction: null,
       since: 1_000,
+      subagents: [],
     });
     expect(statuses.snapshot().get("tab-2")).toEqual({
       state: "waiting",
       lastAction: "Bash(cargo test)",
       since: 2_000,
+      subagents: [],
     });
   });
 
@@ -59,6 +70,7 @@ describe("Agentenstatus eines Fensters", () => {
         assignment: null,
         conversation: null,
         resumeFailed: false,
+        subagents: [],
       },
       5_000,
     );
@@ -66,6 +78,7 @@ describe("Agentenstatus eines Fensters", () => {
       state: "working",
       lastAction: "Edit(src/App.tsx)",
       since: 1_000,
+      subagents: [],
     });
 
     statuses.report(
@@ -77,6 +90,7 @@ describe("Agentenstatus eines Fensters", () => {
         assignment: null,
         conversation: null,
         resumeFailed: false,
+        subagents: [],
       },
       9_000,
     );
@@ -115,6 +129,7 @@ describe("Agentenstatus eines Fensters", () => {
         assignment: null,
         conversation: null,
         resumeFailed: false,
+        subagents: [],
       },
       2_000,
     );
@@ -159,6 +174,7 @@ describe("Agentenstatus eines Fensters", () => {
         assignment: null,
         conversation: null,
         resumeFailed: false,
+        subagents: [],
       },
       2_000,
     );
@@ -178,11 +194,101 @@ describe("Agentenstatus eines Fensters", () => {
         assignment: null,
         conversation: null,
         resumeFailed: false,
+        subagents: [],
       },
       1_000,
     );
 
     expect(countStates(statuses.snapshot())).toEqual({ working: 2, waiting: 1, done: 0 });
+  });
+});
+
+describe("Subagenten eines Agenten", () => {
+  const explore = {
+    id: "a1",
+    kind: "Explore",
+    description: "Datei a lesen",
+    state: "working",
+    lastAction: null,
+  } as const;
+
+  it("übernimmt die Subagenten mit dem Zeitpunkt ihres ersten Auftretens", () => {
+    const statuses = new AgentStatuses();
+
+    statuses.report("tab-1", { ...working, subagents: [explore] }, 1_000);
+    statuses.report(
+      "tab-1",
+      {
+        ...working,
+        stateChanged: false,
+        subagents: [
+          { ...explore, lastAction: "Read(a.txt)" },
+          { ...explore, id: "b2", description: null },
+        ],
+      },
+      3_000,
+    );
+
+    expect(statuses.snapshot().get("tab-1")?.subagents).toEqual([
+      { ...explore, lastAction: "Read(a.txt)", started: 1_000, ended: null },
+      { ...explore, id: "b2", description: null, started: 3_000, ended: null },
+    ]);
+  });
+
+  it("hält die Laufzeit eines fertigen Subagenten an", () => {
+    const statuses = new AgentStatuses();
+    statuses.report("tab-1", { ...working, subagents: [explore] }, 1_000);
+
+    statuses.report(
+      "tab-1",
+      { ...working, subagents: [{ ...explore, state: "done", lastAction: "Fertig." }] },
+      9_000,
+    );
+    statuses.report(
+      "tab-1",
+      { ...working, subagents: [{ ...explore, state: "done", lastAction: "Fertig." }] },
+      20_000,
+    );
+
+    expect(statuses.snapshot().get("tab-1")?.subagents[0]).toMatchObject({
+      state: "done",
+      started: 1_000,
+      ended: 9_000,
+    });
+  });
+
+  it("zählt Subagenten nicht als Agenten", () => {
+    const statuses = new AgentStatuses();
+
+    statuses.report(
+      "tab-1",
+      { ...working, subagents: [explore, { ...explore, id: "b2", state: "done" }] },
+      1_000,
+    );
+
+    expect(countStates(statuses.snapshot())).toEqual({ working: 1, waiting: 0, done: 0 });
+  });
+});
+
+describe("Zeile eines Subagenten", () => {
+  const subagent = {
+    id: "a1",
+    kind: "Explore",
+    description: "Datei a lesen",
+    state: "working",
+    lastAction: "Grep(agent_id)",
+    started: 0,
+    ended: null,
+  } as const;
+
+  it("nennt die Beschreibung, ohne sie den Typ", () => {
+    expect(subagentLabel(subagent)).toBe("Datei a lesen");
+    expect(subagentLabel({ ...subagent, description: null })).toBe("Explore");
+  });
+
+  it("zeigt Typ und letzte Aktion im Tooltip", () => {
+    expect(subagentTooltip(subagent)).toBe("Explore · Grep(agent_id)");
+    expect(subagentTooltip({ ...subagent, lastAction: null })).toBe("Explore");
   });
 });
 

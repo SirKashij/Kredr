@@ -1,7 +1,7 @@
 import { useRef, useState, type PointerEvent } from "react";
 import { views, type View } from "./ActivityBar";
 import { useAgentStatuses, type AgentStatuses } from "./agentStatus";
-import { AgentCardStatus, AgentCardTop } from "./AgentStatusViews";
+import { AgentCardStatus, AgentCardTop, SubagentSection } from "./AgentStatusViews";
 import { focusedGroupOf, isTerminal, tabsOf, type Arrangement, type Tab } from "./arrangement";
 import { Explorer } from "./Explorer";
 import { useT } from "./i18n/i18n";
@@ -166,6 +166,7 @@ function AgentsView({
         )}
         {status && <AgentCardStatus status={status} />}
         {interrupted && <span className="last">{t("agent.interrupted")}</span>}
+        {status && <SubagentSection subagents={status.subagents} />}
       </button>
     );
   };

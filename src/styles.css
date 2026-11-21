@@ -549,6 +549,62 @@ button {
   background: var(--sel);
 }
 
+/* Die Subagenten eines Agenten: ein Abschnitt unter einer Trennlinie. */
+.card .subagents {
+  border-top: 1px solid var(--border);
+  margin: 5px -10px 0;
+  padding: 6px 10px 0;
+  display: grid;
+  gap: 4px;
+}
+
+.card .subagents-head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--dim);
+}
+
+.card .subagent {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+  padding: 2px 6px;
+  margin: 0 -6px;
+  border-radius: 3px;
+}
+
+.card .subagent:hover {
+  background: #ffffff0a;
+}
+
+.card .subagent .description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.card .subagent.done .description {
+  color: var(--dim);
+}
+
+.card .subagent small {
+  margin-left: auto;
+  padding-left: 6px;
+  color: var(--dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dot.small {
+  width: 6px;
+  height: 6px;
+}
+
 .dot {
   width: 8px;
   height: 8px;
