@@ -12,6 +12,7 @@ Mehrere Agenten in Terminals steuern, die Dateien des Projekts durchsehen und Ä
 [![Neueste Fassung](https://img.shields.io/github/v/release/SirKashij/Kredr?include_prereleases&label=Fassung)](https://github.com/SirKashij/Kredr/releases)
 ![Plattform](https://img.shields.io/badge/Plattform-Windows%2011-0078D4)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
+[![Lizenz: MIT](https://img.shields.io/badge/Lizenz-MIT-green)](LICENSE)
 
 [Herunterladen](https://github.com/SirKashij/Kredr/releases/latest) · [Funktionen](#funktionen) · [Tastenkürzel](#tastenkürzel) · [Entwickeln](#entwickeln) · [Fehler melden](https://github.com/SirKashij/Kredr/issues)
 
@@ -147,3 +148,7 @@ Fehler und Wünsche gehören in die [Issues](https://github.com/SirKashij/Kredr/
 ## Danksagung
 
 Kredr steht auf den Schultern von [Tauri](https://tauri.app), [xterm.js](https://xtermjs.org), [Monaco](https://microsoft.github.io/monaco-editor/), [portable-pty](https://github.com/wezterm/wezterm/tree/main/pty) und [ripgrep](https://github.com/BurntSushi/ripgrep) (`ignore`, `grep-searcher`).
+
+## Lizenz
+
+Kredr steht unter der [MIT-Lizenz](LICENSE). Name und Logo von Kredr sind davon ausgenommen.
