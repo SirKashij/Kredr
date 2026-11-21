@@ -41,11 +41,6 @@ interface AgentEvents {
   onResumeFailed(): void;
 }
 
-/** So lange (in Sekunden) sieht ein Terminal nach, ob ein fortgesetzter Agent läuft. */
-const RESUME_START_LIMIT = 30;
-/** So lange (in Sekunden) muss er laufen, damit das Fortsetzen als gelungen gilt. */
-const RESUME_SETTLE_TIME = 5;
-
 /** Terminalfarben des dunklen VS-Code-Standardthemas. */
 const theme = {
   background: "#1f1f1f",
@@ -112,8 +107,6 @@ export class RunningTerminal {
   // Die erste Ausgabe kann vor der Kennung eintreffen. ConPTY wartet dann
   // schon auf die Antwort von xterm.js auf seine Cursorabfrage.
   private earlyInput = "";
-  /** Ob der Agent sich schon einmal gemeldet hat. */
-  private reported = false;
 
   constructor(
     private readonly options: TerminalStart,
@@ -244,8 +237,8 @@ export class RunningTerminal {
     });
     const onAgentStatus = new Channel<StatusUpdate>((update) => {
       if (this.closed) return;
-      this.reported = true;
-      this.agentEvents.onStatus(update);
+      if (update.resumeFailed) this.agentEvents.onResumeFailed();
+      else this.agentEvents.onStatus(update);
     });
     const { cols, rows } = this.xterm;
     const { cwd, shell, agent, resume: conversation } = this.options;
@@ -260,9 +253,9 @@ export class RunningTerminal {
           return;
         }
         this.id = id;
-        // Lässt sich das Gespräch nicht fortsetzen, bleibt ein gewöhnliches Terminal.
+        // Ohne `claude` im Startbefehl lässt sich das Gespräch nicht fortsetzen.
+        // Findet Claude Code es nicht, meldet das der Agentenstatus.
         if (resume && !agentStarted) this.agentEvents.onResumeFailed();
-        else if (resume) this.watchResume();
         // Die Gruppe kann ihre Größe geändert haben, während die Shell startete.
         this.resize();
         if (this.earlyInput) this.write(this.earlyInput);
@@ -281,30 +274,6 @@ export class RunningTerminal {
         });
         this.xterm.write(`\x1b[31m${message}\x1b[0m`);
       });
-  }
-
-  /**
-   * Sieht nach, ob der fortgesetzte Agent wirklich läuft. Gibt es sein
-   * Gespräch nicht mehr, meldet er sich nie und beendet sich gleich nach dem
-   * Start; seine Fehlermeldung bleibt in der Shell stehen.
-   */
-  private watchResume() {
-    let seconds = 0;
-    /** Seit wie vielen Sekunden der Agent läuft; `null`, solange er nicht gestartet ist. */
-    let running: number | null = null;
-    const check = async () => {
-      if (this.closed || this.reported) return;
-      const alive = await this.hasChildProcess();
-      if (this.closed || this.reported) return;
-      seconds += 1;
-      if (alive) running = (running ?? 0) + 1;
-      const ended = running !== null && !alive;
-      const neverStarted = running === null && seconds >= RESUME_START_LIMIT;
-      if (ended || neverStarted) return this.agentEvents.onResumeFailed();
-      if (running !== null && running >= RESUME_SETTLE_TIME) return;
-      setTimeout(check, 1000);
-    };
-    setTimeout(check, 1000);
   }
 
   /**

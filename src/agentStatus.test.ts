@@ -7,6 +7,7 @@ const working = {
   stateChanged: true,
   assignment: null,
   conversation: null,
+  resumeFailed: false,
 } as const;
 
 describe("Agentenstatus eines Fensters", () => {
@@ -28,6 +29,7 @@ describe("Agentenstatus eines Fensters", () => {
         stateChanged: true,
         assignment: null,
         conversation: null,
+        resumeFailed: false,
       },
       2_000,
     );
@@ -56,6 +58,7 @@ describe("Agentenstatus eines Fensters", () => {
         stateChanged: false,
         assignment: null,
         conversation: null,
+        resumeFailed: false,
       },
       5_000,
     );
@@ -73,6 +76,7 @@ describe("Agentenstatus eines Fensters", () => {
         stateChanged: true,
         assignment: null,
         conversation: null,
+        resumeFailed: false,
       },
       9_000,
     );
@@ -93,7 +97,9 @@ describe("Agentenstatus eines Fensters", () => {
       id: "abc-123",
     });
     // Ohne Kennung ist der Agent beendet: kein Gespräch mehr.
-    expect(conversationOf({ ...update, state: "unknown", conversation: null })).toBeUndefined();
+    expect(
+      conversationOf({ ...update, state: "unknown", conversation: null, resumeFailed: false }),
+    ).toBeUndefined();
   });
 
   it("fällt auf „unbekannt“ zurück, wenn sich der Agent beendet", () => {
@@ -108,6 +114,7 @@ describe("Agentenstatus eines Fensters", () => {
         stateChanged: true,
         assignment: null,
         conversation: null,
+        resumeFailed: false,
       },
       2_000,
     );
@@ -145,7 +152,14 @@ describe("Agentenstatus eines Fensters", () => {
     unsubscribe();
     statuses.report(
       "tab-1",
-      { state: "done", lastAction: null, stateChanged: true, assignment: null, conversation: null },
+      {
+        state: "done",
+        lastAction: null,
+        stateChanged: true,
+        assignment: null,
+        conversation: null,
+        resumeFailed: false,
+      },
       2_000,
     );
     expect(calls).toBe(1);
@@ -163,6 +177,7 @@ describe("Agentenstatus eines Fensters", () => {
         stateChanged: true,
         assignment: null,
         conversation: null,
+        resumeFailed: false,
       },
       1_000,
     );

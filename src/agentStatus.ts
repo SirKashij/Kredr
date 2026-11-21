@@ -24,6 +24,8 @@ export interface StatusUpdate {
   assignment: string | null;
   /** Die Kennung des laufenden Gesprächs; `null`, sobald der Agent sich beendet hat. */
   conversation: string | null;
+  /** Ob sich das Gespräch, mit dem der Agent startete, nicht fortsetzen ließ. */
+  resumeFailed: boolean;
 }
 
 /**

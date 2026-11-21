@@ -28,8 +28,8 @@ const BODY_LIMIT: u64 = 4 * 1024 * 1024;
 const HOOK_TIMEOUT: u32 = 5;
 
 /// Ereignisse, die Claude Code ohne Einschränkung meldet.
-const EVENTS: [&str; 9] = [
-    "SessionStart",
+/// `SessionStart` fehlt: Claude Code meldet es nur Befehls-Hooks, nicht per HTTP.
+const EVENTS: [&str; 8] = [
     "UserPromptSubmit",
     "PreToolUse",
     "PostToolUse",
@@ -76,6 +76,9 @@ pub struct StatusUpdate {
     /// Die Kennung des Gesprächs, das gerade im Terminal läuft; `None`,
     /// sobald der Agent sich beendet hat.
     pub conversation: Option<String>,
+    /// Ob sich das Gespräch, mit dem der Agent startete, nicht fortsetzen
+    /// ließ. Die Fehlermeldung des Agenten steht dann in der Shell.
+    pub resume_failed: bool,
 }
 
 /// Ein gespeichertes Gespräch, das ein Agent beim Start fortsetzt.
@@ -161,6 +164,10 @@ struct Registration {
     token: String,
     settings: PathBuf,
     known: Known,
+    /// Ob der Agent gestartet ist. Ein fortgesetzter Agent ist es erst mit
+    /// seiner ersten Meldung; findet Claude Code das Gespräch nicht, meldet
+    /// es nur `SessionEnd`.
+    started: bool,
     on_update: Listener,
 }
 
@@ -183,6 +190,21 @@ impl Registration {
         if next == self.known {
             return;
         }
+        self.report(next, false);
+    }
+
+    /// Das Gespräch ließ sich nicht fortsetzen: Kredr vergisst es und meldet das.
+    fn fail_resume(&mut self) {
+        let nothing = Known {
+            state: AgentState::Unknown,
+            last_action: None,
+            assignment: None,
+            conversation: None,
+        };
+        self.report(nothing, true);
+    }
+
+    fn report(&mut self, next: Known, resume_failed: bool) {
         let state_changed = next.state != self.known.state;
         self.known = next;
         let known = self.known.clone();
@@ -192,6 +214,7 @@ impl Registration {
             state_changed,
             assignment: known.assignment,
             conversation: known.conversation,
+            resume_failed,
         });
     }
 }
@@ -264,6 +287,7 @@ impl AgentStatus {
         let registration = Registration {
             token,
             settings: settings.clone(),
+            started: resumed.is_none(),
             known: Known {
                 state: AgentState::Unknown,
                 last_action: None,
@@ -334,6 +358,12 @@ fn receive(registrations: &Registrations, url: &str, body: Option<&String>) -> b
     }
     let event = body.and_then(|body| serde_json::from_str::<Value>(body).ok());
     if let Some(event) = event {
+        if event["hook_event_name"] != "SessionEnd" {
+            registration.started = true;
+        } else if !registration.started {
+            registration.fail_resume();
+            return true;
+        }
         let known = &registration.known;
         let status = next_status(known.state, &known.last_action, &event);
         let (state, last_action) =
@@ -359,14 +389,13 @@ fn next_assignment(assignment: &Option<String>, event: &Value) -> Option<String>
             (!prompt.is_empty()).then(|| prompt.to_owned())
         }
         Some("SessionEnd") => None,
-        Some("SessionStart") if event["source"] == "clear" => None,
         _ => assignment.clone(),
     }
 }
 
 /// Das Gespräch nach dem Ereignis `event`: das, dessen Kennung die Meldung
-/// trägt. Beendet sich der Agent, gibt es keines mehr; nach `/clear` meldet
-/// Claude Code das neue gleich mit seinem Start.
+/// trägt. Beendet sich der Agent, gibt es keines mehr, auch nach `/clear`:
+/// Das neue Gespräch kommt mit dem nächsten Prompt.
 fn next_conversation(conversation: &Option<String>, event: &Value) -> Option<String> {
     if event["hook_event_name"] == "SessionEnd" {
         return None;

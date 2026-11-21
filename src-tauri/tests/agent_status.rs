@@ -398,19 +398,20 @@ fn jeder_agent_hat_seinen_eigenen_auftrag() {
     assert_eq!(second.next().assignment.as_deref(), Some("Baue Ticket 25"));
 }
 
+// Claude Code meldet `SessionStart` nicht per HTTP-Hook (geprüft mit 2.1.330):
+// Das Gespräch ist mit der ersten Meldung bekannt, in der Regel dem ersten Prompt.
+// Erst dann hat Claude Code es auch gespeichert.
 #[test]
-fn das_gespraech_ist_bekannt_sobald_der_agent_startet() {
+fn das_gespraech_ist_mit_dem_ersten_prompt_bekannt() {
     let status = AgentStatus::start(runtime_folder("gespraech-start")).unwrap();
     let agent = TestAgent::start(&status, 1);
 
     agent.report(
-        "SessionStart",
-        json!({ "session_id": "gespraech-1", "source": "startup" }),
+        "UserPromptSubmit",
+        json!({ "session_id": "gespraech-1", "prompt": "Baue Ticket 24" }),
     );
 
-    let update = agent.next();
-    assert_eq!(update.conversation.as_deref(), Some("gespraech-1"));
-    assert_eq!(update.state, AgentState::Unknown);
+    assert_eq!(agent.next().conversation.as_deref(), Some("gespraech-1"));
 }
 
 #[test]
@@ -429,13 +430,13 @@ fn nach_dem_leeren_gilt_das_neue_gespraech() {
     );
     assert_eq!(agent.next().conversation, None);
     agent.report(
-        "SessionStart",
-        json!({ "session_id": "neu", "source": "clear" }),
+        "UserPromptSubmit",
+        json!({ "session_id": "neu", "prompt": "Baue Ticket 25" }),
     );
 
     let update = agent.next();
     assert_eq!(update.conversation.as_deref(), Some("neu"));
-    assert_eq!(update.assignment, None);
+    assert_eq!(update.assignment.as_deref(), Some("Baue Ticket 25"));
 }
 
 #[test]
@@ -453,27 +454,70 @@ fn beendet_sich_der_agent_gibt_es_kein_gespraech_mehr() {
     assert_eq!(agent.next().conversation, None);
 }
 
-#[test]
-fn ein_fortgesetzter_agent_behaelt_gespraech_und_auftrag() {
-    let status = AgentStatus::start(runtime_folder("gespraech-fortsetzen")).unwrap();
-    let agent = TestAgent::resume(
-        &status,
+/// Ein Agent, der das Gespräch `abc123` mit dem Auftrag „Baue Ticket 24“ fortsetzt.
+fn resumed(status: &AgentStatus) -> TestAgent {
+    TestAgent::resume(
+        status,
         1,
         Resumed {
             conversation: "abc123".into(),
             assignment: Some("Baue Ticket 24".into()),
         },
-    );
+    )
+}
 
-    // Claude Code meldet beim Fortsetzen dieselbe Kennung; das ändert nichts.
-    agent.report("SessionStart", json!({ "source": "resume" }));
-    agent.expect_silence();
+#[test]
+fn ein_fortgesetzter_agent_behaelt_gespraech_und_auftrag() {
+    let status = AgentStatus::start(runtime_folder("gespraech-fortsetzen")).unwrap();
+    let agent = resumed(&status);
+
+    // Claude Code meldet beim Fortsetzen dieselbe Kennung.
     agent.report("UserPromptSubmit", json!({ "prompt": "Mach weiter" }));
 
     let update = agent.next();
     assert_eq!(update.state, AgentState::Working);
     assert_eq!(update.conversation.as_deref(), Some("abc123"));
     assert_eq!(update.assignment.as_deref(), Some("Baue Ticket 24"));
+}
+
+#[test]
+fn endet_ein_fortgesetzter_agent_ohne_sich_zu_melden_ist_das_fortsetzen_gescheitert() {
+    let status = AgentStatus::start(runtime_folder("fortsetzen-gescheitert")).unwrap();
+    let agent = resumed(&status);
+
+    // So meldet Claude Code ein Gespräch, das es nicht mehr gibt.
+    agent.report("SessionEnd", json!({ "reason": "other" }));
+
+    let update = agent.next();
+    assert!(update.resume_failed);
+    assert_eq!(update.conversation, None);
+    assert_eq!(update.assignment, None);
+}
+
+#[test]
+fn endet_ein_fortgesetzter_agent_nach_einer_meldung_ist_das_fortsetzen_gelungen() {
+    let status = AgentStatus::start(runtime_folder("fortsetzen-gelungen")).unwrap();
+    let agent = resumed(&status);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Mach weiter" }));
+    agent.next();
+    agent.report("SessionEnd", json!({ "reason": "prompt_input_exit" }));
+
+    let update = agent.next();
+    assert!(!update.resume_failed);
+    assert_eq!(update.conversation, None);
+}
+
+#[test]
+fn ein_neuer_agent_scheitert_nie_am_fortsetzen() {
+    let status = AgentStatus::start(runtime_folder("fortsetzen-neu")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.next();
+    agent.report("SessionEnd", json!({ "reason": "other" }));
+
+    assert!(!agent.next().resume_failed);
 }
 
 #[test]
