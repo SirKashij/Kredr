@@ -5,7 +5,8 @@
  * nur aus einfachen Daten und lässt sich deshalb als JSON speichern.
  */
 
-import type { Shell } from "./settingsStore";
+import { pathKey, samePath } from "./filePath";
+import { isShell, type Shell } from "./settingsStore";
 
 export interface Tab {
   id: string;
@@ -64,13 +65,13 @@ export function closesFileText(arrangement: Arrangement, tabId: string): boolean
   const tabs = tabsOf(arrangement);
   const content = tabs.find((tab) => tab.id === tabId)?.content;
   if (!content || !holdsFileText(content)) return false;
-  const path = content.path.toLowerCase();
+  const path = pathKey(content.path);
   return !tabs.some(
     (tab) =>
       tab.id !== tabId &&
       tab.content &&
       holdsFileText(tab.content) &&
-      tab.content.path.toLowerCase() === path,
+      pathKey(tab.content.path) === path,
   );
 }
 
@@ -88,8 +89,7 @@ export function filePathOf(tab: Tab | undefined): string | undefined {
 export function sameContent(a: TabContent, b: TabContent): boolean {
   if (a.kind !== b.kind) return false;
   if (!showsFile(a) || !showsFile(b)) return true;
-  // Windows unterscheidet bei Pfaden keine Groß- und Kleinschreibung.
-  return a.path.toLowerCase() === b.path.toLowerCase();
+  return samePath(a.path, b.path);
 }
 
 /** Eine Gruppe: ein Teilstück des Hauptbereichs mit eigener Tab-Leiste. */
@@ -685,7 +685,6 @@ function rawList(value: unknown): unknown[] {
 }
 
 /** Jede Shell, die ein gespeichertes Terminal haben kann. */
-const knownShells: Record<Shell, true> = { powershell: true, gitBash: true };
 
 /**
  * Der gespeicherte Inhalt eines Tabs, oder `null`, wenn er sich nicht
@@ -725,7 +724,7 @@ function restoreTab(raw: Raw, exists: (path: string) => boolean): Tab | null {
   }
   // `agent` bleibt weg: Ein wiederhergestelltes Terminal startet als frische
   // Shell, kein Agent läuft von selbst an.
-  if (typeof raw.shell === "string" && raw.shell in knownShells) tab.shell = raw.shell as Shell;
+  if (isShell(raw.shell)) tab.shell = raw.shell;
   // Ohne seinen Startordner startet das Terminal im Projektordner.
   if (typeof raw.cwd === "string" && exists(raw.cwd)) tab.cwd = raw.cwd;
   return tab;

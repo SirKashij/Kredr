@@ -4,7 +4,8 @@
  * Versionskontrolle.
  */
 
-import { parentOf, type Row } from "./explorerTree";
+import type { Row } from "./explorerTree";
+import { parentOf } from "./filePath";
 import { statusLetter, type FileStatus, type VersionControlState } from "./versionControlState";
 
 /** Die Markierung einer Zeile; zu `status` gehört die CSS-Klasse `git-<status>`. */

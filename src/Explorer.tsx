@@ -17,7 +17,6 @@ import {
   folderFor,
   foldersToLoad,
   foldersToReload,
-  parentOf,
   receiveListing,
   revealPath,
   renameInTree,
@@ -28,9 +27,8 @@ import {
   type Row,
 } from "./explorerTree";
 import { fileIcon } from "./fileIcons";
-import { isOutsideProject } from "./filePath";
+import { fullPath, isOutsideProject, parentOf, samePath } from "./filePath";
 import {
-  absolutePath,
   copyText,
   createEntry,
   errorMessage,
@@ -167,7 +165,7 @@ export function Explorer({
   useEffect(() => {
     const path = revealing.current;
     if (path === null || hidden) return;
-    const index = rows.findIndex((row) => row.path.toLowerCase() === path.toLowerCase());
+    const index = rows.findIndex((row) => samePath(row.path, path));
     if (index < 0) return;
     revealing.current = null;
     const element = viewport.current!;
@@ -265,11 +263,11 @@ export function Explorer({
       {
         label: t("explorer.terminalHere"),
         separator: true,
-        onSelect: () => onOpenTerminalIn(absolutePath(project, path), false),
+        onSelect: () => onOpenTerminalIn(fullPath(project, path), false),
       },
       {
         label: t("explorer.agentHere"),
-        onSelect: () => onOpenTerminalIn(absolutePath(project, path), true),
+        onSelect: () => onOpenTerminalIn(fullPath(project, path), true),
       },
     ];
     const items: MenuItem[] = [
@@ -282,7 +280,7 @@ export function Explorer({
       {
         label: t("explorer.copyPath"),
         separator: true,
-        onSelect: () => copyText(absolutePath(project, path)).catch((error) => report(error, name)),
+        onSelect: () => copyText(fullPath(project, path)).catch((error) => report(error, name)),
       },
     ];
     if (!row) return items;

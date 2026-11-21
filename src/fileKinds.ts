@@ -4,7 +4,7 @@
  */
 
 import type { FileTabContent } from "./arrangement";
-import { fileName } from "./filePath";
+import { extensionOf } from "./filePath";
 
 /**
  * Die Bildformate, die Kredr anzeigt, mit ihrem Medientyp. Das Kern-Modul
@@ -23,13 +23,6 @@ const imageMimeTypes: Record<string, string> = {
 };
 
 const markdownExtensions = new Set(["md", "markdown", "mdown", "mkd"]);
-
-/** Die Endung in Kleinbuchstaben ohne Punkt; leer, wenn die Datei keine hat. */
-function extensionOf(path: string): string {
-  const name = fileName(path);
-  const dot = name.lastIndexOf(".");
-  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
-}
 
 /** Der Medientyp einer Bilddatei; `null`, wenn Kredr die Datei nicht als Bild anzeigt. */
 export function imageMimeType(path: string): string | null {

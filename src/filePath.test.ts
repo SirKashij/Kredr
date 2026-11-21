@@ -4,14 +4,12 @@ import { fileName, fullPath, isOutsideProject, opensExternally, toProjectPath } 
 const project = "C:\\Users\\test\\Kredr";
 
 test("ein voller Pfad im Projekt wird projekt-relativ mit Schrägstrichen", () => {
-  expect(toProjectPath(project, "C:\\Users\\test\\Kredr\\src\\ui\\App.tsx")).toBe(
-    "src/ui/App.tsx",
-  );
+  expect(toProjectPath(project, "C:\\Users\\test\\Kredr\\src\\ui\\App.tsx")).toBe("src/ui/App.tsx");
   expect(toProjectPath(project, "C:/Users/test/Kredr/README.md")).toBe("README.md");
 });
 
 test("Groß- und Kleinschreibung des Projektordners spielt keine Rolle", () => {
-  expect(toProjectPath(project, "c:\\users\\KEVIN\\kredr\\src\\App.tsx")).toBe("src/App.tsx");
+  expect(toProjectPath(project, "c:\\users\\TEST\\kredr\\src\\App.tsx")).toBe("src/App.tsx");
   expect(toProjectPath(project + "\\", "C:\\Users\\test\\Kredr\\a.txt")).toBe("a.txt");
 });
 

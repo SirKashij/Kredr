@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { editor } from "monaco-editor/editor/editor.api";
-import { fullPath } from "./filePath";
+import { fullPath, pathKey } from "./filePath";
 import {
   edited,
   loadingFile,
@@ -206,7 +206,7 @@ export class OpenFiles {
 
   /** Die offene Datei zu diesem Pfad; beim ersten Mal wird sie gelesen. */
   get(project: string, path: string): OpenFile {
-    const key = path.toLowerCase();
+    const key = pathKey(path);
     let file = this.files.get(key);
     if (!file) {
       file = new OpenFile(project, path, this.changed);
@@ -216,7 +216,7 @@ export class OpenFiles {
   }
 
   find(path: string): OpenFile | undefined {
-    return this.files.get(path.toLowerCase());
+    return this.files.get(pathKey(path));
   }
 
   /** Ob irgendeine offene Datei ungespeicherte Änderungen hat. */
@@ -226,7 +226,7 @@ export class OpenFiles {
 
   /** Schließt alle Dateien, deren Tab es nicht mehr gibt. */
   retain(paths: Iterable<string>) {
-    const kept = new Set([...paths].map((path) => path.toLowerCase()));
+    const kept = new Set([...paths].map(pathKey));
     for (const [key, file] of this.files) {
       if (kept.has(key)) continue;
       file.dispose();
@@ -236,7 +236,7 @@ export class OpenFiles {
 
   /** Der Ereignisstrom der Projektdateien: Betroffene offene Dateien lesen sich neu. */
   projectChanged(changes: ProjectChanges) {
-    const paths = changes.paths.map((path) => path.toLowerCase());
+    const paths = changes.paths.map(pathKey);
     for (const [key, file] of this.files) {
       // Auch ein umbenannter oder gelöschter Ordner über der Datei betrifft sie.
       const affected = paths.some((path) => key === path || key.startsWith(`${path}/`));

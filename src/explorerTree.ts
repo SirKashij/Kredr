@@ -1,3 +1,4 @@
+import { parentOf } from "./filePath";
 import type { Entry, ProjectChanges } from "./projectFiles";
 
 /**
@@ -28,11 +29,6 @@ export const emptyTree: ExplorerTree = { listings: new Map(), expanded: new Set(
 /** Der Pfad eines Eintrags in einem Ordner. */
 export function childPath(folder: string, name: string): string {
   return folder === "" ? name : `${folder}/${name}`;
-}
-
-export function parentOf(path: string): string {
-  const slash = path.lastIndexOf("/");
-  return slash < 0 ? "" : path.slice(0, slash);
 }
 
 function isBelow(path: string, folder: string): boolean {

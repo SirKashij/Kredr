@@ -1,3 +1,4 @@
+import { pathKey } from "./filePath";
 import { invoke } from "@tauri-apps/api/core";
 import { imageMimeType } from "./fileKinds";
 import type { ProjectChanges } from "./projectFiles";
@@ -27,12 +28,12 @@ export class ProjectImages {
 
   /** Das Bild, wenn es schon gelesen ist. */
   peek(path: string): LoadedImage | undefined {
-    return this.loaded.get(path.toLowerCase());
+    return this.loaded.get(pathKey(path));
   }
 
   /** Liest das Bild; `path` in der Schreibweise der Oberfläche (siehe `toProjectPath`). */
   load(path: string): Promise<LoadedImage> {
-    const key = path.toLowerCase();
+    const key = pathKey(path);
     let image = this.loading.get(key);
     if (!image) {
       image = this.read(path);
@@ -52,7 +53,7 @@ export class ProjectImages {
    * nächsten `load` neu gelesen. Liefert, ob ein gezeigtes Bild betroffen ist.
    */
   projectChanged(changes: ProjectChanges): boolean {
-    const paths = changes.paths.map((path) => path.toLowerCase());
+    const paths = changes.paths.map(pathKey);
     let affected = false;
     for (const key of [...this.loading.keys()]) {
       // Auch ein umbenannter oder gelöschter Ordner über dem Bild betrifft es.
