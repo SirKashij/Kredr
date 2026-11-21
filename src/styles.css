@@ -497,6 +497,32 @@ button {
   color: var(--dim);
 }
 
+/* Über einem Auftrag steht der Name klein, „AGENT“ in Großbuchstaben. */
+.card .top.kicker .name {
+  font-size: 9.5px;
+  font-weight: 400;
+  color: var(--dim);
+  letter-spacing: 0.4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card .top.kicker.agent .name {
+  text-transform: uppercase;
+}
+
+/* Der Auftrag auf der Karte: höchstens zwei Zeilen. */
+.card .assignment {
+  color: #fff;
+  font-weight: 600;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
 .card .state {
   font-size: 11.5px;
 }
@@ -731,6 +757,19 @@ button {
   width: 14px;
   padding: 3px 0;
   margin-left: -2px;
+}
+
+/* Ein Agent mit Auftrag: oben klein „AGENT“, darunter der Auftrag oder der eigene Name. */
+.tab-name.two-line {
+  display: grid;
+  line-height: 1.1;
+}
+
+.tab-name.two-line small {
+  font-size: 9.5px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
 }
 
 .tab-name-input {

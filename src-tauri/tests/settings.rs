@@ -33,6 +33,7 @@ fn changed() -> Settings {
         default_shell: Shell::GitBash,
         agent_command: "claude --model opus".into(),
         notifications: false,
+        show_assignment: false,
     }
 }
 
@@ -49,6 +50,7 @@ fn ohne_datei_gelten_die_standardwerte() {
     assert_eq!(settings.default_shell, Shell::Powershell);
     assert_eq!(settings.agent_command, "claude");
     assert!(settings.notifications);
+    assert!(settings.show_assignment);
 }
 
 #[test]
@@ -57,6 +59,17 @@ fn abgeschaltete_benachrichtigungen_bleiben_abgeschaltet() {
     write_file(&dir, r#"{ "version": 1, "notifications": false }"#);
 
     assert!(!open(&dir).get().notifications);
+}
+
+#[test]
+fn ein_abgeschalteter_auftrag_am_tab_bleibt_abgeschaltet() {
+    let dir = temp_dir("auftrag");
+    write_file(&dir, r#"{ "version": 1, "showAssignment": false }"#);
+
+    let settings = open(&dir).get();
+
+    assert!(!settings.show_assignment);
+    assert!(settings.notifications);
 }
 
 #[test]

@@ -6,7 +6,8 @@ import { focusedGroupOf, isTerminal, tabsOf, type Arrangement, type Tab } from "
 import { Explorer } from "./Explorer";
 import { useT } from "./i18n/i18n";
 import { SearchView, type SearchViewProps } from "./SearchView";
-import { tabLabel } from "./tabLabel";
+import { useSettings } from "./settings";
+import { tabLabel, visibleAssignment } from "./tabLabel";
 import type { ChangedFile } from "./versionControlState";
 import { VersionControlView } from "./VersionControlView";
 
@@ -133,6 +134,7 @@ function AgentsView({
   onNewTerminal,
 }: AgentsViewProps) {
   const t = useT();
+  const { settings } = useSettings();
   const known = useAgentStatuses(statuses);
   // Dateiansichten gehören nicht in die Agenten-Ansicht.
   const tabs = tabsOf(arrangement).filter(isTerminal);
@@ -142,13 +144,23 @@ function AgentsView({
   const card = (tab: Tab) => {
     const status = known.get(tab.id);
     const classes = ["card", status?.state === "waiting" && "wait", tab.id === selected && "sel"];
+    const assignment = visibleAssignment(tab, status?.assignment ?? null, settings.showAssignment);
     return (
       <button
         key={tab.id}
         className={classes.filter(Boolean).join(" ")}
         onClick={() => onSelectTab(tab.id)}
       >
-        <AgentCardTop status={status} name={tabLabel(tab, t)} />
+        <AgentCardTop
+          status={status}
+          name={tabLabel(tab, t)}
+          kicker={assignment === null ? undefined : tab.name ? "named" : "agent"}
+        />
+        {assignment !== null && (
+          <span className="assignment" title={assignment}>
+            {assignment}
+          </span>
+        )}
         {status && <AgentCardStatus status={status} />}
       </button>
     );

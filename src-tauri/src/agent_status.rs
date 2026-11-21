@@ -69,6 +69,9 @@ pub struct StatusUpdate {
     pub last_action: Option<String>,
     /// Ob sich der Zustand geändert hat und nicht nur die letzte Aktion.
     pub state_changed: bool,
+    /// Der Auftrag: der erste Prompt seit dem Start des Agenten oder dem
+    /// letzten Leeren des Gesprächs, im Wortlaut.
+    pub assignment: Option<String>,
 }
 
 /// Der Laufzeitordner des Kredr-Prozesses `pid` unterhalb von `temp`, dem
@@ -144,22 +147,30 @@ struct Registration {
     settings: PathBuf,
     state: AgentState,
     last_action: Option<String>,
+    assignment: Option<String>,
     on_update: Listener,
 }
 
 impl Registration {
     /// Übernimmt den neuen Status und meldet ihn, wenn sich etwas geändert hat.
-    fn apply(&mut self, state: AgentState, last_action: Option<String>) {
+    fn apply(
+        &mut self,
+        state: AgentState,
+        last_action: Option<String>,
+        assignment: Option<String>,
+    ) {
         let state_changed = state != self.state;
-        if !state_changed && last_action == self.last_action {
+        if !state_changed && last_action == self.last_action && assignment == self.assignment {
             return;
         }
         self.state = state;
         self.last_action = last_action;
+        self.assignment = assignment;
         (self.on_update)(StatusUpdate {
             state,
             last_action: self.last_action.clone(),
             state_changed,
+            assignment: self.assignment.clone(),
         });
     }
 }
@@ -231,6 +242,7 @@ impl AgentStatus {
             settings: settings.clone(),
             state: AgentState::Unknown,
             last_action: None,
+            assignment: None,
             on_update: Box::new(on_update),
         };
         self.registrations
@@ -248,7 +260,7 @@ impl AgentStatus {
             return;
         };
         if let Some(mut registration) = registrations.remove(&terminal) {
-            registration.apply(AgentState::Unknown, None);
+            registration.apply(AgentState::Unknown, None, None);
             let _ = std::fs::remove_file(&registration.settings);
         }
     }
@@ -293,10 +305,25 @@ fn receive(registrations: &Registrations, url: &str, body: Option<&String>) -> b
         if let Some((state, last_action)) =
             next_status(registration.state, &registration.last_action, &event)
         {
-            registration.apply(state, last_action);
+            let assignment = next_assignment(&registration.assignment, &event);
+            registration.apply(state, last_action, assignment);
         }
     }
     true
+}
+
+/// Der Auftrag nach dem Ereignis `event`: Nur der erste Prompt einer Sitzung
+/// zählt. Mit dem Ende der Sitzung, auch durch `/clear`, ist er vergessen;
+/// der nächste Prompt beginnt die neue Sitzung.
+fn next_assignment(assignment: &Option<String>, event: &Value) -> Option<String> {
+    match event["hook_event_name"].as_str() {
+        Some("UserPromptSubmit") if assignment.is_none() => {
+            let prompt = event["prompt"].as_str()?.trim();
+            (!prompt.is_empty()).then(|| prompt.to_owned())
+        }
+        Some("SessionEnd") => None,
+        _ => assignment.clone(),
+    }
 }
 
 /// Der Status nach dem Ereignis `event`, wie Claude Code es einem Hook

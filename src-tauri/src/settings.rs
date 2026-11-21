@@ -45,6 +45,9 @@ pub struct Settings {
     /// Eingabe wartet und sein Fenster nicht im Vordergrund ist. Das
     /// Taskleisten-Symbol meldet sich unabhängig davon.
     pub notifications: bool,
+    /// Ob der Tab eines Agenten und seine Karte in der Agenten-Ansicht den
+    /// Auftrag zeigen.
+    pub show_assignment: bool,
 }
 
 impl Default for Settings {
@@ -56,6 +59,7 @@ impl Default for Settings {
             default_shell: Shell::default(),
             agent_command: crate::agent::DEFAULT_START_COMMAND.into(),
             notifications: true,
+            show_assignment: true,
         }
     }
 }
@@ -78,6 +82,7 @@ impl Settings {
             default_shell: field(&file, "defaultShell").unwrap_or(defaults.default_shell),
             agent_command: field(&file, "agentCommand").unwrap_or(defaults.agent_command),
             notifications: field(&file, "notifications").unwrap_or(defaults.notifications),
+            show_assignment: field(&file, "showAssignment").unwrap_or(defaults.show_assignment),
         }
         .corrected()
     }

@@ -29,6 +29,8 @@ export interface Settings {
   agentCommand: string;
   /** Ob Kredr sich meldet, wenn ein Agent wartet und das Fenster nicht im Vordergrund ist. */
   notifications: boolean;
+  /** Ob der Tab eines Agenten und seine Karte in der Agenten-Ansicht den Auftrag zeigen. */
+  showAssignment: boolean;
 }
 
 /** Gilt nur, bis die Einstellungen aus dem Kern geladen sind. */
@@ -39,6 +41,7 @@ export const defaultSettings: Settings = {
   defaultShell: "powershell",
   agentCommand: "claude",
   notifications: true,
+  showAssignment: true,
 };
 
 export const fontSizeRange = { min: 6, max: 32 };

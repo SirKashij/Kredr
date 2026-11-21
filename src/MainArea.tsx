@@ -25,14 +25,16 @@ import {
   type Tab,
   type TreeNode,
 } from "./arrangement";
+import { useAgentStatuses, type AgentStatuses } from "./agentStatus";
 import { AgentDot } from "./AgentStatusViews";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { useT } from "./i18n/i18n";
 import type { OpenFiles } from "./openFiles";
 import type { RunningTerminals } from "./runningTerminals";
 import { ContentTabBody, ContentTabFace, type ContentTab } from "./tabViews";
+import { useSettings } from "./settings";
 import type { Shell } from "./settingsStore";
-import { shellLabel, tabLabel } from "./tabLabel";
+import { shellLabel, tabLabel, terminalTabLabel } from "./tabLabel";
 import { TerminalView } from "./TerminalView";
 import { useTabDrag, type TabDrag } from "./useTabDrag";
 
@@ -241,6 +243,26 @@ function TabNameInput({
   );
 }
 
+/**
+ * Die Beschriftung am Tab eines Terminals. Hat sein Agent einen Auftrag,
+ * steht oben klein „Agent“ und darunter der Auftrag oder der eigene Name.
+ */
+function TerminalTabName({ tab, statuses }: { tab: Tab; statuses: AgentStatuses }) {
+  const t = useT();
+  const { settings } = useSettings();
+  const assignment = useAgentStatuses(statuses).get(tab.id)?.assignment ?? null;
+  const label = terminalTabLabel(tab, assignment, settings.showAssignment, t);
+  const rename = t("tab.renameTooltip");
+  const title = label.assignment ? `${label.assignment}\n\n${rename}` : rename;
+  if (!label.kicker) return <span title={title}>{label.text}</span>;
+  return (
+    <span className="tab-name two-line" title={title}>
+      <small>{label.kicker}</small>
+      <span>{label.text}</span>
+    </span>
+  );
+}
+
 function GroupView({ group, ...shared }: Shared & { group: Group }) {
   const t = useT();
   const { arrangement, terminals, shells, update, onCloseTab, onOpenMenu, tabDrag } = shared;
@@ -359,7 +381,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
                   }}
                 />
               ) : (
-                <span title={t("tab.renameTooltip")}>{tabLabel(tab, t)}</span>
+                <TerminalTabName tab={tab} statuses={shared.terminals.statuses} />
               )}
               <button
                 className="tab-close"

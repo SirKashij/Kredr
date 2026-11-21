@@ -140,6 +140,8 @@
   "settings.agentCommand.hint": "The command “New Agent” uses to start Claude Code. You can add options, for example “claude --continue”.",
   "settings.notifications": "Notifications",
   "settings.notifications.hint": "Kredr shows a Windows notification when an agent is waiting for input and the window is not in the foreground. The taskbar button is highlighted even with notifications turned off.",
+  "settings.showAssignment": "Show task on tab",
+  "settings.showAssignment.hint": "An agent's tab and its card in the agents view show its task: the first input since it started or since the last /clear. On the tab, a custom name takes precedence.",
   "notification.waiting.one": "{terminal} is waiting for input",
   "notification.waiting.many": "{count} agents are waiting for input: {terminals}",
   "sidebar.terminals": "Terminals",

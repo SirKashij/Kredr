@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { AgentStatuses, countStates, duration } from "./agentStatus";
 
-const working = { state: "working", lastAction: null, stateChanged: true } as const;
+const working = {
+  state: "working",
+  lastAction: null,
+  stateChanged: true,
+  assignment: null,
+} as const;
 
 describe("Agentenstatus eines Fensters", () => {
   it("kennt ohne Meldung keinen Status", () => {
@@ -16,7 +21,7 @@ describe("Agentenstatus eines Fensters", () => {
     statuses.report("tab-1", working, 1_000);
     statuses.report(
       "tab-2",
-      { state: "waiting", lastAction: "Bash(cargo test)", stateChanged: true },
+      { state: "waiting", lastAction: "Bash(cargo test)", stateChanged: true, assignment: null },
       2_000,
     );
 
@@ -24,11 +29,13 @@ describe("Agentenstatus eines Fensters", () => {
       state: "working",
       lastAction: null,
       since: 1_000,
+      assignment: null,
     });
     expect(statuses.snapshot().get("tab-2")).toEqual({
       state: "waiting",
       lastAction: "Bash(cargo test)",
       since: 2_000,
+      assignment: null,
     });
   });
 
@@ -38,24 +45,41 @@ describe("Agentenstatus eines Fensters", () => {
     statuses.report("tab-1", working, 1_000);
     statuses.report(
       "tab-1",
-      { state: "working", lastAction: "Edit(src/App.tsx)", stateChanged: false },
+      { state: "working", lastAction: "Edit(src/App.tsx)", stateChanged: false, assignment: null },
       5_000,
     );
     expect(statuses.snapshot().get("tab-1")).toEqual({
       state: "working",
       lastAction: "Edit(src/App.tsx)",
       since: 1_000,
+      assignment: null,
     });
 
-    statuses.report("tab-1", { state: "done", lastAction: "Erledigt.", stateChanged: true }, 9_000);
+    statuses.report(
+      "tab-1",
+      { state: "done", lastAction: "Erledigt.", stateChanged: true, assignment: null },
+      9_000,
+    );
     expect(statuses.snapshot().get("tab-1")?.since).toBe(9_000);
+  });
+
+  it("übernimmt den Auftrag mit jeder Meldung", () => {
+    const statuses = new AgentStatuses();
+
+    statuses.report("tab-1", { ...working, assignment: "/mattpocock-skills:implement 24" }, 1_000);
+
+    expect(statuses.snapshot().get("tab-1")?.assignment).toBe("/mattpocock-skills:implement 24");
   });
 
   it("fällt auf „unbekannt“ zurück, wenn sich der Agent beendet", () => {
     const statuses = new AgentStatuses();
     statuses.report("tab-1", working, 1_000);
 
-    statuses.report("tab-1", { state: "unknown", lastAction: null, stateChanged: true }, 2_000);
+    statuses.report(
+      "tab-1",
+      { state: "unknown", lastAction: null, stateChanged: true, assignment: null },
+      2_000,
+    );
 
     expect(statuses.snapshot().has("tab-1")).toBe(false);
   });
@@ -88,7 +112,11 @@ describe("Agentenstatus eines Fensters", () => {
     expect(calls).toBe(1);
 
     unsubscribe();
-    statuses.report("tab-1", { state: "done", lastAction: null, stateChanged: true }, 2_000);
+    statuses.report(
+      "tab-1",
+      { state: "done", lastAction: null, stateChanged: true, assignment: null },
+      2_000,
+    );
     expect(calls).toBe(1);
   });
 
@@ -96,7 +124,11 @@ describe("Agentenstatus eines Fensters", () => {
     const statuses = new AgentStatuses();
     statuses.report("tab-1", working, 1_000);
     statuses.report("tab-2", working, 1_000);
-    statuses.report("tab-3", { state: "waiting", lastAction: null, stateChanged: true }, 1_000);
+    statuses.report(
+      "tab-3",
+      { state: "waiting", lastAction: null, stateChanged: true, assignment: null },
+      1_000,
+    );
 
     expect(countStates(statuses.snapshot())).toEqual({ working: 2, waiting: 1, done: 0 });
   });

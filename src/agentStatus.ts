@@ -11,6 +11,8 @@ export interface AgentStatus {
   lastAction: string | null;
   /** Seit wann der Zustand gilt (Millisekunden wie `Date.now()`). */
   since: number;
+  /** Der erste Prompt seit dem Start des Agenten oder dem letzten Leeren des Gesprächs. */
+  assignment: string | null;
 }
 
 /** Was der Kern bei jeder Änderung des Agentenstatus eines Terminals meldet. */
@@ -19,6 +21,7 @@ export interface StatusUpdate {
   lastAction: string | null;
   /** Ob sich der Zustand geändert hat und nicht nur die letzte Aktion. */
   stateChanged: boolean;
+  assignment: string | null;
 }
 
 /** Der Agentenstatus aller Terminals eines Fensters, nach der Kennung ihres Tabs. */
@@ -49,7 +52,12 @@ export class AgentStatuses {
     } else {
       const previous = this.statuses.get(tabId);
       const since = previous?.state === update.state ? previous.since : now;
-      next.set(tabId, { state: update.state, lastAction: update.lastAction, since });
+      next.set(tabId, {
+        state: update.state,
+        lastAction: update.lastAction,
+        since,
+        assignment: update.assignment,
+      });
     }
     this.replace(next);
   }

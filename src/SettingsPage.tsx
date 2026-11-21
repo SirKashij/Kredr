@@ -120,6 +120,13 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             onChange={(event) => change({ notifications: event.target.checked })}
           />
         </SettingRow>
+        <SettingRow label={t("settings.showAssignment")} hint={t("settings.showAssignment.hint")}>
+          <input
+            type="checkbox"
+            checked={settings.showAssignment}
+            onChange={(event) => change({ showAssignment: event.target.checked })}
+          />
+        </SettingRow>
       </div>
     </section>
   );

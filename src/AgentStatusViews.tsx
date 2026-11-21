@@ -74,12 +74,24 @@ function Runtime({ since }: { since: number }) {
   return <small>{t(key, values)}</small>;
 }
 
-/** Die Kopfzeile einer Karte der Agenten-Ansicht: Farbpunkt, Name und Laufzeit. */
-export function AgentCardTop({ status, name }: { status?: AgentStatus; name: string }) {
+/**
+ * Die Kopfzeile einer Karte der Agenten-Ansicht: Farbpunkt, Name und
+ * Laufzeit. Mit `kicker` steht der Name klein über dem Auftrag, als
+ * „AGENT“ oder als eigener Name.
+ */
+export function AgentCardTop({
+  status,
+  name,
+  kicker,
+}: {
+  status?: AgentStatus;
+  name: string;
+  kicker?: "agent" | "named";
+}) {
   return (
-    <span className="top">
+    <span className={kicker ? `top kicker ${kicker}` : "top"}>
       {status ? <Dot state={status.state} /> : <span className="dot" />}
-      <span>{name}</span>
+      <span className="name">{name}</span>
       {status && <Runtime since={status.since} />}
     </span>
   );

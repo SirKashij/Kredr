@@ -140,6 +140,8 @@
   "settings.agentCommand.hint": "Der Befehl, mit dem „Neuer Agent“ Claude Code startet. Zusätze wie „claude --continue“ sind möglich.",
   "settings.notifications": "Benachrichtigungen",
   "settings.notifications.hint": "Kredr zeigt eine Windows-Benachrichtigung, wenn ein Agent auf Eingabe wartet und das Fenster nicht im Vordergrund ist. Das Taskleisten-Symbol macht auch ohne Benachrichtigungen auf sich aufmerksam.",
+  "settings.showAssignment": "Auftrag am Tab zeigen",
+  "settings.showAssignment.hint": "Der Tab eines Agenten und seine Karte in der Agenten-Ansicht zeigen seinen Auftrag, also die erste Eingabe seit dem Start oder dem letzten /clear. Am Tab geht ein eigener Name vor.",
   "notification.waiting.one": "{terminal} wartet auf Eingabe",
   "notification.waiting.many": "{count} Agenten warten auf Eingabe: {terminals}",
   "sidebar.terminals": "Terminals",

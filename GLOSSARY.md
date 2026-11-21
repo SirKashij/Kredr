@@ -28,6 +28,10 @@ _Vermeiden_: Konsole, Shell-Fenster
 Eine Claude-Code-Sitzung, die in einem Terminal läuft.
 _Vermeiden_: Bot, KI, Claude-Terminal
 
+**Auftrag**:
+Der erste Prompt, den ein Agent seit seinem Start oder dem letzten Leeren des Gesprächs bekommen hat. Er steht am Tab und in der Agenten-Ansicht, solange die Person dem Terminal keinen eigenen Namen gegeben hat; ein eigener Name geht immer vor.
+_Vermeiden_: Titel, Sitzungsname, erster Prompt
+
 **Agentenstatus**:
 Der Zustand eines Agenten aus Sicht der Person: arbeitet, ist fertig oder wartet auf Eingabe.
 

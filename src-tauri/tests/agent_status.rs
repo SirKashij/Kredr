@@ -310,6 +310,84 @@ fn beendet_sich_der_agent_ist_der_status_unbekannt() {
 }
 
 #[test]
+fn der_erste_prompt_wird_zum_auftrag() {
+    let status = AgentStatus::start(runtime_folder("auftrag")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "prompt": "/mattpocock-skills:implement 24" }),
+    );
+
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Working);
+    assert_eq!(
+        update.assignment.as_deref(),
+        Some("/mattpocock-skills:implement 24")
+    );
+}
+
+#[test]
+fn weitere_prompts_derselben_sitzung_aendern_den_auftrag_nicht() {
+    let status = AgentStatus::start(runtime_folder("auftrag-bleibt")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 24" }));
+    agent.report("Stop", json!({ "last_assistant_message": "Fertig." }));
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "prompt": "Und jetzt committen" }),
+    );
+
+    let assignments: Vec<_> = (0..3).map(|_| agent.next().assignment).collect();
+    assert_eq!(assignments, vec![Some("Baue Ticket 24".to_owned()); 3]);
+}
+
+#[test]
+fn nach_dem_leeren_des_gespraechs_wird_der_naechste_prompt_der_neue_auftrag() {
+    let status = AgentStatus::start(runtime_folder("auftrag-clear")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 24" }));
+    agent.report("Stop", json!({ "last_assistant_message": "Fertig." }));
+    agent.report("SessionEnd", json!({ "reason": "clear" }));
+    agent.next();
+    agent.next();
+
+    let cleared = agent.next();
+    assert_eq!(cleared.state, AgentState::Unknown);
+    assert_eq!(cleared.assignment, None);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 25" }));
+    assert_eq!(agent.next().assignment.as_deref(), Some("Baue Ticket 25"));
+}
+
+#[test]
+fn ein_leerer_prompt_wird_nicht_zum_auftrag() {
+    let status = AgentStatus::start(runtime_folder("auftrag-leer")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "  \n " }));
+    agent.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 24" }));
+
+    assert_eq!(agent.next().assignment, None);
+    assert_eq!(agent.next().assignment.as_deref(), Some("Baue Ticket 24"));
+}
+
+#[test]
+fn jeder_agent_hat_seinen_eigenen_auftrag() {
+    let status = AgentStatus::start(runtime_folder("auftrag-mehrere")).unwrap();
+    let first = TestAgent::start(&status, 1);
+    let second = TestAgent::start(&status, 2);
+
+    first.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 24" }));
+    second.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 25" }));
+
+    assert_eq!(first.next().assignment.as_deref(), Some("Baue Ticket 24"));
+    assert_eq!(second.next().assignment.as_deref(), Some("Baue Ticket 25"));
+}
+
+#[test]
 fn endet_das_terminal_ist_der_status_unbekannt_und_die_konfiguration_fort() {
     let status = AgentStatus::start(runtime_folder("terminal-endet")).unwrap();
     let agent = TestAgent::start(&status, 1);
