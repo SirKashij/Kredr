@@ -43,6 +43,18 @@ _Vermeiden_: Layout, Sitzungszustand
 Ein Tab im Hauptbereich, der eine Datei mit Syntaxfarben zeigt und einfache Korrekturen erlaubt.
 _Vermeiden_: Editor
 
+**Vorschau-Tab**:
+Ein Tab, der eine Datei nur zum Durchsehen zeigt und von der nächsten so geöffneten Datei ersetzt wird. Ein Doppelklick oder eine Bearbeitung macht ihn dauerhaft.
+_Vermeiden_: temporärer Tab, Preview
+
+**Markdown-Vorschau**:
+Ein Tab im Hauptbereich, der eine Markdown-Datei gerendert zeigt statt als Quelltext. Nicht zu verwechseln mit dem Vorschau-Tab.
+_Vermeiden_: Preview, gerenderte Ansicht
+
 **Versionskontrolle**:
 Die Ansicht, in der Änderungen eines Projekts geprüft, festgeschrieben und mit GitHub abgeglichen werden.
 _Vermeiden_: Source Control, Git-Panel
+
+**Änderung**:
+Eine geänderte, neue, gelöschte oder umbenannte Datei des Projekts gegenüber dem letzten Commit. Eine Änderung ist ausgewählt, wenn sie in den nächsten Commit kommt. Im Code und in der englischen Oberfläche heißt „ausgewählt“ wie in Git „staged“, „auswählen“ „stage“.
+_Vermeiden_: gestagt, Stage, Index

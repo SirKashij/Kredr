@@ -5,8 +5,91 @@
  * nur aus einfachen Daten und lässt sich deshalb als JSON speichern.
  */
 
+import { pathKey, samePath } from "./filePath";
+import { isShell, type Shell } from "./settingsStore";
+
 export interface Tab {
   id: string;
+  /** Der selbst vergebene Name; ohne ihn heißt das Terminal wie seine Shell. */
+  name?: string;
+  /** Die Shell des Terminals; fehlt nur, bis `assignShell` die Standard-Shell einträgt. */
+  shell?: Shell;
+  /** Gesetzt, wenn in diesem Terminal ein Agent gestartet wurde. */
+  agent?: true;
+  /** Der Startordner des Terminals, wenn es nicht im Projektordner startet. */
+  cwd?: string;
+  /** Was der Tab zeigt; fehlt bei einem Terminal. */
+  content?: TabContent;
+  /** Gesetzt bei einem Vorschau-Tab: Die nächste Vorschau seiner Gruppe ersetzt ihn. */
+  preview?: true;
+}
+
+/**
+ * Der Inhalt eines Tabs, der kein Terminal ist. Jede weitere Tab-Art (Diff,
+ * Versionskontrolle, Bild …) ist ein weiterer Fall mit eigenem `kind`.
+ */
+export type TabContent =
+  | FileTabContent
+  /** Die Versionskontrolle mit dem großen Diff; es gibt sie nur einmal. */
+  | { kind: "versionControl" };
+
+/** Der Inhalt eines Tabs, der eine Datei zeigt. */
+export interface FileTabContent {
+  /**
+   * `file`: eine Dateiansicht. `markdown`: die gerenderte Vorschau einer
+   * Markdown-Datei. `image`: eine Bilddatei als Bild.
+   */
+  kind: "file" | "markdown" | "image";
+  /** Relativ zum Projektordner und mit `/` getrennt; außerhalb des Projekts der volle Pfad. */
+  path: string;
+}
+
+/** Ob der Tab eine Datei zeigt, in welcher Ansicht auch immer. */
+export function showsFile(content: TabContent | undefined): content is FileTabContent {
+  return content !== undefined && content.kind !== "versionControl";
+}
+
+/**
+ * Ob der Tab den Text einer Datei hält, samt ungespeicherter Änderungen: ihre
+ * Dateiansicht und ihre Markdown-Vorschau (beide zeigen denselben Text).
+ */
+export function holdsFileText(content: TabContent): content is FileTabContent {
+  return content.kind === "file" || content.kind === "markdown";
+}
+
+/**
+ * Ob mit dem Tab der letzte schließt, der den Text seiner Datei hält; erst
+ * dann gingen ungespeicherte Änderungen verloren.
+ */
+export function closesFileText(arrangement: Arrangement, tabId: string): boolean {
+  const tabs = tabsOf(arrangement);
+  const content = tabs.find((tab) => tab.id === tabId)?.content;
+  if (!content || !holdsFileText(content)) return false;
+  const path = pathKey(content.path);
+  return !tabs.some(
+    (tab) =>
+      tab.id !== tabId &&
+      tab.content &&
+      holdsFileText(tab.content) &&
+      pathKey(tab.content.path) === path,
+  );
+}
+
+/** Ob der Tab ein Terminal ist (gewöhnlich oder mit Agent). */
+export function isTerminal(tab: Tab): boolean {
+  return !tab.content;
+}
+
+/** Der Pfad der Datei, die der Tab zeigt; fehlt bei Terminals und der Versionskontrolle. */
+export function filePathOf(tab: Tab | undefined): string | undefined {
+  return showsFile(tab?.content) ? tab?.content.path : undefined;
+}
+
+/** Ob beide dasselbe zeigen; ein Inhalt ist im Hauptbereich nur einmal offen. */
+export function sameContent(a: TabContent, b: TabContent): boolean {
+  if (a.kind !== b.kind) return false;
+  if (!showsFile(a) || !showsFile(b)) return true;
+  return samePath(a.path, b.path);
 }
 
 /** Eine Gruppe: ein Teilstück des Hauptbereichs mit eigener Tab-Leiste. */
@@ -41,6 +124,12 @@ export interface Arrangement {
   focusedGroup: string | null;
   /** Zähler für die nächste vergebene Kennung. */
   nextId: number;
+  /**
+   * Kennung des maximierten Tabs. Solange er der sichtbare Tab der
+   * fokussierten Gruppe ist, verdeckt seine Gruppe alle übrigen
+   * (siehe `maximizedGroupOf`).
+   */
+  maximized?: string;
 }
 
 export const emptyArrangement: Arrangement = {
@@ -70,24 +159,33 @@ function groupOfTab(arrangement: Arrangement, tabId: string): Group | undefined 
   return groupsOf(arrangement).find((group) => group.tabs.some((tab) => tab.id === tabId));
 }
 
-/** Eine neue Gruppe mit einem neuen Tab; sie verbraucht zwei Kennungen. */
-function newGroup(nextId: number): Group {
+function newTab(nextId: number, agent: boolean, shell?: Shell): Tab {
   const tab: Tab = { id: `t${nextId}` };
+  if (agent) tab.agent = true;
+  if (shell) tab.shell = shell;
+  return tab;
+}
+
+/** Eine neue Gruppe mit einem neuen Tab; sie verbraucht zwei Kennungen. */
+function newGroup(nextId: number, agent = false, shell?: Shell): Group {
+  const tab = newTab(nextId, agent, shell);
   return { kind: "group", id: `g${nextId + 1}`, tabs: [tab], activeTab: tab.id };
 }
 
 /**
  * Öffnet einen neuen Tab in der fokussierten Gruppe und zeigt ihn an. Ohne
  * Gruppen entsteht die erste; hat keine Gruppe den Fokus, nimmt ihn die erste.
+ * Mit `agent` ist es ein Terminal, in dem ein Agent startet; mit `shell`
+ * läuft darin diese Shell statt der Standard-Shell.
  */
-export function openTab(arrangement: Arrangement): Arrangement {
+export function openTab(arrangement: Arrangement, agent = false, shell?: Shell): Arrangement {
   const { root, nextId } = arrangement;
   if (!root) {
-    const group = newGroup(nextId);
+    const group = newGroup(nextId, agent, shell);
     return { ...arrangement, root: group, focusedGroup: group.id, nextId: nextId + 2 };
   }
   const target = focusedGroupOf(arrangement) ?? groupsOf(arrangement)[0];
-  const tab: Tab = { id: `t${nextId}` };
+  const tab = newTab(nextId, agent, shell);
   return {
     ...arrangement,
     root: replaceGroup(root, target.id, (group) => ({
@@ -98,6 +196,21 @@ export function openTab(arrangement: Arrangement): Arrangement {
     focusedGroup: target.id,
     nextId: nextId + 1,
   };
+}
+
+/**
+ * Öffnet wie `openTab` einen neuen Tab, dessen Terminal aber im Ordner `cwd`
+ * startet („Terminal hier öffnen“, „Agent hier starten“).
+ */
+export function openTabIn(arrangement: Arrangement, cwd: string, agent = false): Arrangement {
+  const opened = openTab(arrangement, agent);
+  const target = focusedGroupOf(opened);
+  if (!opened.root || !target) return opened;
+  const root = replaceGroup(opened.root, target.id, (group) => ({
+    ...group,
+    tabs: group.tabs.map((tab) => (tab.id === group.activeTab ? { ...tab, cwd } : tab)),
+  }));
+  return { ...opened, root };
 }
 
 /**
@@ -129,8 +242,10 @@ export function closeTab(arrangement: Arrangement, tabId: string): Arrangement {
   const group = groupOfTab(arrangement, tabId);
   if (!arrangement.root || !group) return arrangement;
   const root = tidy(replaceGroup(arrangement.root, group.id, () => withoutTab(group, tabId)));
+  // Mit dem maximierten Tab endet das Maximieren.
+  const remaining = arrangement.maximized === tabId ? restoreGroups(arrangement) : arrangement;
   if (group.tabs.length > 1 || arrangement.focusedGroup !== group.id) {
-    return { ...arrangement, root };
+    return { ...remaining, root };
   }
 
   // Die fokussierte Gruppe ist verschwunden: Der Fokus geht an die Gruppe
@@ -138,7 +253,75 @@ export function closeTab(arrangement: Arrangement, tabId: string): Arrangement {
   const before = groupsOf(arrangement);
   const position = before.indexOf(group);
   const heir = before[position - 1] ?? before[position + 1];
-  return { ...arrangement, root, focusedGroup: heir?.id ?? null };
+  return { ...remaining, root, focusedGroup: heir?.id ?? null };
+}
+
+/**
+ * Maximiert den Tab: Er wird sichtbar, seine Gruppe erhält den Fokus und
+ * verdeckt die übrigen Gruppen. Deren Tabs bleiben, wo sie sind.
+ */
+export function maximizeTab(arrangement: Arrangement, tabId: string): Arrangement {
+  if (!groupOfTab(arrangement, tabId)) return arrangement;
+  return { ...activateTab(arrangement, tabId), maximized: tabId };
+}
+
+/** Beendet das Maximieren; alle Gruppen sind wieder zu sehen. */
+export function restoreGroups(arrangement: Arrangement): Arrangement {
+  if (arrangement.maximized === undefined) return arrangement;
+  const { maximized: _, ...restored } = arrangement;
+  return restored;
+}
+
+/**
+ * Die Gruppe, die gerade alle übrigen verdeckt. Das gilt nur, solange der
+ * maximierte Tab der sichtbare Tab der fokussierten Gruppe ist: Wer ein
+ * Terminal nach vorn holt oder daneben einen Tab öffnet, sieht wieder alles.
+ */
+export function maximizedGroupOf(arrangement: Arrangement): Group | null {
+  const group = focusedGroupOf(arrangement);
+  return group && group.activeTab === arrangement.maximized ? group : null;
+}
+
+/**
+ * Zeigt den Tab der Versionskontrolle und öffnet ihn, wenn es ihn noch nicht
+ * gibt. Beim Öffnen ist er maximiert; ein vorhandener Tab wird es nur mit
+ * `maximize` erneut (Klick auf das Symbol der Versionskontrolle).
+ */
+export function showVersionControl(arrangement: Arrangement, maximize: boolean): Arrangement {
+  const isShown = (tab: Tab) => tab.content?.kind === "versionControl";
+  const existed = tabsOf(arrangement).some(isShown);
+  const shown = openContent(arrangement, { kind: "versionControl" });
+  if (existed && !maximize) return shown;
+  return maximizeTab(shown, tabsOf(shown).find(isShown)!.id);
+}
+
+/**
+ * Gibt dem Tab einen eigenen Namen. Ein leerer Name nimmt ihn wieder weg;
+ * der Tab heißt dann wie seine Shell.
+ */
+export function renameTab(arrangement: Arrangement, tabId: string, name: string): Arrangement {
+  const group = groupOfTab(arrangement, tabId);
+  if (!arrangement.root || !group) return arrangement;
+  const trimmed = name.trim();
+  const rename = ({ name: _, ...tab }: Tab): Tab => (trimmed ? { ...tab, name: trimmed } : tab);
+  const tabs = group.tabs.map((tab) => (tab.id === tabId ? rename(tab) : tab));
+  const root = replaceGroup(arrangement.root, group.id, () => ({ ...group, tabs }));
+  return { ...arrangement, root };
+}
+
+/**
+ * Trägt bei jedem Terminal, für das keine Shell gewählt wurde, `shell` ein: die
+ * Standard-Shell zum Zeitpunkt seines Entstehens. Eine spätere Änderung der
+ * Standard-Shell lässt bestehende Terminals damit unberührt.
+ */
+export function assignShell(arrangement: Arrangement, shell: Shell): Arrangement {
+  const settled = (tab: Tab) => tab.shell !== undefined || !isTerminal(tab);
+  if (!arrangement.root || tabsOf(arrangement).every(settled)) return arrangement;
+  const assign = (node: TreeNode): TreeNode =>
+    node.kind === "group"
+      ? { ...node, tabs: node.tabs.map((tab) => (settled(tab) ? tab : { ...tab, shell })) }
+      : { ...node, children: node.children.map(assign) };
+  return { ...arrangement, root: assign(arrangement.root) };
 }
 
 /** Wohin ein Tab verschoben wird. */
@@ -239,6 +422,117 @@ function replaceGroup(
 ): TreeNode {
   if (node.kind === "group") return node.id === id ? change(node) : node;
   return { ...node, children: node.children.map((child) => replaceGroup(child, id, change)) };
+}
+
+/**
+ * Öffnet einen Inhalt (etwa eine Dateiansicht) als Tab der fokussierten
+ * Gruppe, rechts neben ihrem sichtbaren Tab, und zeigt ihn an. Ist der Inhalt
+ * schon irgendwo offen, wird stattdessen jener Tab angezeigt. Mit `preview`
+ * entsteht ein Vorschau-Tab, der den bisherigen Vorschau-Tab der Gruppe
+ * ersetzt; ohne `preview` ist der Tab dauerhaft, auch wenn er zuvor Vorschau war.
+ */
+export function openContent(
+  arrangement: Arrangement,
+  content: TabContent,
+  preview = false,
+): Arrangement {
+  const existing = tabsOf(arrangement).find(
+    (tab) => tab.content && sameContent(tab.content, content),
+  );
+  if (existing) {
+    const shown = activateTab(arrangement, existing.id);
+    return preview ? shown : keepTab(shown, existing.id);
+  }
+
+  const { root, nextId } = arrangement;
+  const added: Tab = preview
+    ? { id: `t${nextId}`, content, preview }
+    : { id: `t${nextId}`, content };
+  if (!root) {
+    const group: Group = {
+      kind: "group",
+      id: `g${nextId + 1}`,
+      tabs: [added],
+      activeTab: added.id,
+    };
+    return { ...arrangement, root: group, focusedGroup: group.id, nextId: nextId + 2 };
+  }
+  const target = focusedGroupOf(arrangement) ?? groupsOf(arrangement)[0];
+  const replaced = preview ? target.tabs.find((tab) => tab.preview) : undefined;
+  if (replaced) {
+    // Der Vorschau-Tab behält Platz und Kennung und zeigt nur etwas anderes.
+    const tabs = target.tabs.map((tab) => (tab === replaced ? { ...tab, content } : tab));
+    return {
+      ...arrangement,
+      root: replaceGroup(root, target.id, (group) => ({ ...group, tabs, activeTab: replaced.id })),
+      focusedGroup: target.id,
+    };
+  }
+  const tabs = [...target.tabs];
+  tabs.splice(tabs.findIndex((tab) => tab.id === target.activeTab) + 1, 0, added);
+  return {
+    ...arrangement,
+    root: replaceGroup(root, target.id, (group) => ({ ...group, tabs, activeTab: added.id })),
+    focusedGroup: target.id,
+    nextId: nextId + 1,
+  };
+}
+
+/** Macht aus einem Vorschau-Tab einen dauerhaften. */
+export function keepTab(arrangement: Arrangement, tabId: string): Arrangement {
+  const group = groupOfTab(arrangement, tabId);
+  if (!arrangement.root || !group?.tabs.some((tab) => tab.id === tabId && tab.preview)) {
+    return arrangement;
+  }
+  const keep = ({ preview: _, ...tab }: Tab): Tab => tab;
+  const tabs = group.tabs.map((tab) => (tab.id === tabId ? keep(tab) : tab));
+  return {
+    ...arrangement,
+    root: replaceGroup(arrangement.root, group.id, () => ({ ...group, tabs })),
+  };
+}
+
+/**
+ * Lässt den Tab an Ort und Stelle etwas anderes zeigen, etwa die Vorschau
+ * statt des Quelltexts. Ist der Inhalt schon in einem anderen Tab offen, wird
+ * stattdessen jener angezeigt.
+ */
+export function showInTab(
+  arrangement: Arrangement,
+  tabId: string,
+  content: TabContent,
+): Arrangement {
+  const group = groupOfTab(arrangement, tabId);
+  if (!arrangement.root || !group) return arrangement;
+  const existing = tabsOf(arrangement).find(
+    (tab) => tab.content && sameContent(tab.content, content),
+  );
+  if (existing) return activateTab(arrangement, existing.id);
+  const tabs = group.tabs.map((tab) => (tab.id === tabId ? { ...tab, content } : tab));
+  return {
+    ...arrangement,
+    root: replaceGroup(arrangement.root, group.id, () => ({ ...group, tabs })),
+  };
+}
+
+/**
+ * Öffnet einen Inhalt in einer neuen Gruppe rechts neben der fokussierten,
+ * etwa die Vorschau neben dem Quelltext. Der Fokus bleibt, wo er ist. Ist der
+ * Inhalt schon offen, wird stattdessen jener Tab angezeigt.
+ */
+export function openContentBeside(arrangement: Arrangement, content: TabContent): Arrangement {
+  const origin = focusedGroupOf(arrangement);
+  const existing = tabsOf(arrangement).some(
+    (tab) => tab.content && sameContent(tab.content, content),
+  );
+  if (!origin || existing) return openContent(arrangement, content);
+  const opened = openContent(arrangement, content);
+  const moved = moveTab(opened, focusedGroupOf(opened)!.activeTab, {
+    groupId: origin.id,
+    side: "right",
+  });
+  // In der alten Gruppe bleibt sichtbar, was sichtbar war.
+  return activateTab(moved, origin.activeTab);
 }
 
 /**
@@ -373,4 +667,150 @@ export function activateAdjacentTab(arrangement: Arrangement, offset: 1 | -1): A
 /** Die Gruppe, die den Fokus hat. */
 export function focusedGroupOf(arrangement: Arrangement): Group | null {
   return groupsOf(arrangement).find((group) => group.id === arrangement.focusedGroup) ?? null;
+}
+
+/** Die gespeicherte Aufteilung ist nicht lesbar; es gilt die leere. */
+class Unreadable extends Error {}
+
+type Raw = Record<string, unknown>;
+
+function rawObject(value: unknown): Raw {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Unreadable();
+  return value as Raw;
+}
+
+function rawList(value: unknown): unknown[] {
+  if (!Array.isArray(value)) throw new Unreadable();
+  return value;
+}
+
+/** Jede Shell, die ein gespeichertes Terminal haben kann. */
+
+/**
+ * Der gespeicherte Inhalt eines Tabs, oder `null`, wenn er sich nicht
+ * wiederherstellen lässt: eine unbekannte Tab-Art oder eine Datei, die es
+ * nicht mehr gibt. Jede weitere Tab-Art, die das Schließen des Fensters
+ * überdauern soll, ist hier ein weiterer Fall.
+ */
+function restoreContent(value: unknown, exists: (path: string) => boolean): TabContent | null {
+  const raw = rawObject(value);
+  switch (raw.kind) {
+    case "file":
+    // Markdown-Vorschau und Bild zeigen wie die Dateiansicht eine Datei.
+    case "markdown":
+    case "image":
+      return typeof raw.path === "string" && exists(raw.path)
+        ? { kind: raw.kind, path: raw.path }
+        : null;
+    // Der Tab kommt zurück, aber nicht maximiert (`maximized` wird nicht
+    // übernommen): Ein frisch geöffnetes Projekt zeigt seine Terminals.
+    case "versionControl":
+      return { kind: "versionControl" };
+    default:
+      return null;
+  }
+}
+
+/** Der gespeicherte Tab ohne alles, was zu einem laufenden Prozess gehört; `null`, wenn er entfällt. */
+function restoreTab(raw: Raw, exists: (path: string) => boolean): Tab | null {
+  const tab: Tab = { id: raw.id as string };
+  if (typeof raw.name === "string" && raw.name) tab.name = raw.name;
+  if (raw.content !== undefined) {
+    const content = restoreContent(raw.content, exists);
+    if (!content) return null;
+    tab.content = content;
+    if (raw.preview === true) tab.preview = true;
+    return tab;
+  }
+  // `agent` bleibt weg: Ein wiederhergestelltes Terminal startet als frische
+  // Shell, kein Agent läuft von selbst an.
+  if (isShell(raw.shell)) tab.shell = raw.shell;
+  // Ohne seinen Startordner startet das Terminal im Projektordner.
+  if (typeof raw.cwd === "string" && exists(raw.cwd)) tab.cwd = raw.cwd;
+  return tab;
+}
+
+/**
+ * Stellt eine gespeicherte Aufteilung wieder her. `stored` ist, was der
+ * Aufteilungsspeicher geladen hat, und kann alles sein: Ist es nicht lesbar
+ * oder von einer anderen Version, ergibt sich die leere Aufteilung. Terminals
+ * kommen als gewöhnliche Terminals mit Namen, Shell und Startordner zurück.
+ * Tabs unbekannter Art und Dateiansichten, deren Datei es laut `exists` nicht
+ * mehr gibt, fehlen still; ihre Nachbarn rücken nach wie beim Schließen.
+ * `exists` erhält die Pfade so, wie sie gespeichert sind (Dateien, Startordner).
+ */
+export function restoreArrangement(
+  stored: unknown,
+  exists: (path: string) => boolean = () => true,
+): Arrangement {
+  try {
+    const raw = rawObject(stored);
+    if (raw.version !== emptyArrangement.version) return emptyArrangement;
+    if (raw.root === null) return emptyArrangement;
+
+    const ids = new Set<string>();
+    /** Ob etwas entfallen ist und der Baum aufgeräumt werden muss. */
+    let dropped = false;
+    const claimId = (value: unknown): string => {
+      if (typeof value !== "string" || value === "" || ids.has(value)) throw new Unreadable();
+      ids.add(value);
+      return value;
+    };
+
+    const restoreNode = (value: unknown): TreeNode => {
+      const node = rawObject(value);
+      const id = claimId(node.id);
+      if (node.kind === "group") {
+        const all = rawList(node.tabs).map(rawObject);
+        all.forEach((tab) => claimId(tab.id));
+        if (all.length === 0) throw new Unreadable();
+        const restored = all.map((tab) => restoreTab(tab, exists));
+        const tabs = restored.filter((tab) => tab !== null);
+        if (tabs.length < all.length) dropped = true;
+        // Fehlt der sichtbare Tab, rückt sein rechter Nachbar nach, sonst der linke.
+        const visible = Math.max(
+          all.findIndex((tab) => tab.id === node.activeTab),
+          0,
+        );
+        const successor = restored.slice(visible).find((tab) => tab !== null) ?? tabs.at(-1);
+        return { kind: "group", id, tabs, activeTab: successor?.id ?? "" };
+      }
+      if (node.kind === "split" && (node.axis === "row" || node.axis === "column")) {
+        const children = rawList(node.children).map(restoreNode);
+        if (children.length < 2) throw new Unreadable();
+        return {
+          kind: "split",
+          id,
+          axis: node.axis,
+          children,
+          sizes: restoreSizes(node.sizes, children.length),
+        };
+      }
+      throw new Unreadable();
+    };
+
+    const whole = restoreNode(raw.root);
+    const root = dropped ? tidy(whole) : whole;
+    const restored: Arrangement = { ...emptyArrangement, root };
+    const groups = groupsOf(restored);
+    const focused = groups.find((group) => group.id === raw.focusedGroup) ?? groups[0];
+    // Auch entfallene Tabs zählen: Ihre Kennungen werden nicht neu vergeben.
+    const used = Math.max(0, ...[...ids].map((id) => Number(id.slice(1)) || 0));
+    const nextId = Number.isSafeInteger(raw.nextId) ? (raw.nextId as number) : 0;
+    return { ...restored, focusedGroup: focused?.id ?? null, nextId: Math.max(nextId, used + 1) };
+  } catch (error) {
+    if (error instanceof Unreadable) return emptyArrangement;
+    throw error;
+  }
+}
+
+/** Die Anteile einer Teilung; sind sie unbrauchbar, erhält jedes Teilstück gleich viel. */
+function restoreSizes(value: unknown, count: number): number[] {
+  const sizes = Array.isArray(value) ? value : [];
+  const usable =
+    sizes.length === count &&
+    sizes.every((size) => typeof size === "number" && Number.isFinite(size) && size > 0);
+  if (!usable) return Array.from({ length: count }, () => 1 / count);
+  const total = sizes.reduce((sum: number, size: number) => sum + size, 0);
+  return Math.abs(total - 1) < 1e-6 ? sizes : sizes.map((size: number) => size / total);
 }

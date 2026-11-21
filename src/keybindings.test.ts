@@ -1,0 +1,79 @@
+import { expect, test } from "vitest";
+import { resolveKey, type KeyStroke } from "./keybindings";
+
+function key(keyCode: number, modifiers: Partial<KeyStroke> = {}): KeyStroke {
+  return { keyCode, ctrlKey: false, shiftKey: false, altKey: false, ...modifiers };
+}
+
+const A = 65;
+const B = 66;
+const E = 69;
+
+test("Strg+W schließt den aktiven Tab wie Strg+F4", () => {
+  expect(resolveKey(key(87, { ctrlKey: true }), false)).toEqual({ kind: "closeTab" });
+  expect(resolveKey(key(115, { ctrlKey: true }), false)).toEqual({ kind: "closeTab" });
+  // Ohne Strg bleibt W eine gewöhnliche Eingabe.
+  expect(resolveKey(key(87), false)).toBeNull();
+});
+
+test("Strg+Tab und Strg+Umschalt+Tab wechseln zum nächsten und vorigen Tab der Gruppe", () => {
+  const Tab = 9;
+  expect(resolveKey(key(Tab, { ctrlKey: true }), false)).toEqual({ kind: "nextTab" });
+  expect(resolveKey(key(Tab, { ctrlKey: true, shiftKey: true }), false)).toEqual({
+    kind: "previousTab",
+  });
+  // Tab allein gehört der Shell und der Dateiansicht.
+  expect(resolveKey(key(Tab), false)).toBeNull();
+  expect(resolveKey(key(Tab, { shiftKey: true }), false)).toBeNull();
+});
+
+test("Strg+Umschalt+A startet einen neuen Agenten", () => {
+  expect(resolveKey(key(A, { ctrlKey: true, shiftKey: true }), false)).toEqual({
+    kind: "newAgent",
+  });
+});
+
+test("ohne Umschalt oder mit AltGr bleibt A eine gewöhnliche Taste", () => {
+  expect(resolveKey(key(A, { ctrlKey: true }), false)).toBe(null);
+  expect(resolveKey(key(A, { ctrlKey: true, shiftKey: true, altKey: true }), false)).toBe(null);
+});
+
+test("Strg+Umschalt+E zeigt den Explorer", () => {
+  expect(resolveKey(key(E, { ctrlKey: true, shiftKey: true }), false)).toEqual({
+    kind: "showExplorer",
+  });
+});
+
+test("Strg+Umschalt+G zeigt die Versionskontrolle", () => {
+  const G = 71;
+  expect(resolveKey(key(G, { ctrlKey: true, shiftKey: true }), false)).toEqual({
+    kind: "showVersionControl",
+  });
+  expect(resolveKey(key(G, { ctrlKey: true }), false)).toBeNull();
+});
+
+test("Strg+B blendet die Seitenleiste ein und aus", () => {
+  expect(resolveKey(key(B, { ctrlKey: true }), false)).toEqual({ kind: "toggleSidebar" });
+});
+
+test("Strg+P öffnet „Datei per Namen öffnen“", () => {
+  const P = 80;
+  expect(resolveKey(key(P, { ctrlKey: true }), false)).toEqual({ kind: "quickOpen" });
+  expect(resolveKey(key(P), false)).toBeNull();
+  expect(resolveKey(key(P, { ctrlKey: true, altKey: true }), false)).toBeNull();
+});
+
+test("E und B ohne Strg bleiben gewöhnliche Eingaben", () => {
+  expect(resolveKey(key(E, { shiftKey: true }), false)).toBeNull();
+  expect(resolveKey(key(B), false)).toBeNull();
+  // Strg+Alt ist AltGr.
+  expect(resolveKey(key(B, { ctrlKey: true, altKey: true }), false)).toBeNull();
+});
+
+test("Strg+Umschalt+F zeigt die Suche", () => {
+  const F = 70;
+  expect(resolveKey(key(F, { ctrlKey: true, shiftKey: true }), false)).toEqual({
+    kind: "showSearch",
+  });
+  expect(resolveKey(key(F, { ctrlKey: true }), false)).toBe(null);
+});

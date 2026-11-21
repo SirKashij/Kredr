@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
+import type { AgentStatuses } from "./agentStatus";
+import { WaitingBadge } from "./AgentStatusViews";
 import { useT, type MessageKey } from "./i18n/i18n";
+import { ChangesBadge } from "./VersionControlView";
 
 export type View = "agents" | "explorer" | "search" | "versionControl";
 
@@ -40,32 +43,57 @@ const icons: Record<View | "settings", ReactNode> = {
 };
 
 /** Die Ansichten der Symbolleiste in ihrer festgelegten Reihenfolge. */
-export const views: { id: View; label: MessageKey }[] = [
+export const views: { id: View; label: MessageKey; tooltip?: MessageKey }[] = [
   { id: "agents", label: "activity.agents" },
-  { id: "explorer", label: "activity.explorer" },
-  { id: "search", label: "activity.search" },
-  { id: "versionControl", label: "activity.versionControl" },
+  { id: "explorer", label: "activity.explorer", tooltip: "activity.explorerTooltip" },
+  { id: "search", label: "activity.search", tooltip: "activity.searchTooltip" },
+  {
+    id: "versionControl",
+    label: "activity.versionControl",
+    tooltip: "activity.versionControlTooltip",
+  },
 ];
 
-export function ActivityBar({ view, onSelect }: { view: View; onSelect: (view: View) => void }) {
+export function ActivityBar({
+  view,
+  onSelect,
+  settingsOpen,
+  onToggleSettings,
+  statuses,
+}: {
+  /** Die gezeigte Ansicht; `null`, solange die Seitenleiste ausgeblendet ist. */
+  view: View | null;
+  onSelect: (view: View) => void;
+  settingsOpen: boolean;
+  onToggleSettings: () => void;
+  /** Am Symbol der Agenten-Ansicht steht die Zahl der wartenden Agenten. */
+  statuses: AgentStatuses;
+}) {
   const t = useT();
   return (
     <nav className="actbar">
-      {views.map(({ id, label }) => (
+      {views.map(({ id, label, tooltip }) => (
         <button
           key={id}
           className={id === view ? "on" : ""}
-          title={t(label)}
+          title={t(tooltip ?? label)}
           aria-label={t(label)}
           aria-pressed={id === view}
           onClick={() => onSelect(id)}
         >
           <svg viewBox="0 0 24 24">{icons[id]}</svg>
+          {id === "agents" && <WaitingBadge statuses={statuses} />}
+          {id === "versionControl" && <ChangesBadge />}
         </button>
       ))}
       <div className="spacer" />
-      {/* Die Einstellungsseite folgt in einem eigenen Schritt. */}
-      <button title={t("activity.settings")} aria-label={t("activity.settings")} disabled>
+      <button
+        className={settingsOpen ? "on" : ""}
+        title={t("activity.settingsTooltip")}
+        aria-label={t("activity.settings")}
+        aria-pressed={settingsOpen}
+        onClick={onToggleSettings}
+      >
         <svg viewBox="0 0 24 24">{icons.settings}</svg>
       </button>
     </nav>

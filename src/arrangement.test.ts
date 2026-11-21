@@ -11,7 +11,10 @@ import {
   groupsOf,
   moveDivider,
   moveTab,
+  assignShell,
   openTab,
+  openTabIn,
+  renameTab,
   splitGroup,
   tabsOf,
   type Arrangement,
@@ -425,4 +428,100 @@ test("ein Tab ohne gültiges Ziel bleibt, wo er ist", () => {
   // Eine Stelle jenseits der Tab-Leiste meint ihr Ende.
   const far = moveTab(arrangement, b1.id, { groupId: a.id, index: 99 });
   expect((far.root as Group).tabs.at(-1)).toEqual(b1);
+});
+
+test("ein neuer Agent öffnet sich als Tab, der als Agent erkennbar ist", () => {
+  const arrangement = openTab(single, true);
+
+  const [terminal, agent] = groupsOf(arrangement)[0].tabs;
+  expect(terminal.agent).toBeUndefined();
+  expect(agent.agent).toBe(true);
+  expect(groupsOf(arrangement)[0].activeTab).toBe(agent.id);
+});
+
+test("der erste Tab eines Fensters kann ein Agent sein", () => {
+  const arrangement = openTab(emptyArrangement, true);
+
+  expect(tabsOf(arrangement)).toMatchObject([{ agent: true }]);
+});
+
+test("ein Agent bleibt beim Verschieben in eine andere Gruppe ein Agent", () => {
+  const split = splitGroup(openTab(emptyArrangement, true), groupsOf(single)[0].id, "right");
+  const [left, right] = groupsOf(split);
+
+  const moved = moveTab(split, left.tabs[0].id, { groupId: right.id, index: 0 });
+
+  expect(groupsOf(moved)[0].tabs[0]).toMatchObject({ id: left.tabs[0].id, agent: true });
+});
+
+test("„Terminal hier öffnen“ legt in der fokussierten Gruppe einen Tab mit eigenem Startordner an", () => {
+  const before = splitGroup(single, groupsOf(single)[0].id, "right");
+  const focused = groupsOf(before)[1];
+
+  const arrangement = openTabIn(before, "C:\\Projekt\\src");
+
+  const [untouched, group] = groupsOf(arrangement);
+  expect(untouched).toEqual(groupsOf(before)[0]);
+  expect(group.tabs).toHaveLength(2);
+  expect(group.tabs[0]).toEqual(focused.tabs[0]);
+  expect(group.tabs[1]).toEqual({ id: group.activeTab, cwd: "C:\\Projekt\\src" });
+  expect(arrangement.focusedGroup).toBe(group.id);
+});
+
+test("„Agent hier starten“ öffnet den Tab als Agent, auch als ersten Tab überhaupt", () => {
+  const arrangement = openTabIn(emptyArrangement, "C:\\Projekt\\docs", true);
+
+  expect(tabsOf(arrangement)).toEqual([
+    { id: groupsOf(arrangement)[0].activeTab, agent: true, cwd: "C:\\Projekt\\docs" },
+  ]);
+});
+
+test("ein neues Terminal merkt sich die gewählte Shell", () => {
+  const arrangement = openTab(openTab(emptyArrangement, false, "gitBash"));
+
+  const [first, second] = tabsOf(arrangement);
+  expect(first.shell).toBe("gitBash");
+  expect(second.shell).toBeUndefined();
+});
+
+test("Terminals ohne gewählte Shell erhalten die Standard-Shell", () => {
+  const chosen = openTab(emptyArrangement, false, "gitBash");
+  const split = splitGroup(openTab(chosen), groupsOf(chosen)[0].id, "right");
+
+  const assigned = assignShell(split, "powershell");
+
+  expect(tabsOf(assigned).map((tab) => tab.shell)).toEqual(["gitBash", "powershell", "powershell"]);
+  // Ändert sich später die Standard-Shell, behält jedes Terminal seine Shell.
+  expect(assignShell(assigned, "gitBash")).toBe(assigned);
+});
+
+test("ein Terminal lässt sich umbenennen", () => {
+  const two = openTab(openTab(emptyArrangement));
+  const [first, second] = tabsOf(two);
+
+  const renamed = renameTab(two, second.id, "  Agent Suche ");
+
+  expect(tabsOf(renamed)).toEqual([first, { ...second, name: "Agent Suche" }]);
+});
+
+test("ein leerer Name stellt den Standardnamen wieder her", () => {
+  const named = renameTab(single, tabsOf(single)[0].id, "Build");
+
+  const reset = renameTab(named, tabsOf(named)[0].id, "   ");
+
+  expect(tabsOf(reset)[0].name).toBeUndefined();
+});
+
+test("umbenennen eines unbekannten Tabs ändert nichts", () => {
+  expect(renameTab(single, "gibt-es-nicht", "Name")).toBe(single);
+});
+
+test("der Name wandert beim Verschieben mit dem Tab", () => {
+  const split = splitGroup(single, groupsOf(single)[0].id, "right");
+  const [left, right] = groupsOf(split);
+  const named = renameTab(split, left.tabs[0].id, "Agent");
+
+  const moved = moveTab(named, left.tabs[0].id, { groupId: right.id, index: 1 });
+
+  expect(tabsOf(moved).map((tab) => tab.name)).toEqual([undefined, "Agent"]);
 });

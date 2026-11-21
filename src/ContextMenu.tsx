@@ -1,8 +1,10 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef } from "react";
 
 export interface MenuItem {
   label: string;
   onSelect: () => void;
+  /** Zeichnet über diesem Eintrag eine Trennlinie. */
+  separator?: boolean;
 }
 
 /** Ein Kontextmenü an der Stelle des Rechtsklicks. */
@@ -54,17 +56,19 @@ export function ContextMenu({
       style={{ left: x, top: y }}
       onContextMenu={(event) => event.preventDefault()}
     >
-      {items.map(({ label, onSelect }) => (
-        <button
-          key={label}
-          role="menuitem"
-          onClick={() => {
-            onClose();
-            onSelect();
-          }}
-        >
-          {label}
-        </button>
+      {items.map(({ label, onSelect, separator }) => (
+        <Fragment key={label}>
+          {separator && <div className="menu-separator" role="separator" />}
+          <button
+            role="menuitem"
+            onClick={() => {
+              onClose();
+              onSelect();
+            }}
+          >
+            {label}
+          </button>
+        </Fragment>
       ))}
     </div>
   );

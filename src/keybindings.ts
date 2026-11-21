@@ -5,13 +5,20 @@ export type Command =
   | {
       kind:
         | "newTerminal"
+        | "newAgent"
         | "splitRight"
         | "splitDown"
         | "focusNextGroup"
         | "focusPreviousGroup"
         | "nextTab"
         | "previousTab"
-        | "closeTab";
+        | "closeTab"
+        | "showExplorer"
+        | "showSearch"
+        | "showVersionControl"
+        | "toggleSidebar"
+        | "quickOpen"
+        | "openSettings";
     }
   | { kind: "focusGroupAt"; index: number }
   | { kind: "focusGroupToward"; side: Side };
@@ -34,6 +41,7 @@ const Key = {
   Alt: 18,
   WindowsLeft: 91,
   WindowsRight: 92,
+  Tab: 9,
   PageUp: 33,
   PageDown: 34,
   Left: 37,
@@ -43,8 +51,16 @@ const Key = {
   Digit1: 49,
   Digit5: 53,
   Digit8: 56,
+  A: 65,
+  B: 66,
+  E: 69,
+  F: 70,
+  G: 71,
   K: 75,
+  P: 80,
+  W: 87,
   F4: 115,
+  Comma: 188,
   Oem3: 192,
   Oem5: 220,
 };
@@ -86,15 +102,25 @@ export function resolveKey(key: KeyStroke, chord: boolean): Command | "chord" | 
 
   if (shiftKey) {
     if (keyCode === Key.Oem3) return { kind: "newTerminal" };
+    // VS Code kennt keinen Agenten; dieses Kürzel ist dort unter Windows frei.
+    if (keyCode === Key.A) return { kind: "newAgent" };
     if (keyCode === Key.Digit5) return { kind: "splitRight" };
+    if (keyCode === Key.E) return { kind: "showExplorer" };
+    if (keyCode === Key.F) return { kind: "showSearch" };
+    if (keyCode === Key.G) return { kind: "showVersionControl" };
+    if (keyCode === Key.Tab) return { kind: "previousTab" };
     return null;
   }
 
   if (keyCode === Key.K) return "chord";
+  if (keyCode === Key.B) return { kind: "toggleSidebar" };
+  if (keyCode === Key.P) return { kind: "quickOpen" };
   if (keyCode === Key.Oem5) return { kind: "splitRight" };
   if (keyCode === Key.PageDown) return { kind: "nextTab" };
   if (keyCode === Key.PageUp) return { kind: "previousTab" };
-  if (keyCode === Key.F4) return { kind: "closeTab" };
+  if (keyCode === Key.Tab) return { kind: "nextTab" };
+  if (keyCode === Key.F4 || keyCode === Key.W) return { kind: "closeTab" };
+  if (keyCode === Key.Comma) return { kind: "openSettings" };
   if (keyCode >= Key.Digit1 && keyCode <= Key.Digit8) {
     return { kind: "focusGroupAt", index: keyCode - Key.Digit1 };
   }
