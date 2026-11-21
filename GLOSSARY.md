@@ -28,6 +28,10 @@ _Vermeiden_: Konsole, Shell-Fenster
 Eine Claude-Code-Sitzung, die in einem Terminal läuft.
 _Vermeiden_: Bot, KI, Claude-Terminal
 
+**Subagent**:
+Ein Helfer, den ein Agent für eine Teilaufgabe startet. Er läuft im Terminal seines Agenten, hat kein eigenes Gespräch und endet mit seiner Teilaufgabe.
+_Vermeiden_: Unteragent, Kind-Agent, Task, Hauptagent (für den Agenten darüber)
+
 **Gespräch**:
 Der Verlauf eines Agenten mit der Person. Es überdauert das Ende seines Prozesses und lässt sich fortsetzen; leert die Person es, beginnt ein neues.
 _Vermeiden_: Sitzung, Session, Chat
