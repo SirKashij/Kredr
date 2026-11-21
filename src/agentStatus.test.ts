@@ -257,6 +257,23 @@ describe("Subagenten eines Agenten", () => {
     });
   });
 
+  it("lässt die Laufzeit eines wartenden Subagenten weiterlaufen", () => {
+    const statuses = new AgentStatuses();
+    statuses.report("tab-1", { ...working, subagents: [explore] }, 1_000);
+
+    statuses.report(
+      "tab-1",
+      { ...working, subagents: [{ ...explore, state: "waiting", lastAction: "Bash(git push)" }] },
+      9_000,
+    );
+
+    expect(statuses.snapshot().get("tab-1")?.subagents[0]).toMatchObject({
+      state: "waiting",
+      started: 1_000,
+      ended: null,
+    });
+  });
+
   it("zählt Subagenten nicht als Agenten", () => {
     const statuses = new AgentStatuses();
 
