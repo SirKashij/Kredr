@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import {
   countStates,
   duration,
   subagentLabel,
+  subagentsInOrder,
   subagentTooltip,
   useAgentStatuses,
   type AgentState,
@@ -10,7 +11,7 @@ import {
   type AgentStatuses,
   type SubagentStatus,
 } from "./agentStatus";
-import { plural, useT, type MessageKey } from "./i18n/i18n";
+import { plural, useT, type MessageKey, type Translate } from "./i18n/i18n";
 
 const labels: Record<AgentState, MessageKey> = {
   working: "agentStatus.working",
@@ -78,31 +79,115 @@ function Runtime({ since, until = null }: { since: number; until?: number | null
   return <small>{t(key, values)}</small>;
 }
 
+/** Wie viele Subagenten eine Karte zeigt, bis „+ N weitere“ sie aufklappt. */
+const VISIBLE_SUBAGENTS = 3;
+
+/** Ein Teil der Zusammenfassung; mit `state` in der Farbe dieses Zustands. */
+export interface SummaryPart {
+  text: string;
+  state: AgentState | null;
+}
+
+/**
+ * Die Zusammenfassung eingeklappter Subagenten, etwa „6 Subagenten · 3
+ * arbeiten“: die Anzahl, dann die wartenden und die arbeitenden, ohne beide
+ * „alle fertig“.
+ */
+export function subagentSummary(t: Translate, subagents: readonly SubagentStatus[]): SummaryPart[] {
+  const counts: Record<AgentState, number> = { working: 0, waiting: 0, done: 0 };
+  for (const { state } of subagents) counts[state]++;
+  const parts: SummaryPart[] = [
+    {
+      text: plural(t, subagents.length, "agent.subagents.count.one", "agent.subagents.count.other"),
+      state: null,
+    },
+  ];
+  for (const state of ["waiting", "working"] as const) {
+    if (counts[state] > 0)
+      parts.push({ text: plural(t, counts[state], ...counters[state]), state });
+  }
+  if (parts.length === 1) parts.push({ text: t("agent.subagents.allDone"), state: null });
+  return parts;
+}
+
 /**
  * Der Abschnitt „Subagenten“ auf der Karte eines Agenten: je Subagent
  * Farbpunkt, Beschreibung und Laufzeit, Typ und letzte Aktion im Tooltip.
- * Ein Klick auf eine Zeile wirkt wie ein Klick auf die Karte. Ohne
+ * Wartende stehen vor arbeitenden, diese vor fertigen. Von mehr als drei
+ * Subagenten zeigt „+ N weitere“ den Rest. Der Pfeil an der Überschrift
+ * klappt den Abschnitt zu einer Zusammenfassung ein. Ein Klick auf eine
+ * Zeile wirkt wie ein Klick auf die Karte, Pfeil und „weitere“ nicht. Ohne
  * Subagenten erscheint nichts.
  */
-export function SubagentSection({ subagents }: { subagents: readonly SubagentStatus[] }) {
+export function SubagentSection({
+  subagents,
+  collapsed,
+  onToggleCollapsed,
+}: {
+  subagents: readonly SubagentStatus[];
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+}) {
   const t = useT();
+  const [all, setAll] = useState(false);
   if (subagents.length === 0) return null;
+  const ordered = subagentsInOrder(subagents);
+  const shown = all ? ordered : ordered.slice(0, VISIBLE_SUBAGENTS);
+  const hidden = ordered.length - shown.length;
   return (
     <span className="subagents">
-      <span className="subagents-head">{t("agent.subagents")}</span>
-      {subagents.map((subagent) => (
-        <span
-          key={subagent.id}
-          className={`subagent ${subagent.state}`}
-          title={subagentTooltip(subagent)}
+      <span className="subagents-head">
+        <button
+          className="toggle"
+          aria-expanded={!collapsed}
+          aria-label={t(collapsed ? "agent.subagents.expand" : "agent.subagents.collapse")}
+          title={t(collapsed ? "agent.subagents.expand" : "agent.subagents.collapse")}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleCollapsed();
+          }}
         >
-          <span className={`dot small ${subagent.state}`} />
-          <span className="description">{subagentLabel(subagent)}</span>
-          <Runtime since={subagent.started} until={subagent.ended} />
-        </span>
-      ))}
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M2 3.5 5 6.5 8 3.5" />
+          </svg>
+        </button>
+        {collapsed ? <Summary parts={subagentSummary(t, subagents)} /> : t("agent.subagents")}
+      </span>
+      {!collapsed &&
+        shown.map((subagent) => (
+          <span
+            key={subagent.id}
+            className={`subagent ${subagent.state}`}
+            title={subagentTooltip(subagent)}
+          >
+            <span className={`dot small ${subagent.state}`} />
+            <span className="description">{subagentLabel(subagent)}</span>
+            <Runtime since={subagent.started} until={subagent.ended} />
+          </span>
+        ))}
+      {!collapsed && (hidden > 0 || all) && ordered.length > VISIBLE_SUBAGENTS && (
+        <button
+          className="more"
+          onClick={(event) => {
+            event.stopPropagation();
+            setAll(!all);
+          }}
+        >
+          {all ? t("agent.subagents.less") : t("agent.subagents.more", { count: String(hidden) })}
+        </button>
+      )}
     </span>
   );
+}
+
+/** Die Zusammenfassung eingeklappter Subagenten, Teile durch „·“ getrennt. */
+function Summary({ parts }: { parts: readonly SummaryPart[] }) {
+  return parts.map((part, index) => (
+    <Fragment key={index}>
+      {index > 0 && " · "}
+      <span className={part.state ?? undefined}>{part.text}</span>
+    </Fragment>
+  ));
 }
 
 /**
