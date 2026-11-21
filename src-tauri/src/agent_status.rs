@@ -29,7 +29,7 @@ const HOOK_TIMEOUT: u32 = 5;
 
 /// Ereignisse, die Claude Code ohne Einschränkung meldet.
 /// `SessionStart` fehlt: Claude Code meldet es nur Befehls-Hooks, nicht per HTTP.
-const EVENTS: [&str; 8] = [
+const EVENTS: [&str; 10] = [
     "UserPromptSubmit",
     "PreToolUse",
     "PostToolUse",
@@ -38,7 +38,12 @@ const EVENTS: [&str; 8] = [
     "Stop",
     "StopFailure",
     "SessionEnd",
+    "SubagentStart",
+    "SubagentStop",
 ];
+/// Womit der Prompt beginnt, mit dem Claude Code den Agenten über das Ende
+/// eines Subagenten unterrichtet. Er stammt nicht von der Person.
+const TASK_NOTIFICATION: &str = "<task-notification>";
 /// Meldungen, mit denen Claude Code den Nutzer um eine Eingabe bittet.
 const WAITING_NOTIFICATIONS: [&str; 4] = [
     "permission_prompt",
@@ -50,10 +55,11 @@ const WAITING_NOTIFICATIONS: [&str; 4] = [
 const IDLE_NOTIFICATION: &str = "idle_prompt";
 
 /// Der Zustand eines Agenten aus Sicht der Person.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AgentState {
     /// Kein erkannter Agent, oder er hat sich noch nicht gemeldet.
+    #[default]
     Unknown,
     Working,
     Done,
@@ -172,22 +178,54 @@ struct Registration {
 }
 
 /// Was Kredr über den Agenten eines Terminals weiß.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 struct Known {
-    /// Der Agentenstatus.
+    /// Der Agentenstatus nach den eigenen Meldungen des Agenten.
     state: AgentState,
     /// Was der Agent zuletzt getan, gefragt oder gesagt hat.
     last_action: Option<String>,
+    /// Die offenen Rückfragen von Subagenten, die älteste zuerst. Sie
+    /// stehen im Terminal des Agenten, er wartet also.
+    questions: Vec<Question>,
     /// Der Auftrag des laufenden Gesprächs.
     assignment: Option<String>,
     /// Die Kennung des laufenden Gesprächs.
     conversation: Option<String>,
 }
 
+/// Eine Rückfrage, die ein Subagent im Terminal seines Agenten stellt.
+#[derive(Clone, PartialEq, Eq)]
+struct Question {
+    /// Die Kennung des Subagenten (`agent_id`).
+    subagent: String,
+    /// Wonach er fragt, wie die letzte Aktion.
+    action: Option<String>,
+}
+
+impl Known {
+    /// Zustand und letzte Aktion, wie die Person sie sieht: Eine offene
+    /// Rückfrage eines Subagenten geht vor.
+    fn shown(&self) -> (AgentState, Option<String>) {
+        match self.questions.first() {
+            Some(question) => (AgentState::Waiting, question.action.clone()),
+            None => (self.state, self.last_action.clone()),
+        }
+    }
+}
+
 impl Registration {
-    /// Übernimmt den neuen Stand und meldet ihn, wenn sich etwas geändert hat.
+    /// Übernimmt den neuen Stand und meldet ihn, wenn sich für die Person
+    /// etwas geändert hat.
     fn apply(&mut self, next: Known) {
-        if next == self.known {
+        let visible = |known: &Known| {
+            (
+                known.shown(),
+                known.assignment.clone(),
+                known.conversation.clone(),
+            )
+        };
+        if visible(&next) == visible(&self.known) {
+            self.known = next;
             return;
         }
         self.report(next, false);
@@ -195,25 +233,19 @@ impl Registration {
 
     /// Das Gespräch ließ sich nicht fortsetzen: Kredr vergisst es und meldet das.
     fn fail_resume(&mut self) {
-        let nothing = Known {
-            state: AgentState::Unknown,
-            last_action: None,
-            assignment: None,
-            conversation: None,
-        };
-        self.report(nothing, true);
+        self.report(Known::default(), true);
     }
 
     fn report(&mut self, next: Known, resume_failed: bool) {
-        let state_changed = next.state != self.known.state;
+        let (before, _) = self.known.shown();
         self.known = next;
-        let known = self.known.clone();
+        let (state, last_action) = self.known.shown();
         (self.on_update)(StatusUpdate {
-            state: known.state,
-            last_action: known.last_action,
-            state_changed,
-            assignment: known.assignment,
-            conversation: known.conversation,
+            state,
+            last_action,
+            state_changed: state != before,
+            assignment: self.known.assignment.clone(),
+            conversation: self.known.conversation.clone(),
             resume_failed,
         });
     }
@@ -289,10 +321,9 @@ impl AgentStatus {
             settings: settings.clone(),
             started: resumed.is_none(),
             known: Known {
-                state: AgentState::Unknown,
-                last_action: None,
                 assignment: resumed.as_ref().and_then(|r| r.assignment.clone()),
                 conversation: resumed.map(|r| r.conversation),
+                ..Known::default()
             },
             on_update: Box::new(on_update),
         };
@@ -311,12 +342,7 @@ impl AgentStatus {
             return;
         };
         if let Some(mut registration) = registrations.remove(&terminal) {
-            registration.apply(Known {
-                state: AgentState::Unknown,
-                last_action: None,
-                assignment: None,
-                conversation: None,
-            });
+            registration.apply(Known::default());
             let _ = std::fs::remove_file(&registration.settings);
         }
     }
@@ -364,29 +390,78 @@ fn receive(registrations: &Registrations, url: &str, body: Option<&String>) -> b
             registration.fail_resume();
             return true;
         }
-        let known = &registration.known;
-        let status = next_status(known.state, &known.last_action, &event);
-        let (state, last_action) =
-            status.unwrap_or_else(|| (known.state, known.last_action.clone()));
-        let next = Known {
-            state,
-            last_action,
-            assignment: next_assignment(&known.assignment, &event),
-            conversation: next_conversation(&known.conversation, &event),
-        };
+        let next = next_known(&registration.known, &event);
         registration.apply(next);
     }
     true
 }
 
+/// Was Kredr nach dem Ereignis `event` über den Agenten weiß.
+fn next_known(known: &Known, event: &Value) -> Known {
+    let subagent = event["agent_id"].as_str().filter(|id| !id.is_empty());
+    let mut next = known.clone();
+    match subagent {
+        // Ereignisse eines Subagenten ändern Status und letzte Aktion des
+        // Agenten nicht. Nur seine Rückfragen stehen im Terminal des Agenten.
+        Some(subagent) => {
+            next.questions
+                .retain(|question| question.subagent != subagent);
+            if let Some(action) = question_of(event) {
+                next.questions.push(Question {
+                    subagent: subagent.to_owned(),
+                    action,
+                });
+            }
+        }
+        None => {
+            // Ohne Kennung meldet Claude Code auch Rückfragen eines
+            // Subagenten noch einmal; die ist schon bekannt.
+            let repeated = !known.questions.is_empty()
+                && event["hook_event_name"] == "Notification"
+                && event["notification_type"]
+                    .as_str()
+                    .is_some_and(|kind| WAITING_NOTIFICATIONS.contains(&kind));
+            let status = (!repeated)
+                .then(|| next_status(known.state, &known.last_action, event))
+                .flatten();
+            if let Some((state, last_action)) = status {
+                next.state = state;
+                next.last_action = last_action;
+            }
+            if event["hook_event_name"] == "SessionEnd" {
+                next.questions.clear();
+            }
+        }
+    }
+    next.assignment = next_assignment(&known.assignment, event);
+    next.conversation = next_conversation(&known.conversation, event);
+    next
+}
+
+/// Die Rückfrage, die das Ereignis `event` an die Person stellt, als letzte
+/// Aktion; `None`, wenn es keine Rückfrage ist.
+fn question_of(event: &Value) -> Option<Option<String>> {
+    match event["hook_event_name"].as_str()? {
+        "PermissionRequest" => Some(tool_action(event)),
+        "PreToolUse" if event["tool_name"] == "AskUserQuestion" => Some(
+            event["tool_input"]["questions"][0]["question"]
+                .as_str()
+                .and_then(one_line)
+                .or_else(|| tool_action(event)),
+        ),
+        _ => None,
+    }
+}
+
 /// Der Auftrag nach dem Ereignis `event`: Nur der erste Prompt einer Sitzung
-/// zählt. Mit dem Ende der Sitzung, auch durch `/clear`, ist er vergessen;
-/// der nächste Prompt beginnt die neue Sitzung.
+/// zählt, der von der Person kommt. Mit dem Ende der Sitzung, auch durch
+/// `/clear`, ist er vergessen; der nächste Prompt beginnt die neue Sitzung.
 fn next_assignment(assignment: &Option<String>, event: &Value) -> Option<String> {
     match event["hook_event_name"].as_str() {
         Some("UserPromptSubmit") if assignment.is_none() => {
             let prompt = event["prompt"].as_str()?.trim();
-            (!prompt.is_empty()).then(|| prompt.to_owned())
+            (!prompt.is_empty() && !prompt.starts_with(TASK_NOTIFICATION))
+                .then(|| prompt.to_owned())
         }
         Some("SessionEnd") => None,
         _ => assignment.clone(),
@@ -414,17 +489,13 @@ fn next_status(
     event: &Value,
 ) -> Option<(AgentState, Option<String>)> {
     let text = |field: &str| event[field].as_str().and_then(one_line);
+    if let Some(question) = question_of(event) {
+        return Some((AgentState::Waiting, question));
+    }
     match event["hook_event_name"].as_str()? {
         "UserPromptSubmit" => Some((AgentState::Working, None)),
-        "PreToolUse" if event["tool_name"] == "AskUserQuestion" => {
-            let question = event["tool_input"]["questions"][0]["question"]
-                .as_str()
-                .and_then(one_line);
-            Some((AgentState::Waiting, question.or_else(|| tool_action(event))))
-        }
         "PreToolUse" => Some((AgentState::Working, tool_action(event))),
         "PostToolUse" | "PostToolUseFailure" => Some((AgentState::Working, last_action.clone())),
-        "PermissionRequest" => Some((AgentState::Waiting, tool_action(event))),
         "Notification" => {
             let kind = event["notification_type"].as_str()?;
             if WAITING_NOTIFICATIONS.contains(&kind) {
