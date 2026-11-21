@@ -187,6 +187,7 @@
   "agent.newTooltip": "Neuer Agent (Strg+Umschalt+A)",
   "agent.name": "Agent",
   "agent.interrupted": "Beim Schließen unterbrochen",
+  "agent.subagents": "Subagenten",
   "agent.closeWindowConfirm.title": "Fenster schließen?",
   "agent.closeWindowConfirm.message": "Mindestens ein Agent arbeitet noch. Beim Schließen wird er unterbrochen; beim nächsten Öffnen des Projekts wird sein Gespräch fortgesetzt, er arbeitet aber nicht von selbst weiter.",
   "agent.missing": "Das Programm „{program}“ wurde im Suchpfad nicht gefunden. Der Agent-Startbefehl wurde trotzdem ausgeführt: Ist „{program}“ ein Alias oder eine Funktion deiner Shell, läuft der Agent. Meldet die Shell einen Fehler, installiere Claude Code oder ändere den Agent-Startbefehl in den Einstellungen und wähle dann erneut „Neuer Agent“.",

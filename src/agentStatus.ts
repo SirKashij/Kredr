@@ -12,6 +12,57 @@ export interface AgentStatus {
   lastAction: string | null;
   /** Seit wann der Zustand gilt (Millisekunden wie `Date.now()`). */
   since: number;
+  /** Die Subagenten des Agenten in der Reihenfolge ihres Starts. */
+  subagents: readonly SubagentStatus[];
+}
+
+/** Die Zustände eines Subagenten. */
+export type SubagentState = "working" | "done";
+
+/** Ein Subagent, wie der Kern ihn meldet. */
+export interface SubagentUpdate {
+  /** Die Kennung, mit der Claude Code ihn meldet; eindeutig je Agent. */
+  id: string;
+  /** Sein Typ, etwa `Explore`. */
+  kind: string;
+  /** Die Beschreibung, die der Agent ihm mitgegeben hat, falls bekannt. */
+  description: string | null;
+  state: SubagentState;
+  /** Was der Subagent zuletzt getan oder am Ende gesagt hat. */
+  lastAction: string | null;
+}
+
+/** Ein Subagent in der Agenten-Ansicht. */
+export interface SubagentStatus extends SubagentUpdate {
+  /** Seit wann er bekannt ist (Millisekunden wie `Date.now()`). */
+  started: number;
+  /** Wann er fertig wurde; `null`, solange er arbeitet. */
+  ended: number | null;
+}
+
+/** Was eine Zeile eines Subagenten nennt: die Beschreibung, ohne sie den Typ. */
+export function subagentLabel(subagent: SubagentUpdate): string {
+  return subagent.description ?? subagent.kind;
+}
+
+/** Der Tooltip einer Zeile eines Subagenten: Typ und letzte Aktion. */
+export function subagentTooltip(subagent: SubagentUpdate): string {
+  return [subagent.kind, subagent.lastAction].filter(Boolean).join(" · ");
+}
+
+/** Die Subagenten nach `update`; Zeitpunkte bekannter Subagenten bleiben. */
+function nextSubagents(
+  previous: readonly SubagentStatus[],
+  update: readonly SubagentUpdate[],
+  now: number,
+): SubagentStatus[] {
+  const known = new Map(previous.map((subagent) => [subagent.id, subagent]));
+  return update.map((subagent) => {
+    const before = known.get(subagent.id);
+    const started = before?.started ?? now;
+    const ended = subagent.state === "working" ? null : (before?.ended ?? now);
+    return { ...subagent, started, ended };
+  });
 }
 
 /** Was der Kern bei jeder Änderung des Agentenstatus eines Terminals meldet. */
@@ -26,6 +77,8 @@ export interface StatusUpdate {
   conversation: string | null;
   /** Ob sich das Gespräch, mit dem der Agent startete, nicht fortsetzen ließ. */
   resumeFailed: boolean;
+  /** Die laufenden und die seit dem letzten Prompt der Person fertigen Subagenten. */
+  subagents: readonly SubagentUpdate[];
 }
 
 /**
@@ -68,7 +121,8 @@ export class AgentStatuses {
     } else {
       const previous = this.statuses.get(tabId);
       const since = previous?.state === update.state ? previous.since : now;
-      next.set(tabId, { state: update.state, lastAction: update.lastAction, since });
+      const subagents = nextSubagents(previous?.subagents ?? [], update.subagents, now);
+      next.set(tabId, { state: update.state, lastAction: update.lastAction, since, subagents });
     }
     this.replace(next);
   }

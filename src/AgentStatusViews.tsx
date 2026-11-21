@@ -2,10 +2,13 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   countStates,
   duration,
+  subagentLabel,
+  subagentTooltip,
   useAgentStatuses,
   type AgentState,
   type AgentStatus,
   type AgentStatuses,
+  type SubagentStatus,
 } from "./agentStatus";
 import { plural, useT, type MessageKey } from "./i18n/i18n";
 
@@ -61,17 +64,45 @@ export function AgentDot({
   return status ? <Dot state={status.state} /> : fallback;
 }
 
-/** Die Laufzeit seit `since`; zählt sichtbar weiter. */
-function Runtime({ since }: { since: number }) {
+/** Die Laufzeit seit `since`; zählt sichtbar weiter, bis `until` sie anhält. */
+function Runtime({ since, until = null }: { since: number; until?: number | null }) {
   const t = useT();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
+    if (until !== null) return;
     setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [since]);
-  const { key, values } = duration(now - since);
+  }, [since, until]);
+  const { key, values } = duration((until ?? now) - since);
   return <small>{t(key, values)}</small>;
+}
+
+/**
+ * Der Abschnitt „Subagenten“ auf der Karte eines Agenten: je Subagent
+ * Farbpunkt, Beschreibung und Laufzeit, Typ und letzte Aktion im Tooltip.
+ * Ein Klick auf eine Zeile wirkt wie ein Klick auf die Karte. Ohne
+ * Subagenten erscheint nichts.
+ */
+export function SubagentSection({ subagents }: { subagents: readonly SubagentStatus[] }) {
+  const t = useT();
+  if (subagents.length === 0) return null;
+  return (
+    <span className="subagents">
+      <span className="subagents-head">{t("agent.subagents")}</span>
+      {subagents.map((subagent) => (
+        <span
+          key={subagent.id}
+          className={`subagent ${subagent.state}`}
+          title={subagentTooltip(subagent)}
+        >
+          <span className={`dot small ${subagent.state}`} />
+          <span className="description">{subagentLabel(subagent)}</span>
+          <Runtime since={subagent.started} until={subagent.ended} />
+        </span>
+      ))}
+    </span>
+  );
 }
 
 /**
