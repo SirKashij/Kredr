@@ -10,6 +10,7 @@ import { useSettings } from "./settings";
 import { tabLabel, visibleAssignment } from "./tabLabel";
 import type { ChangedFile } from "./versionControlState";
 import { VersionControlView } from "./VersionControlView";
+import { isInterrupted } from "./windowAgents";
 
 /** Zwischen diesen Breiten lässt sich die Seitenleiste ziehen (in Pixeln). */
 const MIN_WIDTH = 170;
@@ -190,9 +191,8 @@ function AgentsView({
     const status = known.get(tab.id);
     const classes = ["card", status?.state === "waiting" && "wait", tab.id === selected && "sel"];
     const assignment = visibleAssignment(tab, settings.showAssignment);
-    // Arbeitete der Agent beim Schließen, hat er sich seit dem Fortsetzen noch
-    // nicht gemeldet: Das steht an Stelle der letzten Aktion.
-    const interrupted = !status && tab.conversation?.working;
+    // Steht an Stelle der letzten Aktion, bis sich der Agent meldet.
+    const interrupted = isInterrupted(tab, known);
     // Die Karte selbst ist kein Knopf, damit keine Knöpfe in einem Knopf
     // stehen: Ihr oberer Teil und jede Zeile eines Subagenten sind je ein
     // Knopf, ihre Klicks gehen an die Karte. Pfeil und „weitere“ halten ihre

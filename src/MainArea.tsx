@@ -29,7 +29,8 @@ import { AgentDot } from "./AgentStatusViews";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { useT } from "./i18n/i18n";
 import type { OpenFiles } from "./openFiles";
-import type { RunningTerminals } from "./runningTerminals";
+import type { AgentStatuses } from "./agentStatus";
+import type { RunningTerminal, RunningTerminals } from "./runningTerminals";
 import { ContentTabBody, ContentTabFace, type ContentTab } from "./tabViews";
 import { useSettings } from "./settings";
 import type { Shell } from "./settingsStore";
@@ -37,6 +38,7 @@ import { shellLabel, tabLabel, terminalTabLabel } from "./tabLabel";
 import { UnmountedContentGuard, TabErrorBoundary } from "./TabErrorBoundary";
 import { TerminalView } from "./TerminalView";
 import { useTabDrag, type TabDrag } from "./useTabDrag";
+import type { WindowAgents } from "./windowAgents";
 
 /** Schmaler lässt sich eine Gruppe mit der Trennlinie nicht ziehen (in Pixeln). */
 const MIN_GROUP_SIZE = 80;
@@ -44,6 +46,10 @@ const MIN_GROUP_SIZE = 80;
 interface MainAreaProps {
   arrangement: Arrangement;
   terminals: RunningTerminals;
+  /** Die Agenten des Fensters; über sie entsteht das Terminal eines Tabs. */
+  agents: WindowAgents<RunningTerminal>;
+  /** Der Agentenstatus der Terminals des Fensters. */
+  statuses: AgentStatuses;
   /** Die offenen Dateien der Dateiansichten. */
   files: OpenFiles;
   /** Der Ordner des Projekts; darin starten die Terminals. */
@@ -367,7 +373,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
                 <ContentTabFace tab={tab} files={shared.files} />
               ) : tab.agent ? (
                 <AgentDot
-                  statuses={shared.terminals.statuses}
+                  statuses={shared.statuses}
                   tabId={tab.id}
                   fallback={
                     <span className="tab-icon agent">
@@ -486,9 +492,9 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
       />
     ) : (
       <TerminalView
-        terminals={shared.terminals}
+        agents={shared.agents}
         tab={activeTab}
-        cwd={activeTab.cwd ?? shared.cwd}
+        project={shared.cwd}
         // Solange ein Tab seinen Namen erhält, gehören die Eingaben dem Eingabefeld.
         focused={group.id === arrangement.focusedGroup && renaming === null}
         focusRequest={shared.focusRequest}

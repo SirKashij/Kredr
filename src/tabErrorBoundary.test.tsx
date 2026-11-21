@@ -14,9 +14,10 @@ import {
   type Arrangement,
 } from "./arrangement";
 import type { OpenFiles } from "./openFiles";
-import type { RunningTerminals } from "./runningTerminals";
+import type { RunningTerminal, RunningTerminals } from "./runningTerminals";
 import { defaultSettings } from "./settingsStore";
 import type { ContentTab } from "./tabViews";
+import { WindowAgents } from "./windowAgents";
 
 /** Wann der Inhalt des Datei-Tabs wirft; `null` heißt: gar nicht. */
 let failure: "render" | "effect" | "cleanup" | null = null;
@@ -58,7 +59,7 @@ function fakeTerminals() {
     created,
     /** Jedes gelungene Einhängen einer Ansicht, nach Tab. */
     attached: [] as string[],
-    get(tabId: string) {
+    open(tabId: string) {
       let terminal = running.get(tabId);
       if (!terminal) {
         created.push(tabId);
@@ -86,6 +87,7 @@ function fakeTerminals() {
     find(tabId: string) {
       return running.get(tabId);
     },
+    startNow() {},
   };
   return terminals;
 }
@@ -94,11 +96,18 @@ let root: Root;
 let host: HTMLElement;
 let uncaught: unknown[];
 let terminals: ReturnType<typeof fakeTerminals>;
+let agents: WindowAgents<RunningTerminal>;
 
 beforeEach(() => {
   failure = null;
   uncaught = [];
   terminals = fakeTerminals();
+  agents = new WindowAgents({
+    terminals: terminals as unknown as RunningTerminals,
+    statuses: terminals.statuses,
+    change: () => {},
+    settings: () => defaultSettings,
+  });
   vi.spyOn(console, "error").mockImplementation(() => {});
   host = document.createElement("div");
   document.body.append(host);
@@ -127,6 +136,8 @@ async function show(arrangement: Arrangement) {
       <MainArea
         arrangement={arrangement}
         terminals={terminals as unknown as RunningTerminals}
+        agents={agents}
+        statuses={terminals.statuses}
         files={{} as OpenFiles}
         cwd="C:/proj"
         shells={[]}

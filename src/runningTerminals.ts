@@ -4,8 +4,9 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal } from "@xterm/xterm";
-import { conversationOf, type AgentStatuses, type StatusUpdate } from "./agentStatus";
+import type { StatusUpdate } from "./agentStatus";
 import type { Conversation } from "./arrangement";
+import type { AgentTerminals } from "./windowAgents";
 import type { Translate } from "./i18n/i18n";
 import type { Shell } from "./settingsStore";
 import { shellLabel } from "./tabLabel";
@@ -34,12 +35,12 @@ export interface TerminalStart {
   resume?: Conversation;
 }
 
-/** Was ein Terminal über seinen Agenten meldet. */
-interface AgentEvents {
-  /** Erhält jede Änderung des Agentenstatus. */
+/** Was ein Terminal über seinen Agenten meldet, so wie der Kern es schickt. */
+export interface AgentSignals {
+  /** Jede Meldung des Agentenstatus, auch die über ein Gespräch, das sich nicht fortsetzen ließ. */
   onStatus(update: StatusUpdate): void;
-  /** Der Agent konnte sein Gespräch nicht fortsetzen; die Shell läuft ohne ihn weiter. */
-  onResumeFailed(): void;
+  /** Die Shell läuft; `agentStarted` sagt, ob mit ihr ein Agent gestartet ist. */
+  onOpened(agentStarted: boolean): void;
 }
 
 /** Terminalfarben des dunklen VS-Code-Standardthemas. */
@@ -123,7 +124,7 @@ export class RunningTerminal {
   constructor(
     private readonly options: TerminalStart,
     private readonly host: TerminalHost,
-    private readonly agentEvents: AgentEvents,
+    private readonly signals: AgentSignals,
   ) {
     this.screen.className = "terminal-screen";
     this.element.append(this.screen);
@@ -255,8 +256,7 @@ export class RunningTerminal {
     });
     const onAgentStatus = new Channel<StatusUpdate>((update) => {
       if (this.closed) return;
-      if (update.resumeFailed) this.agentEvents.onResumeFailed();
-      else this.agentEvents.onStatus(update);
+      this.signals.onStatus(update);
     });
     const { cols, rows } = this.xterm;
     this.sentSize = `${cols}x${rows}`;
@@ -272,9 +272,7 @@ export class RunningTerminal {
           return;
         }
         this.id = id;
-        // Ohne `claude` im Startbefehl lässt sich das Gespräch nicht fortsetzen.
-        // Findet Claude Code es nicht, meldet das der Agentenstatus.
-        if (resume && !agentStarted) this.agentEvents.onResumeFailed();
+        this.signals.onOpened(agentStarted);
         // Die Gruppe kann ihre Größe geändert haben, während die Shell startete.
         this.resize();
         if (this.earlyInput) this.write(this.earlyInput);
@@ -414,44 +412,24 @@ function unseenHost(): HTMLElement {
   return unseen;
 }
 
-/** Was die Aufteilung von den Agenten in ihren Terminals erfährt, nach der Kennung ihres Tabs. */
-export interface ConversationListener {
-  /** Das Gespräch des Agenten nach einer Meldung; ohne Gespräch `undefined`. */
-  onConversation(tabId: string, conversation?: Conversation): void;
-  /** Das Gespräch ließ sich nicht fortsetzen; der Tab wird ein gewöhnliches Terminal. */
-  onResumeFailed(tabId: string): void;
-}
-
-/** Die laufenden Terminals eines Fensters, nach der Kennung ihres Tabs. */
-export class RunningTerminals {
+/**
+ * Die laufenden Terminals eines Fensters, nach der Kennung ihres Tabs. Was
+ * ihre Agenten melden, reichen sie nur durch; gedeutet wird es in `windowAgents`.
+ */
+export class RunningTerminals implements AgentTerminals<RunningTerminal> {
   private readonly terminals = new Map<string, RunningTerminal>();
   private font: { family: string; size: number } | null = null;
 
-  /**
-   * @param statuses Nimmt den Agentenstatus der Terminals auf, nach der
-   *   Kennung ihres Tabs.
-   * @param agents Erfährt, was die Aufteilung sich von den Agenten merkt.
-   */
-  constructor(
-    private readonly host: TerminalHost,
-    readonly statuses: AgentStatuses,
-    private readonly agents: ConversationListener,
-  ) {}
+  constructor(private readonly host: TerminalHost) {}
 
-  /** Das Terminal des Tabs; gibt es noch keines, entsteht es und startet mit `start`. */
-  get(tabId: string, start: TerminalStart): RunningTerminal {
-    let terminal = this.terminals.get(tabId);
-    if (!terminal) {
-      terminal = new RunningTerminal(start, this.host, {
-        onStatus: (update) => {
-          this.statuses.report(tabId, update);
-          this.agents.onConversation(tabId, conversationOf(update));
-        },
-        onResumeFailed: () => this.agents.onResumeFailed(tabId),
-      });
-      if (this.font) terminal.setFont(this.font.family, this.font.size);
-      this.terminals.set(tabId, terminal);
-    }
+  /**
+   * Legt das Terminal eines Tabs an, der noch keines hat; seine Shell startet
+   * beim ersten Anzeigen oder mit `startNow`.
+   */
+  open(tabId: string, start: TerminalStart, signals: AgentSignals): RunningTerminal {
+    const terminal = new RunningTerminal(start, this.host, signals);
+    if (this.font) terminal.setFont(this.font.family, this.font.size);
+    this.terminals.set(tabId, terminal);
     return terminal;
   }
 
@@ -462,8 +440,8 @@ export class RunningTerminals {
   }
 
   /** Startet das Terminal des Tabs sofort, auch wenn sein Tab gerade verdeckt ist. */
-  startNow(tabId: string, start: TerminalStart) {
-    this.get(tabId, start).startUnseen();
+  startNow(tabId: string) {
+    this.terminals.get(tabId)?.startUnseen();
   }
 
   find(tabId: string): RunningTerminal | undefined {
@@ -489,6 +467,5 @@ export class RunningTerminals {
       terminal.dispose();
       this.terminals.delete(tabId);
     }
-    this.statuses.retain(tabIds);
   }
 }

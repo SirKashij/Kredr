@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   AgentStatuses,
-  conversationOf,
   countStates,
   duration,
   subagentLabel,
@@ -100,25 +99,6 @@ describe("Agentenstatus eines Fensters", () => {
       9_000,
     );
     expect(statuses.snapshot().get("tab-1")?.since).toBe(9_000);
-  });
-
-  it("ergibt aus jeder Meldung das Gespräch samt Auftrag, das die Aufteilung sich merkt", () => {
-    const update = { ...working, assignment: "Baue 24", conversation: "abc-123" };
-
-    expect(conversationOf(update)).toEqual({
-      agent: "claudeCode",
-      id: "abc-123",
-      assignment: "Baue 24",
-      working: true,
-    });
-    expect(conversationOf({ ...update, state: "done", assignment: null })).toEqual({
-      agent: "claudeCode",
-      id: "abc-123",
-    });
-    // Ohne Kennung ist der Agent beendet: kein Gespräch mehr.
-    expect(
-      conversationOf({ ...update, state: "unknown", conversation: null, resumeFailed: false }),
-    ).toBeUndefined();
   });
 
   it("fällt auf „unbekannt“ zurück, wenn sich der Agent beendet", () => {

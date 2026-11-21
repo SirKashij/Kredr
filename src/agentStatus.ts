@@ -1,5 +1,4 @@
 import { useSyncExternalStore } from "react";
-import type { Conversation } from "./arrangement";
 import { plural, type MessageKey, type Translate } from "./i18n/i18n";
 
 /** Die Zustände eines erkannten Agenten; ohne Eintrag ist der Status „unbekannt“. */
@@ -87,18 +86,6 @@ export interface StatusUpdate {
   resumeFailed: boolean;
   /** Die laufenden und die seit dem letzten Prompt der Person fertigen Subagenten. */
   subagents: readonly SubagentUpdate[];
-}
-
-/**
- * Das Gespräch, das sich die Aufteilung nach der Meldung `update` merkt,
- * samt Auftrag und ob der Agent gerade arbeitet. Ohne Gespräch `undefined`.
- */
-export function conversationOf(update: StatusUpdate): Conversation | undefined {
-  if (update.conversation === null) return undefined;
-  const conversation: Conversation = { agent: "claudeCode", id: update.conversation };
-  if (update.assignment) conversation.assignment = update.assignment;
-  if (update.state === "working") conversation.working = true;
-  return conversation;
 }
 
 /** Der Agentenstatus aller Terminals eines Fensters, nach der Kennung ihres Tabs. */

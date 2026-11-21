@@ -1,46 +1,47 @@
 import { useEffect, useRef, type MouseEvent } from "react";
 import type { Tab } from "./arrangement";
-import type { RunningTerminals } from "./runningTerminals";
+import type { RunningTerminal } from "./runningTerminals";
+import type { WindowAgents } from "./windowAgents";
 
 /**
- * Zeigt das Terminal eines Tabs an; seine Shell startet im Ordner `cwd`,
- * in einem Agenten-Tab samt einem Agenten.
- * Mit `focused` erhält es die Tastatureingaben, erneut bei jedem neuen
- * `focusRequest`. Ein Rechtsklick meldet sich über `onContextMenu`.
+ * Zeigt das Terminal eines Tabs an; wie es startet, entscheiden die Agenten
+ * des Fensters. Mit `focused` erhält es die Tastatureingaben, erneut bei
+ * jedem neuen `focusRequest`. Ein Rechtsklick meldet sich über `onContextMenu`.
  */
 export function TerminalView({
-  terminals,
+  agents,
   tab,
-  cwd,
+  project,
   focused,
   focusRequest,
   onContextMenu,
 }: {
-  terminals: RunningTerminals;
+  agents: WindowAgents<RunningTerminal>;
   tab: Tab;
-  cwd: string;
+  /** Der Ordner des Projekts. */
+  project: string;
   focused: boolean;
   focusRequest: number;
   onContextMenu: (event: MouseEvent) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
-  const { id, shell } = tab;
-  const agent = tab.agent ?? false;
-  // Nur das Gespräch beim ersten Anzeigen zählt: Es entscheidet, ob der Agent
-  // es fortsetzt. Spätere Meldungen ändern es, ohne das Terminal neu zu starten.
-  const resume = useRef(tab.conversation).current;
+  const { id } = tab;
+  const terminal = useRef<RunningTerminal | null>(null);
 
+  // Nur das Terminal des Tabs zählt, nicht wie sich der Tab später ändert:
+  // Neu eingehängt würde das Terminal seinen Fokus verlieren.
   useEffect(() => {
     const element = host.current!;
-    const terminal = terminals.get(id, { cwd, shell, agent, resume });
-    terminal.attach(element);
-    return () => terminal.detach(element);
-  }, [terminals, id, cwd, shell, agent, resume]);
+    const shown = agents.terminal(tab, project);
+    terminal.current = shown;
+    shown.attach(element);
+    return () => shown.detach(element);
+  }, [agents, id, project]);
 
   // Erst nach dem Einhängen: Ein Terminal außerhalb des Dokuments nimmt keinen Fokus an.
   useEffect(() => {
-    if (focused) terminals.find(id)?.focus();
-  }, [focused, focusRequest, terminals, id]);
+    if (focused) terminal.current?.focus();
+  }, [focused, focusRequest, id]);
 
   return <div className="terminal-view" ref={host} onContextMenu={onContextMenu} />;
 }
