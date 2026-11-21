@@ -50,6 +50,14 @@ export function subagentTooltip(subagent: SubagentUpdate): string {
   return [subagent.kind, subagent.lastAction].filter(Boolean).join(" · ");
 }
 
+/** Der Rang eines Zustands in der Liste der Subagenten: wartende vor arbeitenden vor fertigen. */
+const subagentRank: Record<SubagentState, number> = { waiting: 0, working: 1, done: 2 };
+
+/** Die Subagenten, wie ihre Zeilen stehen: nach Zustand, sonst in Startreihenfolge. */
+export function subagentsInOrder<T extends SubagentUpdate>(subagents: readonly T[]): T[] {
+  return [...subagents].sort((a, b) => subagentRank[a.state] - subagentRank[b.state]);
+}
+
 /** Die Subagenten nach `update`; Zeitpunkte bekannter Subagenten bleiben. */
 function nextSubagents(
   previous: readonly SubagentStatus[],

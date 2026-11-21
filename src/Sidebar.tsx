@@ -28,6 +28,12 @@ interface AgentsViewProps {
   onNewTerminal?: () => void;
 }
 
+/** Welche Agenten ihre Subagenten eingeklappt zeigen, nach Tab. */
+interface SubagentFolding {
+  collapsedSubagents: ReadonlySet<string>;
+  onToggleSubagents: (tabId: string) => void;
+}
+
 interface SidebarProps extends AgentsViewProps {
   view: View;
   /** Ob die Seitenleiste eingeblendet ist. Ausgeblendet behält sie ihren Zustand. */
@@ -62,6 +68,15 @@ export function Sidebar({
 }: SidebarProps) {
   const t = useT();
   const [width, setWidth] = useState(280);
+  // Hier statt in der Agenten-Ansicht, damit das Einklappen einen Wechsel der
+  // Ansicht übersteht. Es gehört nicht zur Aufteilung und wird nicht gespeichert.
+  const [collapsedSubagents, setCollapsedSubagents] = useState<ReadonlySet<string>>(new Set());
+  const onToggleSubagents = (tabId: string) =>
+    setCollapsedSubagents((collapsed) => {
+      const next = new Set(collapsed);
+      if (!next.delete(tabId)) next.add(tabId);
+      return next;
+    });
   const sidebar = useRef<HTMLElement>(null);
   const title = views.find(({ id }) => id === view)!.label;
   const showsExplorer = view === "explorer" && project !== null;
@@ -79,7 +94,11 @@ export function Sidebar({
       <div className="side-title">{t(title)}</div>
       <div className="side-body" hidden={showsExplorer || showsSearch}>
         {view === "agents" ? (
-          <AgentsView {...agents} />
+          <AgentsView
+            {...agents}
+            collapsedSubagents={collapsedSubagents}
+            onToggleSubagents={onToggleSubagents}
+          />
         ) : view === "versionControl" && project !== null ? (
           <VersionControlView onShowChange={onShowChange} />
         ) : (
@@ -132,7 +151,9 @@ function AgentsView({
   onSelectTab,
   onNewAgent,
   onNewTerminal,
-}: AgentsViewProps) {
+  collapsedSubagents,
+  onToggleSubagents,
+}: AgentsViewProps & SubagentFolding) {
   const t = useT();
   const { settings } = useSettings();
   const known = useAgentStatuses(statuses);
@@ -148,11 +169,20 @@ function AgentsView({
     // Arbeitete der Agent beim Schließen, hat er sich seit dem Fortsetzen noch
     // nicht gemeldet: Das steht an Stelle der letzten Aktion.
     const interrupted = !status && tab.conversation?.working;
+    // Kein `button`: Pfeil und „weitere“ der Subagenten sind eigene Knöpfe.
     return (
-      <button
+      <div
         key={tab.id}
         className={classes.filter(Boolean).join(" ")}
+        role="button"
+        tabIndex={0}
         onClick={() => onSelectTab(tab.id)}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          onSelectTab(tab.id);
+        }}
       >
         <AgentCardTop
           status={status}
@@ -166,8 +196,14 @@ function AgentsView({
         )}
         {status && <AgentCardStatus status={status} />}
         {interrupted && <span className="last">{t("agent.interrupted")}</span>}
-        {status && <SubagentSection subagents={status.subagents} />}
-      </button>
+        {status && (
+          <SubagentSection
+            subagents={status.subagents}
+            collapsed={collapsedSubagents.has(tab.id)}
+            onToggleCollapsed={() => onToggleSubagents(tab.id)}
+          />
+        )}
+      </div>
     );
   };
   return (

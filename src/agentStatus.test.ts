@@ -5,7 +5,9 @@ import {
   countStates,
   duration,
   subagentLabel,
+  subagentsInOrder,
   subagentTooltip,
+  type SubagentState,
 } from "./agentStatus";
 
 const working = {
@@ -306,6 +308,40 @@ describe("Zeile eines Subagenten", () => {
   it("zeigt Typ und letzte Aktion im Tooltip", () => {
     expect(subagentTooltip(subagent)).toBe("Explore · Grep(agent_id)");
     expect(subagentTooltip({ ...subagent, lastAction: null })).toBe("Explore");
+  });
+});
+
+describe("Viele Subagenten", () => {
+  const sub = (id: string, state: SubagentState) =>
+    ({
+      id,
+      kind: "general-purpose",
+      description: id,
+      state,
+      lastAction: null,
+      started: 0,
+      ended: null,
+    }) as const;
+
+  it("stellt arbeitende vor fertige und behält sonst die Startreihenfolge", () => {
+    const ordered = subagentsInOrder([
+      sub("bugs", "done"),
+      sub("standards", "working"),
+      sub("spec", "done"),
+      sub("rust", "working"),
+    ]);
+
+    expect(ordered.map(({ id }) => id)).toEqual(["standards", "rust", "bugs", "spec"]);
+  });
+
+  it("stellt wartende vor arbeitende", () => {
+    const ordered = subagentsInOrder([
+      sub("bugs", "done"),
+      sub("standards", "working"),
+      sub("check", "waiting"),
+    ]);
+
+    expect(ordered.map(({ id }) => id)).toEqual(["check", "standards", "bugs"]);
   });
 });
 
