@@ -7,7 +7,7 @@ import {
   type AgentStatus,
   type AgentStatuses,
 } from "./agentStatus";
-import { useT, type MessageKey } from "./i18n/i18n";
+import { plural, useT, type MessageKey } from "./i18n/i18n";
 
 const labels: Record<AgentState, MessageKey> = {
   working: "agentStatus.working",
@@ -105,7 +105,7 @@ export function WaitingBadge({ statuses }: { statuses: AgentStatuses }) {
   const t = useT();
   const { waiting } = countStates(useAgentStatuses(statuses));
   if (waiting === 0) return null;
-  const text = t(counters.waiting[waiting === 1 ? 0 : 1], { count: String(waiting) });
+  const text = plural(t, waiting, ...counters.waiting);
   return (
     <span className="badge" title={text} aria-label={text}>
       {waiting}
@@ -124,7 +124,7 @@ export function AgentCounters({ statuses }: { statuses: AgentStatuses }) {
         .map((state) => (
           <span key={state} className="agent-count">
             <span className={`dot ${state}`} />
-            {t(counters[state][counts[state] === 1 ? 0 : 1], { count: String(counts[state]) })}
+            {plural(t, counts[state], ...counters[state])}
           </span>
         ))}
     </>

@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   PAGE_SIZE,
@@ -12,27 +11,17 @@ import {
   type Commit,
   type CommitFile,
 } from "./commitHistory";
-import { fileName } from "./filePath";
 import { useLanguage, useT } from "./i18n/i18n";
 import { watchProjectFiles } from "./projectFiles";
-import { useVersionControl, useVersionControlStore, type Diff } from "./versionControl";
+import {
+  loadCommitFiles,
+  loadCommits,
+  useVersionControl,
+  useVersionControlStore,
+} from "./versionControl";
+import { ChangeRow } from "./ChangeRow";
 import { GitError } from "./VersionControlView";
-import { statusLabels, statusLetter, type VersionControlError } from "./versionControlState";
-
-/** Liest Commits des aktuellen Branches, die neuesten zuerst; scheitert mit einem `VersionControlError`. */
-function loadCommits(project: string, skip: number, limit: number): Promise<Commit[]> {
-  return invoke<Commit[]>("version_control_commits", { project, skip, limit });
-}
-
-/** Liest die Dateien, die ein Commit geändert hat. */
-function loadCommitFiles(project: string, commit: string): Promise<CommitFile[]> {
-  return invoke<CommitFile[]>("version_control_commit_files", { project, commit });
-}
-
-/** Liest die beiden Fassungen für den Diff einer Datei eines Commits. */
-export function loadCommitDiff(project: string, commit: string, file: CommitFile): Promise<Diff> {
-  return invoke<Diff>("version_control_commit_diff", { project, commit, file });
-}
+import type { VersionControlError } from "./versionControlState";
 
 /**
  * Die Spalte „Verlauf“ rechts im Tab „Versionskontrolle“: die letzten Commits
@@ -60,11 +49,6 @@ interface Loaded {
 
 /** Die Dateien eines Commits oder warum sie sich nicht lesen ließen. */
 type Files = CommitFile[] | VersionControlError;
-
-/** Der Ordner einer Datei, wie er neben ihrem Namen steht. */
-function folderOf(path: string): string {
-  return path.slice(0, Math.max(0, path.lastIndexOf("/")));
-}
 
 /**
  * Die Liste der Commits. Sie liest sich neu, sobald sich der aktuelle Commit
@@ -256,25 +240,14 @@ function CommitFiles({
   if (files.length === 0) return <p className="hint">{t("versionControl.history.noFiles")}</p>;
   return (
     <div role="list">
-      {files.map((file) => {
-        const status = t(statusLabels[file.status]);
-        const moved = file.originalPath ? `${file.originalPath} → ${file.path}` : file.path;
-        return (
-          <div
-            key={file.path}
-            role="listitem"
-            className={isShown(file) ? "change-row sel" : "change-row"}
-            title={`${moved} · ${status}`}
-            onClick={() => onShow(file)}
-          >
-            <span className={`change-name git-${file.status}`}>{fileName(file.path)}</span>
-            <span className="change-folder">{folderOf(file.path)}</span>
-            <span className={`change-status git-${file.status}`} aria-label={status}>
-              {statusLetter(file.status)}
-            </span>
-          </div>
-        );
-      })}
+      {files.map((file) => (
+        <ChangeRow
+          key={file.path}
+          file={file}
+          selected={isShown(file)}
+          onShow={() => onShow(file)}
+        />
+      ))}
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import { confirm } from "@tauri-apps/plugin-dialog";
 import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
+import { ChangeRow } from "./ChangeRow";
 import { fileName } from "./filePath";
-import { useT } from "./i18n/i18n";
+import { plural, useT } from "./i18n/i18n";
 import { useVersionControl, useVersionControlStore } from "./versionControl";
 import {
   branchLabel,
@@ -15,8 +16,6 @@ import {
   offersPullAndPush,
   operationLabels,
   sameChange,
-  statusLabels,
-  statusLetter,
   type ChangedFile,
   type RepositoryState,
   type VersionControlError,
@@ -52,8 +51,12 @@ export function ChangesBadge() {
   const t = useT();
   const count = changedFileCount(useVersionControl().state);
   if (count === 0) return null;
-  const key = count === 1 ? "versionControl.changeCount.one" : "versionControl.changeCount.other";
-  const text = t(key, { count: String(count) });
+  const text = plural(
+    t,
+    count,
+    "versionControl.changeCount.one",
+    "versionControl.changeCount.other",
+  );
   return (
     <span className="badge changes" title={text} aria-label={text}>
       {count}
@@ -89,11 +92,6 @@ export function BranchStatus({ onToggle }: { onToggle: () => void }) {
       {branch}
     </button>
   );
-}
-
-/** Der Ordner einer Datei, wie er neben ihrem Namen steht. */
-function folderOf(path: string): string {
-  return path.slice(0, Math.max(0, path.lastIndexOf("/")));
 }
 
 /** Ein kleiner Knopf an einer Zeile oder Überschrift der Liste. */
@@ -280,55 +278,45 @@ export function VersionControlView({
           <span className="count">{files.length}</span>
         </div>
         <div role="list">
-          {files.map((file) => {
-            const status = t(statusLabels[file.status]);
-            const moved = file.originalPath ? `${file.originalPath} → ${file.path}` : file.path;
-            return (
-              <div
-                key={file.path}
-                role="listitem"
-                className={sameChange(file, selected) ? "change-row sel" : "change-row"}
-                title={`${moved} · ${status}`}
-                onClick={() => onShowChange(file)}
-              >
-                <span className={`change-name git-${file.status}`}>{fileName(file.path)}</span>
-                <span className="change-folder">{folderOf(file.path)}</span>
-                <span className="change-actions">
-                  {file.staged ? (
-                    <RowAction
-                      label={t("versionControl.unstage")}
-                      disabled={locked}
-                      onAction={() => void store.unstage([file])}
-                    >
-                      −
-                    </RowAction>
-                  ) : (
-                    <>
-                      {file.status !== "conflicted" && (
-                        <RowAction
-                          label={t("versionControl.discard")}
-                          disabled={locked}
-                          onAction={() => void discard(file)}
-                        >
-                          ↶
-                        </RowAction>
-                      )}
+          {files.map((file) => (
+            <ChangeRow
+              key={file.path}
+              file={file}
+              selected={sameChange(file, selected)}
+              onShow={() => onShowChange(file)}
+            >
+              <span className="change-actions">
+                {file.staged ? (
+                  <RowAction
+                    label={t("versionControl.unstage")}
+                    disabled={locked}
+                    onAction={() => void store.unstage([file])}
+                  >
+                    −
+                  </RowAction>
+                ) : (
+                  <>
+                    {file.status !== "conflicted" && (
                       <RowAction
-                        label={t("versionControl.stage")}
+                        label={t("versionControl.discard")}
                         disabled={locked}
-                        onAction={() => void store.stage([file])}
+                        onAction={() => void discard(file)}
                       >
-                        +
+                        ↶
                       </RowAction>
-                    </>
-                  )}
-                </span>
-                <span className={`change-status git-${file.status}`} aria-label={status}>
-                  {statusLetter(file.status)}
-                </span>
-              </div>
-            );
-          })}
+                    )}
+                    <RowAction
+                      label={t("versionControl.stage")}
+                      disabled={locked}
+                      onAction={() => void store.stage([file])}
+                    >
+                      +
+                    </RowAction>
+                  </>
+                )}
+              </span>
+            </ChangeRow>
+          ))}
         </div>
       </>
     );

@@ -27,6 +27,14 @@ export function translate(
   );
 }
 
+/**
+ * Der Text zu einer Anzahl: `one` für genau eins, sonst `other`. Beide nennen
+ * die Anzahl über den Platzhalter `{count}`.
+ */
+export function plural(t: Translate, count: number, one: MessageKey, other: MessageKey): string {
+  return t(count === 1 ? one : other, { count: String(count) });
+}
+
 const I18nContext = createContext<Translate>((key, values) => translate("en", key, values));
 const LanguageContext = createContext<Language>("en");
 

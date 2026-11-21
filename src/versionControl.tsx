@@ -1,7 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
 import type { BranchRow } from "./branches";
-import type { ShownCommitFile } from "./commitHistory";
+import type { Commit, CommitFile, ShownCommitFile } from "./commitHistory";
 import type { FileContent } from "./fileState";
 import {
   followSelection,
@@ -23,6 +23,21 @@ export interface Diff {
 /** Liest die beiden Fassungen für den Diff einer Änderung; scheitert mit einem `VersionControlError`. */
 export function loadDiff(project: string, file: ChangedFile): Promise<Diff> {
   return invoke<Diff>("version_control_diff", { project, file });
+}
+
+/** Liest Commits des aktuellen Branches, die neuesten zuerst; scheitert mit einem `VersionControlError`. */
+export function loadCommits(project: string, skip: number, limit: number): Promise<Commit[]> {
+  return invoke<Commit[]>("version_control_commits", { project, skip, limit });
+}
+
+/** Liest die Dateien, die ein Commit geändert hat. */
+export function loadCommitFiles(project: string, commit: string): Promise<CommitFile[]> {
+  return invoke<CommitFile[]>("version_control_commit_files", { project, commit });
+}
+
+/** Liest die beiden Fassungen für den Diff einer Datei eines Commits. */
+export function loadCommitDiff(project: string, commit: string, file: CommitFile): Promise<Diff> {
+  return invoke<Diff>("version_control_commit_diff", { project, commit, file });
 }
 
 /** Was die Versionskontrolle eines Fensters gerade weiß und zeigt. */

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { editor } from "monaco-editor/editor/editor.api";
-import { CommitHistory, loadCommitDiff } from "./CommitHistoryView";
+import { CommitHistory } from "./CommitHistoryView";
 import { summaryOf, type ShownCommitFile } from "./commitHistory";
 import { fileName, fullPath } from "./filePath";
 import { useT } from "./i18n/i18n";
@@ -8,6 +8,7 @@ import { loadMonaco } from "./monacoLoader";
 import { watchProjectFiles } from "./projectFiles";
 import { useSettings } from "./settings";
 import {
+  loadCommitDiff,
   loadDiff,
   useVersionControl,
   useVersionControlStore,
