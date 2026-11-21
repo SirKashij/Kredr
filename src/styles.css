@@ -41,7 +41,7 @@ body {
   flex-direction: column;
 }
 
-/* Ausgeblendetes bleibt bestehen und behÃ¤lt seinen Zustand. */
+/* Ausgeblendetes bleibt bestehen und behält seinen Zustand. */
 [hidden] {
   display: none !important;
 }
@@ -160,7 +160,7 @@ button {
   color: var(--dim);
 }
 
-/* GreifflÃ¤che am rechten Rand, mit der sich die Breite der Seitenleiste ziehen lÃ¤sst. */
+/* Greiffläche am rechten Rand, mit der sich die Breite der Seitenleiste ziehen lässt. */
 .sash {
   position: absolute;
   z-index: 2;
@@ -183,7 +183,7 @@ button {
   overflow: auto;
 }
 
-/* Die HÃ¶he muss zu ROW_HEIGHT in Explorer.tsx passen. */
+/* Die Höhe muss zu ROW_HEIGHT in Explorer.tsx passen. */
 .tree-row {
   height: 22px;
   display: flex;
