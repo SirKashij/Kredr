@@ -5,6 +5,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
  * VS Code. Pfeiltasten wählen, die Eingabetaste oder ein Klick nimmt die
  * Zeile, Esc oder ein Klick daneben schließt. Was die Eingabe findet und was
  * eine gewählte Zeile auslöst, bestimmt der Aufrufer.
+ *
+ * Ein Knopf, der die Liste ein- und ausblendet, trägt das Attribut
+ * `data-quick-pick-toggle`: Der Klick auf ihn schließt nicht von selbst,
+ * sonst öffnete derselbe Klick die Liste gleich wieder.
  */
 export function QuickPick<Row>({
   placeholder,
@@ -42,7 +46,9 @@ export function QuickPick<Row>({
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
-      if (!box.current!.contains(event.target as Node)) onClose();
+      const target = event.target as Element;
+      if (box.current!.contains(target) || target.closest?.("[data-quick-pick-toggle]")) return;
+      onClose();
     };
     window.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("blur", onClose);

@@ -63,18 +63,22 @@ export function ChangesBadge() {
 
 /**
  * Der aktuelle Branch in der Statusleiste; ohne Repository erscheint nichts.
- * Ein Klick öffnet die Branch-Liste zum Wechseln und Anlegen.
+ * Ein Klick blendet die Branch-Liste zum Wechseln und Anlegen ein oder aus.
+ * Solange eine Operation läuft, ist er gesperrt.
  */
-export function BranchStatus({ onSwitch }: { onSwitch: () => void }) {
+export function BranchStatus({ onToggle }: { onToggle: () => void }) {
   const t = useT();
-  const branch = branchLabel(useVersionControl().state);
+  const { state, busy } = useVersionControl();
+  const branch = branchLabel(state);
   if (branch === null) return null;
   return (
     <button
       type="button"
       className="branch"
       title={t("branches.tooltip", { branch })}
-      onClick={onSwitch}
+      disabled={busy !== null}
+      data-quick-pick-toggle
+      onClick={onToggle}
     >
       <svg viewBox="0 0 24 24">
         <circle cx="7" cy="5" r="2.2" />
@@ -137,9 +141,10 @@ function CommitBox({ state }: { state: RepositoryState }) {
     : "versionControl.commitScope.staged";
 
   function onKeyDown(event: KeyboardEvent) {
+    // Wie in VS Code: Strg+Eingabe schreibt fest, gepusht wird eigens.
     if (event.key === "Enter" && event.ctrlKey && commit) {
       event.preventDefault();
-      void store.commitAndPush();
+      void store.commit();
     }
   }
 

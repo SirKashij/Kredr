@@ -155,7 +155,15 @@ export function followSelection(
 
 /** Was die Versionskontrolle eines Fensters gerade ausführt; immer nur eines. */
 export type Operation =
-  "stage" | "unstage" | "discard" | "commit" | "commitAndPush" | "push" | "pull" | "pullAndPush";
+  | "stage"
+  | "unstage"
+  | "discard"
+  | "commit"
+  | "commitAndPush"
+  | "push"
+  | "pull"
+  | "pullAndPush"
+  | "changeBranch";
 
 /** Der Text der Sprachdatei, der eine laufende Operation benennt. */
 export const operationLabels: Record<Operation, MessageKey> = {
@@ -167,6 +175,7 @@ export const operationLabels: Record<Operation, MessageKey> = {
   push: "versionControl.busy.push",
   pull: "versionControl.busy.pull",
   pullAndPush: "versionControl.busy.pullAndPush",
+  changeBranch: "versionControl.busy.changeBranch",
 };
 
 /** Ob sich festschreiben lässt: Es gibt Änderungen, eine Nachricht, und nichts läuft. */

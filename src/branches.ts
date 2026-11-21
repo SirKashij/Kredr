@@ -1,7 +1,8 @@
 /**
  * Die Branches eines Projekts, wie sie das Kern-Modul Versionskontrolle
  * liefert, und die Zeilen der Branch-Liste. Reine Daten und reine Funktionen;
- * die Aufrufe in den Kern stehen am Ende.
+ * der Aufruf in den Kern steht am Ende. Wechsel und Anlage laufen über den
+ * `VersionControlStore`, damit sie mit den übrigen Operationen gesperrt sind.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -57,15 +58,4 @@ function call<T>(command: string, args: Record<string, unknown>): Promise<T> {
 /** Die lokalen Branches und die des Remotes; scheitert mit einem `VersionControlError`. */
 export function loadBranches(project: string): Promise<Branch[]> {
   return call("version_control_branches", { project });
-}
-
-/**
- * Führt die gewählte Zeile aus: wechselt zum Branch oder legt den neuen an
- * und wechselt dorthin. Scheitert mit einem `VersionControlError`; der Zustand
- * der Versionskontrolle folgt dem Wechsel von selbst.
- */
-export function applyBranchRow(project: string, row: BranchRow): Promise<void> {
-  return row.kind === "create"
-    ? call("version_control_create_branch", { project, name: row.name })
-    : call("version_control_switch_branch", { project, branch: row.branch });
 }

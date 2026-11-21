@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { applyBranchRow, branchRows, branchTitle, loadBranches, type BranchRow } from "./branches";
+import { useEffect, useMemo, useState } from "react";
+import { branchRows, branchTitle, loadBranches, type BranchRow } from "./branches";
 import type { Branch } from "./branches";
 import { useT } from "./i18n/i18n";
 import { QuickPick } from "./QuickPick";
+import { useVersionControlStore } from "./versionControl";
 import { GitError } from "./VersionControlView";
 import type { VersionControlError } from "./versionControlState";
 
@@ -14,11 +15,10 @@ import type { VersionControlError } from "./versionControlState";
  */
 export function BranchPicker({ project, onClose }: { project: string; onClose: () => void }) {
   const t = useT();
+  const store = useVersionControlStore();
   const [branches, setBranches] = useState<Branch[] | null>(null);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<VersionControlError | null>(null);
-  // Solange Git wechselt, löst eine weitere Auswahl nichts aus.
-  const busy = useRef(false);
   const rows = useMemo(() => branchRows(branches ?? [], query), [branches, query]);
 
   useEffect(() => {
@@ -33,14 +33,12 @@ export function BranchPicker({ project, onClose }: { project: string; onClose: (
   }, [project]);
 
   function pick(row: BranchRow) {
-    if (busy.current) return;
     if (row.kind === "branch" && row.branch.current) return onClose();
-    busy.current = true;
     setError(null);
-    applyBranchRow(project, row).then(onClose, (error: VersionControlError) => {
-      busy.current = false;
-      setError(error);
-    });
+    // Solange Git wechselt oder etwas anderes läuft, löst eine weitere Auswahl nichts aus.
+    store.changeBranch(row).then((changed) => {
+      if (changed) onClose();
+    }, setError);
   }
 
   return (

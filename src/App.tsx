@@ -28,6 +28,7 @@ import {
   type Arrangement,
 } from "./arrangement";
 import { ArrangementSaver, loadArrangement } from "./arrangementStore";
+import { mayCloseWindow } from "./closeWindow";
 import { contentFor } from "./fileKinds";
 import { fileName, fullPath, opensExternally, toProjectPath } from "./filePath";
 import { recordOpened } from "./fileSearch";
@@ -101,6 +102,8 @@ export function App() {
   const [fileList] = useState(() => new ProjectFileList());
   const [quickOpen, setQuickOpen] = useState(false);
   const [branchPicker, setBranchPicker] = useState(false);
+  /** Warum sich das Fenster zuletzt nicht schließen ließ. */
+  const [closeError, setCloseError] = useState<string | null>(null);
   /** Die in diesem Fenster zuletzt geöffneten Dateien, die jüngste zuerst. */
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [versionControl] = useState(() => new VersionControlStore());
@@ -192,25 +195,37 @@ export function App() {
     if (project) return versionControl.watch(project);
   }, [project, versionControl]);
 
-  // Das Fenster schließt mit ungespeicherten Änderungen erst nach Rückfrage.
+  // Das Fenster schließt mit ungespeicherten Änderungen oder einem laufenden
+  // Prozess in einem Terminal erst nach Rückfrage.
   useEffect(() => {
     const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
-      // Was an der Aufteilung noch nicht gespeichert ist, geht mit dem Fenster nicht verloren.
-      if (!files.anyDirty()) return saver.flush();
       const t = translate.current;
-      const discard = await confirm(t("file.closeWindowConfirm.message"), {
-        title: t("file.closeConfirm.title"),
-        kind: "warning",
-        okLabel: t("file.closeWindowConfirm.ok"),
-        cancelLabel: t("dialog.cancel"),
+      setCloseError(null);
+      const close = await mayCloseWindow({
+        hasUnsavedFiles: () => files.anyDirty(),
+        hasRunningProcess: () => terminals.anyHasChildProcess(),
+        confirm: (question) => {
+          const unsaved = question === "unsavedFiles";
+          const text = unsaved
+            ? "file.closeWindowConfirm.message"
+            : "terminal.closeWindowConfirm.message";
+          return confirm(t(text), {
+            title: t(unsaved ? "file.closeConfirm.title" : "terminal.closeWindowConfirm.title"),
+            kind: "warning",
+            okLabel: t("file.closeWindowConfirm.ok"),
+            cancelLabel: t("dialog.cancel"),
+          });
+        },
+        // Was an der Aufteilung noch nicht gespeichert ist, geht mit dem Fenster nicht verloren.
+        saveArrangement: () => saver.flush(),
+        showError: setCloseError,
       });
-      if (!discard) return event.preventDefault();
-      await saver.flush();
+      if (!close) event.preventDefault();
     });
     return () => {
       unlisten.then((stop) => stop());
     };
-  }, [files, saver]);
+  }, [files, saver, terminals]);
 
   useEffect(() => {
     terminals.setFont(settings.fontFamily, settings.fontSize);
@@ -514,10 +529,15 @@ export function App() {
       )}
       {branchPicker && project && <BranchPicker project={project} onClose={closeQuickOpen} />}
       <footer className="status">
-        <BranchStatus onSwitch={() => setBranchPicker(true)} />
+        <BranchStatus onToggle={() => setBranchPicker((open) => !open)} />
         <SyncStatus />
         <span>{project ? projectName(project) : t("status.noProject")}</span>
         <AgentCounters statuses={statuses} />
+        {closeError !== null && (
+          <span className="status-error" role="alert">
+            {t("window.closeFailed", { details: closeError })}
+          </span>
+        )}
         {activeTab && isTerminal(activeTab) && (
           <span className="right">{shellLabel(activeTab.shell, t)}</span>
         )}
