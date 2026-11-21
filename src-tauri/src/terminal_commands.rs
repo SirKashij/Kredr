@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::State;
 
-use crate::agent_status::{AgentStatus, StatusUpdate};
+use crate::agent_status::{AgentStatus, Resumed, StatusUpdate};
 use crate::settings::{SettingsStore, Shell};
 use crate::terminal::{self, Terminal, TerminalEvent, TerminalOptions};
 use crate::{agent, paths};
@@ -65,6 +65,10 @@ pub(crate) struct OpenedTerminal {
     /// Die gewünschte Shell, wenn es sie auf diesem Rechner nicht (mehr)
     /// gibt. Das Terminal läuft dann mit PowerShell.
     missing_shell: Option<Shell>,
+    /// Ob ein Agent gestartet ist. Ein Gespräch lässt sich nur mit einem
+    /// Startbefehl fortsetzen, der mit `claude` beginnt; sonst bleibt die
+    /// Shell ohne Agent.
+    agent_started: bool,
 }
 
 /// Der Empfänger für den Agentenstatus. Er fehlt, wenn er sich beim Start
@@ -72,8 +76,8 @@ pub(crate) struct OpenedTerminal {
 pub(crate) type AgentStatusReceiver = Option<Arc<AgentStatus>>;
 
 /// Öffnet ein Terminal mit der gewählten Shell. Mit `agent` startet darin
-/// sofort der Agent; `on_agent_status` erhält dann jede Änderung seines
-/// Agentenstatus.
+/// sofort der Agent, mit `resume` setzt er dieses Gespräch fort;
+/// `on_agent_status` erhält dann jede Änderung seines Agentenstatus.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn terminal_open(
@@ -86,6 +90,7 @@ pub(crate) fn terminal_open(
     cols: u16,
     rows: u16,
     agent: bool,
+    resume: Option<Resumed>,
     on_output: Channel<InvokeResponseBody>,
     on_exit: Channel<()>,
     on_agent_status: Channel<StatusUpdate>,
@@ -98,6 +103,11 @@ pub(crate) fn terminal_open(
     // Der Agent-Startbefehl wird bei jedem Start frisch gelesen, damit eine
     // Änderung in den Einstellungen sofort gilt.
     let mut start_command = agent.then(|| settings.get().agent_command);
+    if let Some(resumed) = &resume {
+        start_command =
+            start_command.and_then(|command| agent::resuming(&command, &resumed.conversation));
+    }
+    let agent_started = start_command.is_some();
     let search_path = paths::search_path();
     let missing_agent_program = start_command
         .as_deref()
@@ -109,7 +119,7 @@ pub(crate) fn terminal_open(
         .clone()
         .filter(|_| start_command.is_some());
     if let (Some(status), Some(command)) = (&status, &mut start_command) {
-        let settings_file = status.register(id, move |update| {
+        let settings_file = status.register(id, resume, move |update| {
             // Hier beginnt jede Reaktion des Kerns auf einen Statuswechsel.
             let _ = on_agent_status.send(update);
         });
@@ -156,6 +166,7 @@ pub(crate) fn terminal_open(
         id,
         missing_agent_program,
         missing_shell,
+        agent_started,
     })
 }
 

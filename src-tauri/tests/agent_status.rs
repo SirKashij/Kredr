@@ -11,7 +11,8 @@ use std::time::{Duration, Instant};
 
 use kredr_lib::agent::with_status_settings;
 use kredr_lib::agent_status::{
-    remove_orphaned_runtime_folders, runtime_folder_of, AgentState, AgentStatus, StatusUpdate,
+    remove_orphaned_runtime_folders, runtime_folder_of, AgentState, AgentStatus, Resumed,
+    StatusUpdate,
 };
 use kredr_lib::terminal::{available_shells, Shell, Terminal, TerminalEvent, TerminalOptions};
 use serde_json::{json, Value};
@@ -34,9 +35,19 @@ struct TestAgent {
 
 impl TestAgent {
     fn start(status: &AgentStatus, terminal: u32) -> TestAgent {
+        TestAgent::register(status, terminal, None)
+    }
+
+    /// Ein Agent, der ein gespeichertes Gespräch fortsetzt.
+    fn resume(status: &AgentStatus, terminal: u32, resumed: Resumed) -> TestAgent {
+        TestAgent::register(status, terminal, Some(resumed))
+    }
+
+    /// Meldet das Terminal an, mit oder ohne fortgesetztes Gespräch.
+    fn register(status: &AgentStatus, terminal: u32, resumed: Option<Resumed>) -> TestAgent {
         let (sender, updates) = channel();
         let settings = status
-            .register(terminal, move |update| {
+            .register(terminal, resumed, move |update| {
                 let _ = sender.send(update);
             })
             .expect("Die Konfiguration sollte sich anlegen lassen");
@@ -385,6 +396,84 @@ fn jeder_agent_hat_seinen_eigenen_auftrag() {
 
     assert_eq!(first.next().assignment.as_deref(), Some("Baue Ticket 24"));
     assert_eq!(second.next().assignment.as_deref(), Some("Baue Ticket 25"));
+}
+
+#[test]
+fn das_gespraech_ist_bekannt_sobald_der_agent_startet() {
+    let status = AgentStatus::start(runtime_folder("gespraech-start")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report(
+        "SessionStart",
+        json!({ "session_id": "gespraech-1", "source": "startup" }),
+    );
+
+    let update = agent.next();
+    assert_eq!(update.conversation.as_deref(), Some("gespraech-1"));
+    assert_eq!(update.state, AgentState::Unknown);
+}
+
+#[test]
+fn nach_dem_leeren_gilt_das_neue_gespraech() {
+    let status = AgentStatus::start(runtime_folder("gespraech-clear")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "session_id": "alt", "prompt": "Baue Ticket 24" }),
+    );
+    assert_eq!(agent.next().conversation.as_deref(), Some("alt"));
+    agent.report(
+        "SessionEnd",
+        json!({ "session_id": "alt", "reason": "clear" }),
+    );
+    assert_eq!(agent.next().conversation, None);
+    agent.report(
+        "SessionStart",
+        json!({ "session_id": "neu", "source": "clear" }),
+    );
+
+    let update = agent.next();
+    assert_eq!(update.conversation.as_deref(), Some("neu"));
+    assert_eq!(update.assignment, None);
+}
+
+#[test]
+fn beendet_sich_der_agent_gibt_es_kein_gespraech_mehr() {
+    let status = AgentStatus::start(runtime_folder("gespraech-ende")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "session_id": "laufend", "prompt": "Los" }),
+    );
+    assert_eq!(agent.next().conversation.as_deref(), Some("laufend"));
+    agent.report("SessionEnd", json!({ "reason": "prompt_input_exit" }));
+
+    assert_eq!(agent.next().conversation, None);
+}
+
+#[test]
+fn ein_fortgesetzter_agent_behaelt_gespraech_und_auftrag() {
+    let status = AgentStatus::start(runtime_folder("gespraech-fortsetzen")).unwrap();
+    let agent = TestAgent::resume(
+        &status,
+        1,
+        Resumed {
+            conversation: "abc123".into(),
+            assignment: Some("Baue Ticket 24".into()),
+        },
+    );
+
+    // Claude Code meldet beim Fortsetzen dieselbe Kennung; das ändert nichts.
+    agent.report("SessionStart", json!({ "source": "resume" }));
+    agent.expect_silence();
+    agent.report("UserPromptSubmit", json!({ "prompt": "Mach weiter" }));
+
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Working);
+    assert_eq!(update.conversation.as_deref(), Some("abc123"));
+    assert_eq!(update.assignment.as_deref(), Some("Baue Ticket 24"));
 }
 
 #[test]

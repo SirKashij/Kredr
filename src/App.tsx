@@ -12,6 +12,7 @@ import {
   closeTab,
   closesFileText,
   emptyArrangement,
+  endAgent,
   filePathOf,
   focusAdjacentGroup,
   focusedGroupOf,
@@ -21,6 +22,7 @@ import {
   openContent,
   openTab,
   openTabIn,
+  recordConversation,
   showsFile,
   showVersionControl,
   splitGroup,
@@ -28,12 +30,12 @@ import {
   type Arrangement,
 } from "./arrangement";
 import { ArrangementSaver, loadArrangement } from "./arrangementStore";
-import { mayCloseWindow } from "./closeWindow";
+import { mayCloseWindow, type CloseQuestion } from "./closeWindow";
 import { contentFor } from "./fileKinds";
 import { fileName, fullPath, opensExternally, toProjectPath } from "./filePath";
 import { recordOpened } from "./fileNameSearch";
 import { saveFile } from "./FileView";
-import { useT } from "./i18n/i18n";
+import { useT, type MessageKey } from "./i18n/i18n";
 import { isModifierKey, resolveKey, type Command } from "./keybindings";
 import { MainArea } from "./MainArea";
 import { OpenFiles, type FilePosition } from "./openFiles";
@@ -95,8 +97,17 @@ export function App() {
           openFile: (target) => openFileRequest.current(target),
         },
         statuses,
+        {
+          // Das Gespräch wird gespeichert, sobald Kredr es kennt, nicht erst beim Schließen.
+          onConversation: (tabId, conversation) =>
+            setArrangement((current) => recordConversation(current, tabId, conversation)),
+          onResumeFailed: (tabId) => setArrangement((current) => endAgent(current, tabId)),
+        },
       ),
   );
+  /** Die Aufteilung und die Einstellungen für die Rückfrage beim Schließen. */
+  const latest = useRef({ arrangement, settings });
+  latest.current = { arrangement, settings };
   const [files] = useState(() => new OpenFiles());
   /** Die Dateiliste des Projekts für „Datei per Namen öffnen“. */
   const [fileList] = useState(() => new ProjectFileList());
@@ -143,15 +154,24 @@ export function App() {
   }, [project, t]);
 
   // Ein Projekt öffnet sich mit seiner gespeicherten Aufteilung; ohne sie
-  // beginnt es mit einem Terminal.
+  // beginnt es mit einem Terminal. Gemerkte Agenten starten sofort und
+  // gleichzeitig, auch in verdeckten Tabs, und setzen ihr Gespräch fort.
   useEffect(() => {
     if (!project) return;
     let stale = false;
-    loadArrangement(project).then((stored) => {
+    const { resumeAgents } = latest.current.settings;
+    loadArrangement(project, { resumeAgents }).then((stored) => {
       if (stale) return;
+      // Ist schon ein Terminal entstanden, bleibt die gespeicherte Aufteilung ungenutzt.
+      const used = !latest.current.arrangement.root;
       setArrangement((current) =>
         current.root ? current : settle(stored.root ? stored : openTab(current)),
       );
+      for (const tab of used ? tabsOf(stored) : []) {
+        if (!tab.conversation) continue;
+        const start = { cwd: tab.cwd ?? project, agent: true, resume: tab.conversation };
+        terminals.startNow(tab.id, { ...start, shell: tab.shell ?? defaultShell.current });
+      }
       setRestored(true);
     });
     return () => {
@@ -201,16 +221,29 @@ export function App() {
     const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
       const t = translate.current;
       setCloseError(null);
+      const { arrangement, settings } = latest.current;
+      // Agenten mit Gespräch kommen beim nächsten Öffnen zurück; nur wer gerade
+      // arbeitet, wird unterbrochen.
+      const resumed = settings.resumeAgents
+        ? tabsOf(arrangement).flatMap((tab) => (tab.conversation ? [tab.id] : []))
+        : [];
       const close = await mayCloseWindow({
         hasUnsavedFiles: () => files.anyDirty(),
-        hasRunningProcess: () => terminals.anyHasChildProcess(),
+        hasRunningProcess: () => terminals.anyHasChildProcess(new Set(resumed)),
+        hasWorkingAgent: () =>
+          resumed.some((tabId) => statuses.snapshot().get(tabId)?.state === "working"),
         confirm: (question) => {
-          const unsaved = question === "unsavedFiles";
-          const text = unsaved
-            ? "file.closeWindowConfirm.message"
-            : "terminal.closeWindowConfirm.message";
-          return confirm(t(text), {
-            title: t(unsaved ? "file.closeConfirm.title" : "terminal.closeWindowConfirm.title"),
+          const text: Record<CloseQuestion, [title: MessageKey, message: MessageKey]> = {
+            unsavedFiles: ["file.closeConfirm.title", "file.closeWindowConfirm.message"],
+            runningProcess: [
+              "terminal.closeWindowConfirm.title",
+              "terminal.closeWindowConfirm.message",
+            ],
+            workingAgent: ["agent.closeWindowConfirm.title", "agent.closeWindowConfirm.message"],
+          };
+          const [title, message] = text[question];
+          return confirm(t(message), {
+            title: t(title),
             kind: "warning",
             okLabel: t("file.closeWindowConfirm.ok"),
             cancelLabel: t("dialog.cancel"),
@@ -225,7 +258,7 @@ export function App() {
     return () => {
       unlisten.then((stop) => stop());
     };
-  }, [files, saver, terminals]);
+  }, [files, saver, terminals, statuses]);
 
   useEffect(() => {
     terminals.setFont(settings.fontFamily, settings.fontSize);

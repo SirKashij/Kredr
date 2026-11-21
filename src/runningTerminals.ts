@@ -4,7 +4,8 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal } from "@xterm/xterm";
-import type { AgentStatuses, StatusUpdate } from "./agentStatus";
+import { conversationOf, type AgentStatuses, type StatusUpdate } from "./agentStatus";
+import type { Conversation } from "./arrangement";
 import type { Translate } from "./i18n/i18n";
 import type { Shell } from "./settingsStore";
 import { shellLabel } from "./tabLabel";
@@ -28,7 +29,22 @@ export interface TerminalStart {
   shell?: Shell;
   /** Ob in der Shell sofort ein Agent startet. */
   agent: boolean;
+  /** Das Gespräch, das der Agent fortsetzt; ohne Angabe beginnt er ein neues. */
+  resume?: Conversation;
 }
+
+/** Was ein Terminal über seinen Agenten meldet. */
+interface AgentEvents {
+  /** Erhält jede Änderung des Agentenstatus. */
+  onStatus(update: StatusUpdate): void;
+  /** Der Agent konnte sein Gespräch nicht fortsetzen; die Shell läuft ohne ihn weiter. */
+  onResumeFailed(): void;
+}
+
+/** So lange (in Sekunden) sieht ein Terminal nach, ob ein fortgesetzter Agent läuft. */
+const RESUME_START_LIMIT = 30;
+/** So lange (in Sekunden) muss er laufen, damit das Fortsetzen als gelungen gilt. */
+const RESUME_SETTLE_TIME = 5;
 
 /** Terminalfarben des dunklen VS-Code-Standardthemas. */
 const theme = {
@@ -61,6 +77,8 @@ interface OpenedTerminal {
   missingAgentProgram: string | null;
   /** Die gewünschte Shell, wenn es sie nicht (mehr) gibt; das Terminal läuft dann mit PowerShell. */
   missingShell: Shell | null;
+  /** Ob ein Agent gestartet ist; ein Gespräch setzt nur Claude Code fort. */
+  agentStarted: boolean;
 }
 
 /**
@@ -94,14 +112,13 @@ export class RunningTerminal {
   // Die erste Ausgabe kann vor der Kennung eintreffen. ConPTY wartet dann
   // schon auf die Antwort von xterm.js auf seine Cursorabfrage.
   private earlyInput = "";
+  /** Ob der Agent sich schon einmal gemeldet hat. */
+  private reported = false;
 
-  /**
-   * @param onAgentStatus Erhält jede Änderung des Agentenstatus dieses Terminals.
-   */
   constructor(
     private readonly options: TerminalStart,
     private readonly host: TerminalHost,
-    private readonly onAgentStatus: (update: StatusUpdate) => void,
+    private readonly agentEvents: AgentEvents,
   ) {
     this.screen.className = "terminal-screen";
     this.element.append(this.screen);
@@ -150,6 +167,14 @@ export class RunningTerminal {
     this.fit();
     this.observer.observe(this.screen);
     this.start();
+  }
+
+  /**
+   * Startet die Shell, ohne das Terminal anzuzeigen, etwa für einen Agenten
+   * in einem verdeckten Tab. Das nächste `attach` holt es in die Ansicht.
+   */
+  startUnseen() {
+    if (!this.started) this.attach(unseenHost());
   }
 
   /** Nimmt das Terminal aus `host`; die Shell läuft unsichtbar weiter. */
@@ -218,18 +243,26 @@ export class RunningTerminal {
       this.xterm.write(`\r\n\x1b[90m${this.host.translate()("terminal.exited")}\x1b[0m\r\n`);
     });
     const onAgentStatus = new Channel<StatusUpdate>((update) => {
-      if (!this.closed) this.onAgentStatus(update);
+      if (this.closed) return;
+      this.reported = true;
+      this.agentEvents.onStatus(update);
     });
     const { cols, rows } = this.xterm;
-    const { cwd, shell, agent } = this.options;
+    const { cwd, shell, agent, resume: conversation } = this.options;
     const channels = { onOutput, onExit, onAgentStatus };
-    invoke<OpenedTerminal>("terminal_open", { shell, cwd, cols, rows, agent, ...channels })
-      .then(({ id, missingAgentProgram, missingShell }) => {
+    const resume = conversation
+      ? { conversation: conversation.id, assignment: conversation.assignment ?? null }
+      : null;
+    invoke<OpenedTerminal>("terminal_open", { shell, cwd, cols, rows, agent, resume, ...channels })
+      .then(({ id, missingAgentProgram, missingShell, agentStarted }) => {
         if (this.closed) {
           invoke("terminal_close", { id });
           return;
         }
         this.id = id;
+        // Lässt sich das Gespräch nicht fortsetzen, bleibt ein gewöhnliches Terminal.
+        if (resume && !agentStarted) this.agentEvents.onResumeFailed();
+        else if (resume) this.watchResume();
         // Die Gruppe kann ihre Größe geändert haben, während die Shell startete.
         this.resize();
         if (this.earlyInput) this.write(this.earlyInput);
@@ -248,6 +281,30 @@ export class RunningTerminal {
         });
         this.xterm.write(`\x1b[31m${message}\x1b[0m`);
       });
+  }
+
+  /**
+   * Sieht nach, ob der fortgesetzte Agent wirklich läuft. Gibt es sein
+   * Gespräch nicht mehr, meldet er sich nie und beendet sich gleich nach dem
+   * Start; seine Fehlermeldung bleibt in der Shell stehen.
+   */
+  private watchResume() {
+    let seconds = 0;
+    /** Seit wie vielen Sekunden der Agent läuft; `null`, solange er nicht gestartet ist. */
+    let running: number | null = null;
+    const check = async () => {
+      if (this.closed || this.reported) return;
+      const alive = await this.hasChildProcess();
+      if (this.closed || this.reported) return;
+      seconds += 1;
+      if (alive) running = (running ?? 0) + 1;
+      const ended = running !== null && !alive;
+      const neverStarted = running === null && seconds >= RESUME_START_LIMIT;
+      if (ended || neverStarted) return this.agentEvents.onResumeFailed();
+      if (running !== null && running >= RESUME_SETTLE_TIME) return;
+      setTimeout(check, 1000);
+    };
+    setTimeout(check, 1000);
   }
 
   /**
@@ -280,6 +337,31 @@ export class RunningTerminal {
   }
 }
 
+/** Der unsichtbare Platz für Terminals verdeckter Tabs; entsteht beim ersten Gebrauch. */
+let unseen: HTMLElement | null = null;
+
+/**
+ * Ein unsichtbarer Platz im Dokument, an dem ein Terminal starten kann:
+ * xterm.js braucht dafür ein eingehängtes Element mit einer Größe.
+ */
+function unseenHost(): HTMLElement {
+  if (!unseen) {
+    unseen = document.createElement("div");
+    unseen.className = "terminal-unseen";
+    unseen.setAttribute("aria-hidden", "true");
+    document.body.append(unseen);
+  }
+  return unseen;
+}
+
+/** Was die Aufteilung von den Agenten in ihren Terminals erfährt, nach der Kennung ihres Tabs. */
+export interface ConversationListener {
+  /** Das Gespräch des Agenten nach einer Meldung; ohne Gespräch `undefined`. */
+  onConversation(tabId: string, conversation?: Conversation): void;
+  /** Das Gespräch ließ sich nicht fortsetzen; der Tab wird ein gewöhnliches Terminal. */
+  onResumeFailed(tabId: string): void;
+}
+
 /** Die laufenden Terminals eines Fensters, nach der Kennung ihres Tabs. */
 export class RunningTerminals {
   private readonly terminals = new Map<string, RunningTerminal>();
@@ -288,19 +370,25 @@ export class RunningTerminals {
   /**
    * @param statuses Nimmt den Agentenstatus der Terminals auf, nach der
    *   Kennung ihres Tabs.
+   * @param agents Erfährt, was die Aufteilung sich von den Agenten merkt.
    */
   constructor(
     private readonly host: TerminalHost,
     readonly statuses: AgentStatuses,
+    private readonly agents: ConversationListener,
   ) {}
 
   /** Das Terminal des Tabs; gibt es noch keines, entsteht es und startet mit `start`. */
   get(tabId: string, start: TerminalStart): RunningTerminal {
     let terminal = this.terminals.get(tabId);
     if (!terminal) {
-      terminal = new RunningTerminal(start, this.host, (update) =>
-        this.statuses.report(tabId, update),
-      );
+      terminal = new RunningTerminal(start, this.host, {
+        onStatus: (update) => {
+          this.statuses.report(tabId, update);
+          this.agents.onConversation(tabId, conversationOf(update));
+        },
+        onResumeFailed: () => this.agents.onResumeFailed(tabId),
+      });
       if (this.font) terminal.setFont(this.font.family, this.font.size);
       this.terminals.set(tabId, terminal);
     }
@@ -313,13 +401,23 @@ export class RunningTerminals {
     for (const terminal of this.terminals.values()) terminal.setFont(family, size);
   }
 
+  /** Startet das Terminal des Tabs sofort, auch wenn sein Tab gerade verdeckt ist. */
+  startNow(tabId: string, start: TerminalStart) {
+    this.get(tabId, start).startUnseen();
+  }
+
   find(tabId: string): RunningTerminal | undefined {
     return this.terminals.get(tabId);
   }
 
-  /** Ob in irgendeinem Terminal des Fensters noch ein Programm läuft, etwa ein Agent. */
-  async anyHasChildProcess(): Promise<boolean> {
-    const terminals = [...this.terminals.values()];
+  /**
+   * Ob in irgendeinem Terminal des Fensters noch ein Programm läuft, etwa ein
+   * Agent. Die Terminals der Tabs in `except` zählen nicht.
+   */
+  async anyHasChildProcess(except: ReadonlySet<string> = new Set()): Promise<boolean> {
+    const terminals = [...this.terminals]
+      .filter(([tabId]) => !except.has(tabId))
+      .map(([, terminal]) => terminal);
     const running = await Promise.all(terminals.map((terminal) => terminal.hasChildProcess()));
     return running.includes(true);
   }

@@ -4,7 +4,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use kredr_lib::agent::{missing_program, with_status_settings, DEFAULT_START_COMMAND};
+use kredr_lib::agent::{missing_program, resuming, with_status_settings, DEFAULT_START_COMMAND};
 use kredr_lib::terminal::Shell;
 
 /// Ein leerer Ordner, der als Suchpfad dient.
@@ -109,6 +109,37 @@ fn der_startbefehl_bekommt_die_konfiguration_fuer_den_agentenstatus_mit() {
         with_status_settings(r"  C:\Werkzeuge\Claude.exe -c", settings, Shell::Powershell),
         r"C:\Werkzeuge\Claude.exe --settings 'C:\Temp\kredr\terminal-3.json' -c"
     );
+}
+
+#[test]
+fn ein_fortgesetzter_agent_bekommt_sein_gespraech_mit() {
+    let conversation = "7f455d1c-5cdc-4520-a47e-ef395089b530";
+
+    assert_eq!(
+        resuming("claude", conversation).as_deref(),
+        Some("claude --resume 7f455d1c-5cdc-4520-a47e-ef395089b530")
+    );
+    // Zusätze des Nutzers bleiben erhalten, auch mit der Konfiguration davor.
+    let command = resuming("claude --model opus", conversation).unwrap();
+    assert_eq!(
+        with_status_settings(
+            &command,
+            Path::new(r"C:\Temp\terminal-3.json"),
+            Shell::Powershell
+        ),
+        r"claude --settings 'C:\Temp\terminal-3.json' --resume 7f455d1c-5cdc-4520-a47e-ef395089b530 --model opus"
+    );
+}
+
+#[test]
+fn ohne_claude_oder_mit_fremder_kennung_wird_nichts_fortgesetzt() {
+    // Andere Agenten kennen das Fortsetzen (noch) nicht.
+    assert_eq!(resuming("codex", "abc123"), None);
+    assert_eq!(resuming("& 'C:\\Claude\\claude.exe'", "abc123"), None);
+    // Was keine Kennung von Claude Code sein kann, kommt nicht in die Shell.
+    assert_eq!(resuming("claude", "abc; rm -rf ~"), None);
+    assert_eq!(resuming("claude", "$(boese)"), None);
+    assert_eq!(resuming("claude", ""), None);
 }
 
 #[test]

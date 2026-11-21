@@ -31,6 +31,8 @@ export interface Settings {
   notifications: boolean;
   /** Ob der Tab eines Agenten und seine Karte in der Agenten-Ansicht den Auftrag zeigen. */
   showAssignment: boolean;
+  /** Ob Agenten beim Öffnen eines Projekts mit ihrem Gespräch zurückkommen. */
+  resumeAgents: boolean;
 }
 
 /** Gilt nur, bis die Einstellungen aus dem Kern geladen sind. */
@@ -42,6 +44,7 @@ export const defaultSettings: Settings = {
   agentCommand: "claude",
   notifications: true,
   showAssignment: true,
+  resumeAgents: true,
 };
 
 export const fontSizeRange = { min: 6, max: 32 };

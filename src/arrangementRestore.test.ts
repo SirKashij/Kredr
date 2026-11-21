@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import {
   emptyArrangement,
+  endAgent,
   filePathOf,
   focusedGroupOf,
   groupsOf,
@@ -8,11 +9,13 @@ import {
   openContent,
   openTab,
   openTabIn,
+  recordConversation,
   renameTab,
   restoreArrangement,
   splitGroup,
   tabsOf,
   type Arrangement,
+  type Conversation,
   type Split,
 } from "./arrangement";
 
@@ -51,6 +54,83 @@ test("ein Terminal mit Agent kommt als gewöhnliches Terminal zurück", () => {
   const [tab] = tabsOf(restoreArrangement(stored(withAgent)));
 
   expect(tab).toEqual({ id: "t1", name: "Prüfer" });
+});
+
+/** Ein Agent namens „Prüfer“ im Unterordner, dessen Gespräch Kredr kennt. */
+function withConversation(conversation: Conversation): Arrangement {
+  const agent = renameTab(openTabIn(emptyArrangement, "C:\\Projekt\\src", true), "t1", "Prüfer");
+  return recordConversation(agent, "t1", conversation);
+}
+
+const resume = { resumeAgents: true };
+
+test("ein Agent mit Gespräch kommt als Agent mit Gespräch, Namen und Startordner zurück", () => {
+  const conversation: Conversation = { agent: "claudeCode", id: "abc-123", assignment: "Baue 24" };
+
+  const [tab] = tabsOf(
+    restoreArrangement(stored(withConversation(conversation)), undefined, resume),
+  );
+
+  expect(tab).toEqual({
+    id: "t1",
+    name: "Prüfer",
+    agent: true,
+    cwd: "C:\\Projekt\\src",
+    conversation,
+  });
+});
+
+test("ein Agent, der beim Schließen arbeitete, bleibt als unterbrochen erkennbar", () => {
+  const working: Conversation = { agent: "claudeCode", id: "abc-123", working: true };
+
+  const [tab] = tabsOf(restoreArrangement(stored(withConversation(working)), undefined, resume));
+
+  expect(tab.conversation?.working).toBe(true);
+});
+
+test("ohne Fortsetzen kommt auch ein Agent mit Gespräch als gewöhnliches Terminal zurück", () => {
+  const agent = withConversation({ agent: "claudeCode", id: "abc-123" });
+
+  const [tab] = tabsOf(restoreArrangement(stored(agent), undefined, { resumeAgents: false }));
+
+  expect(tab).toEqual({ id: "t1", name: "Prüfer", cwd: "C:\\Projekt\\src" });
+});
+
+test("ein Gespräch unbekannter Art oder ohne Kennung entfällt, der Tab bleibt", () => {
+  for (const conversation of [
+    { agent: "codex", id: "abc-123" },
+    { agent: "claudeCode", id: "" },
+    { agent: "claudeCode" },
+    "abc-123",
+  ]) {
+    const raw = stored(openTab(emptyArrangement, true)) as { root: { tabs: object[] } };
+    raw.root.tabs[0] = { ...raw.root.tabs[0], conversation };
+
+    expect(tabsOf(restoreArrangement(raw, undefined, resume))).toEqual([{ id: "t1" }]);
+  }
+});
+
+test("die Aufteilung merkt sich das Gespräch eines Terminals und vergisst es mit seinem Ende", () => {
+  const agent = openTab(emptyArrangement, true);
+  const conversation: Conversation = { agent: "claudeCode", id: "abc-123" };
+
+  const recorded = recordConversation(agent, "t1", conversation);
+  expect(tabsOf(recorded)[0].conversation).toEqual(conversation);
+  // Dasselbe Gespräch noch einmal ändert die Aufteilung nicht: kein Speichern.
+  expect(recordConversation(recorded, "t1", { ...conversation })).toBe(recorded);
+  expect(tabsOf(recordConversation(recorded, "t1", undefined))[0]).toEqual({
+    id: "t1",
+    agent: true,
+  });
+});
+
+test("lässt sich ein Gespräch nicht fortsetzen, wird der Tab ein gewöhnliches Terminal am alten Platz", () => {
+  const agent = withConversation({ agent: "claudeCode", id: "abc-123", assignment: "Baue 24" });
+
+  const ended = endAgent(agent, "t1");
+
+  expect(tabsOf(ended)).toEqual([{ id: "t1", name: "Prüfer", cwd: "C:\\Projekt\\src" }]);
+  expect(endAgent(ended, "t1")).toBe(ended);
 });
 
 test("ein Vorschau-Tab bleibt ein Vorschau-Tab", () => {

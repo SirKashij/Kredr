@@ -4,7 +4,13 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { filePathOf, restoreArrangement, tabsOf, type Arrangement } from "./arrangement";
+import {
+  filePathOf,
+  restoreArrangement,
+  tabsOf,
+  type Arrangement,
+  type RestoreOptions,
+} from "./arrangement";
 
 /** Fragt, welche der Pfade es gibt; die Antwort in derselben Reihenfolge. */
 type ExistenceCheck = (paths: string[]) => Promise<boolean[]>;
@@ -14,11 +20,16 @@ type ExistenceCheck = (paths: string[]) => Promise<boolean[]>;
  * wieder her. Ohne gespeicherte Aufteilung, und wenn sie sich nicht lesen
  * lässt, ergibt sich die leere Aufteilung.
  */
-export async function loadArrangement(project: string): Promise<Arrangement> {
+export async function loadArrangement(
+  project: string,
+  options: RestoreOptions,
+): Promise<Arrangement> {
   try {
     const stored = await invoke<unknown>("arrangement_load");
-    return await restoreStored(stored, (paths) =>
-      invoke<boolean[]>("project_files_exist", { project, paths }),
+    return await restoreStored(
+      stored,
+      (paths) => invoke<boolean[]>("project_files_exist", { project, paths }),
+      options,
     );
   } catch (reason) {
     // Ein Projekt öffnet sich auch, wenn sein Speicher nicht erreichbar ist.
@@ -31,16 +42,20 @@ export async function loadArrangement(project: string): Promise<Arrangement> {
  * Stellt die gespeicherte Aufteilung wieder her und lässt dabei aus, was es
  * laut `exist` nicht mehr gibt: Dateiansichten ohne Datei, Startordner ohne Ordner.
  */
-export async function restoreStored(stored: unknown, exist: ExistenceCheck): Promise<Arrangement> {
+export async function restoreStored(
+  stored: unknown,
+  exist: ExistenceCheck,
+  options?: RestoreOptions,
+): Promise<Arrangement> {
   const paths = [
     ...new Set(
       tabsOf(restoreArrangement(stored)).flatMap((tab) => [tab.cwd, filePathOf(tab)] as const),
     ),
   ].filter((path) => path !== undefined);
-  if (paths.length === 0) return restoreArrangement(stored);
+  if (paths.length === 0) return restoreArrangement(stored, undefined, options);
   const found = await exist(paths);
   const present = new Set(paths.filter((_, index) => found[index]));
-  return restoreArrangement(stored, (path) => present.has(path));
+  return restoreArrangement(stored, (path) => present.has(path), options);
 }
 
 /** Speichert die Aufteilung zusammen mit Größe und Position dieses Fensters. */

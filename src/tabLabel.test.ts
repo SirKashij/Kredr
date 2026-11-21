@@ -6,9 +6,14 @@ import { terminalTabLabel } from "./tabLabel";
 const t: Translate = (key, values) => translate("de", key, values);
 const agent: Tab = { id: "tab-1", agent: true };
 
+/** Der Agent mit einem Gespräch, dessen Auftrag `assignment` ist. */
+function assigned(assignment: string, tab: Tab = agent): Tab {
+  return { ...tab, conversation: { agent: "claudeCode", id: "abc-123", assignment } };
+}
+
 describe("Beschriftung eines Agenten-Tabs", () => {
   it("zeigt den Auftrag groß und darüber klein „Agent“", () => {
-    expect(terminalTabLabel(agent, "/mattpocock-skills:implement 24", true, t)).toEqual({
+    expect(terminalTabLabel(assigned("/mattpocock-skills:implement 24"), true, t)).toEqual({
       kicker: "Agent",
       text: "/mattpocock-skills:implement 24",
       assignment: "/mattpocock-skills:implement 24",
@@ -16,18 +21,22 @@ describe("Beschriftung eines Agenten-Tabs", () => {
   });
 
   it("ist ohne Auftrag einzeilig „Agent“ wie bisher", () => {
-    expect(terminalTabLabel(agent, null, true, t)).toEqual({
-      kicker: null,
-      text: "Agent",
-      assignment: null,
-    });
+    const withoutAssignment: Tab = { ...agent, conversation: { agent: "claudeCode", id: "abc" } };
+
+    for (const tab of [agent, withoutAssignment]) {
+      expect(terminalTabLabel(tab, true, t)).toEqual({
+        kicker: null,
+        text: "Agent",
+        assignment: null,
+      });
+    }
   });
 
   it("zeigt von einem langen Auftrag nur die gekürzte erste Zeile, im Tooltip alles", () => {
     const long =
       "  Warum schlägt arrangementRestore fehl, wenn zwei Gruppen leer sind?\nHier der Log:\n…";
 
-    const label = terminalTabLabel(agent, long, true, t);
+    const label = terminalTabLabel(assigned(long), true, t);
 
     expect(label.text).toBe("Warum schlägt arrangementRestor…");
     expect([...label.text]).toHaveLength(32);
@@ -35,9 +44,9 @@ describe("Beschriftung eines Agenten-Tabs", () => {
   });
 
   it("zeigt statt des Auftrags einen eigenen Namen", () => {
-    const named: Tab = { ...agent, name: "Backend" };
+    const named = assigned("Baue Ticket 24", { ...agent, name: "Backend" });
 
-    expect(terminalTabLabel(named, "Baue Ticket 24", true, t)).toEqual({
+    expect(terminalTabLabel(named, true, t)).toEqual({
       kicker: "Agent",
       text: "Backend",
       assignment: "Baue Ticket 24",
@@ -45,20 +54,19 @@ describe("Beschriftung eines Agenten-Tabs", () => {
   });
 
   it("zeigt bei abgeschaltetem Auftrag wieder „Agent“ bzw. den eigenen Namen", () => {
-    expect(terminalTabLabel(agent, "Baue Ticket 24", false, t)).toEqual({
+    expect(terminalTabLabel(assigned("Baue Ticket 24"), false, t)).toEqual({
       kicker: null,
       text: "Agent",
       assignment: null,
     });
-    expect(terminalTabLabel({ ...agent, name: "Backend" }, "Baue Ticket 24", false, t).text).toBe(
-      "Backend",
-    );
+    const named = assigned("Baue Ticket 24", { ...agent, name: "Backend" });
+    expect(terminalTabLabel(named, false, t).text).toBe("Backend");
   });
 
   it("lässt reine Terminals unberührt", () => {
     const terminal: Tab = { id: "tab-2", shell: "gitBash" };
 
-    expect(terminalTabLabel(terminal, null, true, t)).toEqual({
+    expect(terminalTabLabel(terminal, true, t)).toEqual({
       kicker: null,
       text: "Git Bash",
       assignment: null,

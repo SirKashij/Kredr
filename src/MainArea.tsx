@@ -25,7 +25,6 @@ import {
   type Tab,
   type TreeNode,
 } from "./arrangement";
-import { useAgentStatuses, type AgentStatuses } from "./agentStatus";
 import { AgentDot } from "./AgentStatusViews";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { useT } from "./i18n/i18n";
@@ -252,11 +251,10 @@ function TabNameInput({
  * Die Beschriftung am Tab eines Terminals. Hat sein Agent einen Auftrag,
  * steht oben klein â€žAgentâ€œ und darunter der Auftrag oder der eigene Name.
  */
-function TerminalTabName({ tab, statuses }: { tab: Tab; statuses: AgentStatuses }) {
+function TerminalTabName({ tab }: { tab: Tab }) {
   const t = useT();
   const { settings } = useSettings();
-  const assignment = useAgentStatuses(statuses).get(tab.id)?.assignment ?? null;
-  const label = terminalTabLabel(tab, assignment, settings.showAssignment, t);
+  const label = terminalTabLabel(tab, settings.showAssignment, t);
   const rename = t("tab.renameTooltip");
   const title = label.assignment ? `${label.assignment}\n\n${rename}` : rename;
   if (!label.kicker) {
@@ -392,7 +390,7 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
                   }}
                 />
               ) : (
-                <TerminalTabName tab={tab} statuses={shared.terminals.statuses} />
+                <TerminalTabName tab={tab} />
               )}
               <button
                 className="tab-close"

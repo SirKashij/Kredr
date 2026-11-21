@@ -34,6 +34,7 @@ fn changed() -> Settings {
         agent_command: "claude --model opus".into(),
         notifications: false,
         show_assignment: false,
+        resume_agents: false,
     }
 }
 
@@ -50,6 +51,18 @@ fn ohne_datei_gelten_die_standardwerte() {
     assert_eq!(settings.default_shell, Shell::Powershell);
     assert_eq!(settings.agent_command, "claude");
     assert!(settings.notifications);
+    assert!(settings.show_assignment);
+    assert!(settings.resume_agents);
+}
+
+#[test]
+fn abgeschaltetes_fortsetzen_der_agenten_bleibt_abgeschaltet() {
+    let dir = temp_dir("fortsetzen");
+    write_file(&dir, r#"{ "version": 1, "resumeAgents": false }"#);
+
+    let settings = open(&dir).get();
+
+    assert!(!settings.resume_agents);
     assert!(settings.show_assignment);
 }
 

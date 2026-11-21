@@ -25,28 +25,23 @@ export interface TerminalTabLabel {
 }
 
 /**
- * Was am Tab eines Terminals steht, wenn sein Agent den Auftrag
- * `assignment` hat und `showAssignment` aus den Einstellungen gilt.
+ * Was am Tab eines Terminals steht, wenn `showAssignment` aus den
+ * Einstellungen gilt. Der Auftrag kommt aus dem Gespräch seines Agenten.
  */
 export function terminalTabLabel(
   tab: Tab,
-  assignment: string | null,
   showAssignment: boolean,
   t: Translate,
 ): TerminalTabLabel {
-  const shown = visibleAssignment(tab, assignment, showAssignment);
+  const shown = visibleAssignment(tab, showAssignment);
   if (shown === null) return { kicker: null, text: tabLabel(tab, t), assignment: null };
   // Ein eigener Name geht immer vor.
   return { kicker: t("agent.name"), text: tab.name ?? firstLine(shown), assignment: shown };
 }
 
 /** Der Auftrag, wenn Tab und Karte ihn zeigen; sonst `null`. */
-export function visibleAssignment(
-  tab: Tab,
-  assignment: string | null,
-  showAssignment: boolean,
-): string | null {
-  return tab.agent && showAssignment ? assignment : null;
+export function visibleAssignment(tab: Tab, showAssignment: boolean): string | null {
+  return (tab.agent && showAssignment && tab.conversation?.assignment) || null;
 }
 
 /** So viele Zeichen des Auftrags passen in die große Zeile am Tab. */

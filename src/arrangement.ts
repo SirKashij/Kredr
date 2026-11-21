@@ -22,6 +22,23 @@ export interface Tab {
   content?: TabContent;
   /** Gesetzt bei einem Vorschau-Tab: Die nächste Vorschau seiner Gruppe ersetzt ihn. */
   preview?: true;
+  /**
+   * Das Gespräch des Agenten, der gerade im Terminal läuft; beim nächsten
+   * Öffnen des Projekts wird es fortgesetzt. Fehlt, sobald der Agent endet.
+   */
+  conversation?: Conversation;
+}
+
+/** Das Gespräch eines Agenten, wie die Aufteilung es sich merkt. */
+export interface Conversation {
+  /** Die Art des Agenten; bisher kennt Kredr nur Claude Code. */
+  agent: "claudeCode";
+  /** Die Kennung, unter der der Agent das Gespräch fortsetzt. */
+  id: string;
+  /** Der Auftrag des Gesprächs. */
+  assignment?: string;
+  /** Gesetzt, solange der Agent arbeitet; beim Öffnen heißt das: unterbrochen. */
+  working?: true;
 }
 
 /**
@@ -307,6 +324,51 @@ export function renameTab(arrangement: Arrangement, tabId: string, name: string)
   const tabs = group.tabs.map((tab) => (tab.id === tabId ? rename(tab) : tab));
   const root = replaceGroup(arrangement.root, group.id, () => ({ ...group, tabs }));
   return { ...arrangement, root };
+}
+
+/**
+ * Merkt sich das Gespräch des Agenten im Terminal; ohne `conversation` ist
+ * es vergessen. Ändert sich nichts, kommt dieselbe Aufteilung zurück.
+ */
+export function recordConversation(
+  arrangement: Arrangement,
+  tabId: string,
+  conversation: Conversation | undefined,
+): Arrangement {
+  const group = groupOfTab(arrangement, tabId);
+  if (!arrangement.root || !group) return arrangement;
+  const tab = group.tabs.find((tab) => tab.id === tabId)!;
+  if (sameConversation(tab.conversation, conversation)) return arrangement;
+  const { conversation: _, ...rest } = tab;
+  const changed = conversation ? { ...rest, conversation } : rest;
+  const tabs = group.tabs.map((each) => (each.id === tabId ? changed : each));
+  const root = replaceGroup(arrangement.root, group.id, () => ({ ...group, tabs }));
+  return { ...arrangement, root };
+}
+
+/**
+ * Macht aus dem Agenten im Terminal ein gewöhnliches Terminal am selben Platz,
+ * etwa weil sich sein Gespräch nicht fortsetzen ließ. Name, Shell und
+ * Startordner bleiben.
+ */
+export function endAgent(arrangement: Arrangement, tabId: string): Arrangement {
+  const group = groupOfTab(arrangement, tabId);
+  const tab = group?.tabs.find((tab) => tab.id === tabId);
+  if (!arrangement.root || !group || !tab?.agent) return arrangement;
+  const { agent: _, conversation: __, ...terminal } = tab;
+  const tabs = group.tabs.map((each) => (each.id === tabId ? terminal : each));
+  const root = replaceGroup(arrangement.root, group.id, () => ({ ...group, tabs }));
+  return { ...arrangement, root };
+}
+
+/** Ob zwei Gespräche in allem übereinstimmen, was die Aufteilung sich merkt. */
+function sameConversation(a: Conversation | undefined, b: Conversation | undefined): boolean {
+  return (
+    a?.agent === b?.agent &&
+    a?.id === b?.id &&
+    a?.assignment === b?.assignment &&
+    a?.working === b?.working
+  );
 }
 
 /**
@@ -711,8 +773,31 @@ function restoreContent(value: unknown, exists: (path: string) => boolean): TabC
   }
 }
 
+/** Das gespeicherte Gespräch eines Agenten, oder `null`, wenn es sich nicht fortsetzen lässt. */
+function restoreConversation(value: unknown): Conversation | null {
+  if (typeof value !== "object" || value === null) return null;
+  const raw = value as Raw;
+  if (raw.agent !== "claudeCode" || typeof raw.id !== "string" || !raw.id) return null;
+  const conversation: Conversation = { agent: raw.agent, id: raw.id };
+  if (typeof raw.assignment === "string" && raw.assignment) {
+    conversation.assignment = raw.assignment;
+  }
+  if (raw.working === true) conversation.working = true;
+  return conversation;
+}
+
+/** Wie eine gespeicherte Aufteilung zurückkommt. */
+export interface RestoreOptions {
+  /** Ob Agenten mit ihrem Gespräch zurückkommen; sonst als gewöhnliche Terminals. */
+  resumeAgents: boolean;
+}
+
 /** Der gespeicherte Tab ohne alles, was zu einem laufenden Prozess gehört; `null`, wenn er entfällt. */
-function restoreTab(raw: Raw, exists: (path: string) => boolean): Tab | null {
+function restoreTab(
+  raw: Raw,
+  exists: (path: string) => boolean,
+  { resumeAgents }: RestoreOptions,
+): Tab | null {
   const tab: Tab = { id: raw.id as string };
   if (typeof raw.name === "string" && raw.name) tab.name = raw.name;
   if (raw.content !== undefined) {
@@ -722,11 +807,15 @@ function restoreTab(raw: Raw, exists: (path: string) => boolean): Tab | null {
     if (raw.preview === true) tab.preview = true;
     return tab;
   }
-  // `agent` bleibt weg: Ein wiederhergestelltes Terminal startet als frische
-  // Shell, kein Agent läuft von selbst an.
+  // Nur ein Agent mit Gespräch kommt als Agent zurück und setzt es fort.
+  // Jedes andere Terminal startet als frische Shell; kein frischer Agent
+  // läuft von selbst an.
+  const conversation = resumeAgents ? restoreConversation(raw.conversation) : null;
+  if (conversation) tab.agent = true;
   if (isShell(raw.shell)) tab.shell = raw.shell;
   // Ohne seinen Startordner startet das Terminal im Projektordner.
   if (typeof raw.cwd === "string" && exists(raw.cwd)) tab.cwd = raw.cwd;
+  if (conversation) tab.conversation = conversation;
   return tab;
 }
 
@@ -734,7 +823,8 @@ function restoreTab(raw: Raw, exists: (path: string) => boolean): Tab | null {
  * Stellt eine gespeicherte Aufteilung wieder her. `stored` ist, was der
  * Aufteilungsspeicher geladen hat, und kann alles sein: Ist es nicht lesbar
  * oder von einer anderen Version, ergibt sich die leere Aufteilung. Terminals
- * kommen als gewöhnliche Terminals mit Namen, Shell und Startordner zurück.
+ * kommen mit Namen, Shell und Startordner zurück, Agenten mit Gespräch laut
+ * `options` als Agenten, die es fortsetzen, alle übrigen als gewöhnliche Terminals.
  * Tabs unbekannter Art und Dateiansichten, deren Datei es laut `exists` nicht
  * mehr gibt, fehlen still; ihre Nachbarn rücken nach wie beim Schließen.
  * `exists` erhält die Pfade so, wie sie gespeichert sind (Dateien, Startordner).
@@ -742,6 +832,7 @@ function restoreTab(raw: Raw, exists: (path: string) => boolean): Tab | null {
 export function restoreArrangement(
   stored: unknown,
   exists: (path: string) => boolean = () => true,
+  options: RestoreOptions = { resumeAgents: false },
 ): Arrangement {
   try {
     const raw = rawObject(stored);
@@ -764,7 +855,7 @@ export function restoreArrangement(
         const all = rawList(node.tabs).map(rawObject);
         all.forEach((tab) => claimId(tab.id));
         if (all.length === 0) throw new Unreadable();
-        const restored = all.map((tab) => restoreTab(tab, exists));
+        const restored = all.map((tab) => restoreTab(tab, exists, options));
         const tabs = restored.filter((tab) => tab !== null);
         if (tabs.length < all.length) dropped = true;
         // Fehlt der sichtbare Tab, rückt sein rechter Nachbar nach, sonst der linke.

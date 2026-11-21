@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import type { Conversation } from "./arrangement";
 import type { MessageKey } from "./i18n/i18n";
 
 /** Die Zustände eines erkannten Agenten; ohne Eintrag ist der Status „unbekannt“. */
@@ -11,8 +12,6 @@ export interface AgentStatus {
   lastAction: string | null;
   /** Seit wann der Zustand gilt (Millisekunden wie `Date.now()`). */
   since: number;
-  /** Der erste Prompt seit dem Start des Agenten oder dem letzten Leeren des Gesprächs. */
-  assignment: string | null;
 }
 
 /** Was der Kern bei jeder Änderung des Agentenstatus eines Terminals meldet. */
@@ -21,7 +20,22 @@ export interface StatusUpdate {
   lastAction: string | null;
   /** Ob sich der Zustand geändert hat und nicht nur die letzte Aktion. */
   stateChanged: boolean;
+  /** Der erste Prompt seit dem Start des Agenten oder dem letzten Leeren des Gesprächs. */
   assignment: string | null;
+  /** Die Kennung des laufenden Gesprächs; `null`, sobald der Agent sich beendet hat. */
+  conversation: string | null;
+}
+
+/**
+ * Das Gespräch, das sich die Aufteilung nach der Meldung `update` merkt,
+ * samt Auftrag und ob der Agent gerade arbeitet. Ohne Gespräch `undefined`.
+ */
+export function conversationOf(update: StatusUpdate): Conversation | undefined {
+  if (update.conversation === null) return undefined;
+  const conversation: Conversation = { agent: "claudeCode", id: update.conversation };
+  if (update.assignment) conversation.assignment = update.assignment;
+  if (update.state === "working") conversation.working = true;
+  return conversation;
 }
 
 /** Der Agentenstatus aller Terminals eines Fensters, nach der Kennung ihres Tabs. */
@@ -52,12 +66,7 @@ export class AgentStatuses {
     } else {
       const previous = this.statuses.get(tabId);
       const since = previous?.state === update.state ? previous.since : now;
-      next.set(tabId, {
-        state: update.state,
-        lastAction: update.lastAction,
-        since,
-        assignment: update.assignment,
-      });
+      next.set(tabId, { state: update.state, lastAction: update.lastAction, since });
     }
     this.replace(next);
   }

@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { AgentStatuses, countStates, duration } from "./agentStatus";
+import { AgentStatuses, conversationOf, countStates, duration } from "./agentStatus";
 
 const working = {
   state: "working",
   lastAction: null,
   stateChanged: true,
   assignment: null,
+  conversation: null,
 } as const;
 
 describe("Agentenstatus eines Fensters", () => {
@@ -21,7 +22,13 @@ describe("Agentenstatus eines Fensters", () => {
     statuses.report("tab-1", working, 1_000);
     statuses.report(
       "tab-2",
-      { state: "waiting", lastAction: "Bash(cargo test)", stateChanged: true, assignment: null },
+      {
+        state: "waiting",
+        lastAction: "Bash(cargo test)",
+        stateChanged: true,
+        assignment: null,
+        conversation: null,
+      },
       2_000,
     );
 
@@ -29,13 +36,11 @@ describe("Agentenstatus eines Fensters", () => {
       state: "working",
       lastAction: null,
       since: 1_000,
-      assignment: null,
     });
     expect(statuses.snapshot().get("tab-2")).toEqual({
       state: "waiting",
       lastAction: "Bash(cargo test)",
       since: 2_000,
-      assignment: null,
     });
   });
 
@@ -45,30 +50,50 @@ describe("Agentenstatus eines Fensters", () => {
     statuses.report("tab-1", working, 1_000);
     statuses.report(
       "tab-1",
-      { state: "working", lastAction: "Edit(src/App.tsx)", stateChanged: false, assignment: null },
+      {
+        state: "working",
+        lastAction: "Edit(src/App.tsx)",
+        stateChanged: false,
+        assignment: null,
+        conversation: null,
+      },
       5_000,
     );
     expect(statuses.snapshot().get("tab-1")).toEqual({
       state: "working",
       lastAction: "Edit(src/App.tsx)",
       since: 1_000,
-      assignment: null,
     });
 
     statuses.report(
       "tab-1",
-      { state: "done", lastAction: "Erledigt.", stateChanged: true, assignment: null },
+      {
+        state: "done",
+        lastAction: "Erledigt.",
+        stateChanged: true,
+        assignment: null,
+        conversation: null,
+      },
       9_000,
     );
     expect(statuses.snapshot().get("tab-1")?.since).toBe(9_000);
   });
 
-  it("übernimmt den Auftrag mit jeder Meldung", () => {
-    const statuses = new AgentStatuses();
+  it("ergibt aus jeder Meldung das Gespräch samt Auftrag, das die Aufteilung sich merkt", () => {
+    const update = { ...working, assignment: "Baue 24", conversation: "abc-123" };
 
-    statuses.report("tab-1", { ...working, assignment: "/mattpocock-skills:implement 24" }, 1_000);
-
-    expect(statuses.snapshot().get("tab-1")?.assignment).toBe("/mattpocock-skills:implement 24");
+    expect(conversationOf(update)).toEqual({
+      agent: "claudeCode",
+      id: "abc-123",
+      assignment: "Baue 24",
+      working: true,
+    });
+    expect(conversationOf({ ...update, state: "done", assignment: null })).toEqual({
+      agent: "claudeCode",
+      id: "abc-123",
+    });
+    // Ohne Kennung ist der Agent beendet: kein Gespräch mehr.
+    expect(conversationOf({ ...update, state: "unknown", conversation: null })).toBeUndefined();
   });
 
   it("fällt auf „unbekannt“ zurück, wenn sich der Agent beendet", () => {
@@ -77,7 +102,13 @@ describe("Agentenstatus eines Fensters", () => {
 
     statuses.report(
       "tab-1",
-      { state: "unknown", lastAction: null, stateChanged: true, assignment: null },
+      {
+        state: "unknown",
+        lastAction: null,
+        stateChanged: true,
+        assignment: null,
+        conversation: null,
+      },
       2_000,
     );
 
@@ -114,7 +145,7 @@ describe("Agentenstatus eines Fensters", () => {
     unsubscribe();
     statuses.report(
       "tab-1",
-      { state: "done", lastAction: null, stateChanged: true, assignment: null },
+      { state: "done", lastAction: null, stateChanged: true, assignment: null, conversation: null },
       2_000,
     );
     expect(calls).toBe(1);
@@ -126,7 +157,13 @@ describe("Agentenstatus eines Fensters", () => {
     statuses.report("tab-2", working, 1_000);
     statuses.report(
       "tab-3",
-      { state: "waiting", lastAction: null, stateChanged: true, assignment: null },
+      {
+        state: "waiting",
+        lastAction: null,
+        stateChanged: true,
+        assignment: null,
+        conversation: null,
+      },
       1_000,
     );
 

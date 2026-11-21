@@ -26,13 +26,16 @@ export function TerminalView({
   const host = useRef<HTMLDivElement>(null);
   const { id, shell } = tab;
   const agent = tab.agent ?? false;
+  // Nur das Gespräch beim ersten Anzeigen zählt: Es entscheidet, ob der Agent
+  // es fortsetzt. Spätere Meldungen ändern es, ohne das Terminal neu zu starten.
+  const resume = useRef(tab.conversation).current;
 
   useEffect(() => {
     const element = host.current!;
-    const terminal = terminals.get(id, { cwd, shell, agent });
+    const terminal = terminals.get(id, { cwd, shell, agent, resume });
     terminal.attach(element);
     return () => terminal.detach(element);
-  }, [terminals, id, cwd, shell, agent]);
+  }, [terminals, id, cwd, shell, agent, resume]);
 
   // Erst nach dem Einhängen: Ein Terminal außerhalb des Dokuments nimmt keinen Fokus an.
   useEffect(() => {

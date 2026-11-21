@@ -144,7 +144,10 @@ function AgentsView({
   const card = (tab: Tab) => {
     const status = known.get(tab.id);
     const classes = ["card", status?.state === "waiting" && "wait", tab.id === selected && "sel"];
-    const assignment = visibleAssignment(tab, status?.assignment ?? null, settings.showAssignment);
+    const assignment = visibleAssignment(tab, settings.showAssignment);
+    // Arbeitete der Agent beim Schließen, hat er sich seit dem Fortsetzen noch
+    // nicht gemeldet: Das steht an Stelle der letzten Aktion.
+    const interrupted = !status && tab.conversation?.working;
     return (
       <button
         key={tab.id}
@@ -162,6 +165,7 @@ function AgentsView({
           </span>
         )}
         {status && <AgentCardStatus status={status} />}
+        {interrupted && <span className="last">{t("agent.interrupted")}</span>}
       </button>
     );
   };

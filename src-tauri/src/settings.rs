@@ -48,6 +48,9 @@ pub struct Settings {
     /// Ob der Tab eines Agenten und seine Karte in der Agenten-Ansicht den
     /// Auftrag zeigen.
     pub show_assignment: bool,
+    /// Ob Agenten beim Öffnen eines Projekts mit ihrem Gespräch
+    /// zurückkommen. Aus: Ihre Tabs kommen als gewöhnliche Terminals zurück.
+    pub resume_agents: bool,
 }
 
 impl Default for Settings {
@@ -60,6 +63,7 @@ impl Default for Settings {
             agent_command: crate::agent::DEFAULT_START_COMMAND.into(),
             notifications: true,
             show_assignment: true,
+            resume_agents: true,
         }
     }
 }
@@ -83,6 +87,7 @@ impl Settings {
             agent_command: field(&file, "agentCommand").unwrap_or(defaults.agent_command),
             notifications: field(&file, "notifications").unwrap_or(defaults.notifications),
             show_assignment: field(&file, "showAssignment").unwrap_or(defaults.show_assignment),
+            resume_agents: field(&file, "resumeAgents").unwrap_or(defaults.resume_agents),
         }
         .corrected()
     }

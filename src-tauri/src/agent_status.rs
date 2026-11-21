@@ -28,7 +28,8 @@ const BODY_LIMIT: u64 = 4 * 1024 * 1024;
 const HOOK_TIMEOUT: u32 = 5;
 
 /// Ereignisse, die Claude Code ohne Einschränkung meldet.
-const EVENTS: [&str; 8] = [
+const EVENTS: [&str; 9] = [
+    "SessionStart",
     "UserPromptSubmit",
     "PreToolUse",
     "PostToolUse",
@@ -71,6 +72,20 @@ pub struct StatusUpdate {
     pub state_changed: bool,
     /// Der Auftrag: der erste Prompt seit dem Start des Agenten oder dem
     /// letzten Leeren des Gesprächs, im Wortlaut.
+    pub assignment: Option<String>,
+    /// Die Kennung des Gesprächs, das gerade im Terminal läuft; `None`,
+    /// sobald der Agent sich beendet hat.
+    pub conversation: Option<String>,
+}
+
+/// Ein gespeichertes Gespräch, das ein Agent beim Start fortsetzt.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Resumed {
+    /// Die Kennung des Gesprächs.
+    pub conversation: String,
+    /// Der Auftrag des Gesprächs; der erste Prompt nach dem Fortsetzen
+    /// ersetzt ihn nicht.
     pub assignment: Option<String>,
 }
 
@@ -145,32 +160,38 @@ type Listener = Box<dyn Fn(StatusUpdate) + Send>;
 struct Registration {
     token: String,
     settings: PathBuf,
-    state: AgentState,
-    last_action: Option<String>,
-    assignment: Option<String>,
+    known: Known,
     on_update: Listener,
 }
 
+/// Was Kredr über den Agenten eines Terminals weiß.
+#[derive(Clone, PartialEq, Eq)]
+struct Known {
+    /// Der Agentenstatus.
+    state: AgentState,
+    /// Was der Agent zuletzt getan, gefragt oder gesagt hat.
+    last_action: Option<String>,
+    /// Der Auftrag des laufenden Gesprächs.
+    assignment: Option<String>,
+    /// Die Kennung des laufenden Gesprächs.
+    conversation: Option<String>,
+}
+
 impl Registration {
-    /// Übernimmt den neuen Status und meldet ihn, wenn sich etwas geändert hat.
-    fn apply(
-        &mut self,
-        state: AgentState,
-        last_action: Option<String>,
-        assignment: Option<String>,
-    ) {
-        let state_changed = state != self.state;
-        if !state_changed && last_action == self.last_action && assignment == self.assignment {
+    /// Übernimmt den neuen Stand und meldet ihn, wenn sich etwas geändert hat.
+    fn apply(&mut self, next: Known) {
+        if next == self.known {
             return;
         }
-        self.state = state;
-        self.last_action = last_action;
-        self.assignment = assignment;
+        let state_changed = next.state != self.known.state;
+        self.known = next;
+        let known = self.known.clone();
         (self.on_update)(StatusUpdate {
-            state,
-            last_action: self.last_action.clone(),
+            state: known.state,
+            last_action: known.last_action,
             state_changed,
-            assignment: self.assignment.clone(),
+            assignment: known.assignment,
+            conversation: known.conversation,
         });
     }
 }
@@ -227,10 +248,13 @@ impl AgentStatus {
     /// Meldet das Terminal an, in dem ein Agent startet, und liefert die
     /// Konfigurationsdatei, die der Agent beim Start mitbekommt.
     /// `on_update` erhält danach jede Änderung des Agentenstatus dieses
-    /// Terminals, der Reihe nach aus einem Hintergrund-Thread.
+    /// Terminals, der Reihe nach aus einem Hintergrund-Thread. Setzt der
+    /// Agent ein Gespräch fort (`resumed`), gelten dessen Kennung und
+    /// Auftrag von Anfang an.
     pub fn register(
         &self,
         terminal: u32,
+        resumed: Option<Resumed>,
         on_update: impl Fn(StatusUpdate) + Send + 'static,
     ) -> io::Result<PathBuf> {
         let token = random_token();
@@ -240,9 +264,12 @@ impl AgentStatus {
         let registration = Registration {
             token,
             settings: settings.clone(),
-            state: AgentState::Unknown,
-            last_action: None,
-            assignment: None,
+            known: Known {
+                state: AgentState::Unknown,
+                last_action: None,
+                assignment: resumed.as_ref().and_then(|r| r.assignment.clone()),
+                conversation: resumed.map(|r| r.conversation),
+            },
             on_update: Box::new(on_update),
         };
         self.registrations
@@ -260,7 +287,12 @@ impl AgentStatus {
             return;
         };
         if let Some(mut registration) = registrations.remove(&terminal) {
-            registration.apply(AgentState::Unknown, None, None);
+            registration.apply(Known {
+                state: AgentState::Unknown,
+                last_action: None,
+                assignment: None,
+                conversation: None,
+            });
             let _ = std::fs::remove_file(&registration.settings);
         }
     }
@@ -302,12 +334,17 @@ fn receive(registrations: &Registrations, url: &str, body: Option<&String>) -> b
     }
     let event = body.and_then(|body| serde_json::from_str::<Value>(body).ok());
     if let Some(event) = event {
-        if let Some((state, last_action)) =
-            next_status(registration.state, &registration.last_action, &event)
-        {
-            let assignment = next_assignment(&registration.assignment, &event);
-            registration.apply(state, last_action, assignment);
-        }
+        let known = &registration.known;
+        let status = next_status(known.state, &known.last_action, &event);
+        let (state, last_action) =
+            status.unwrap_or_else(|| (known.state, known.last_action.clone()));
+        let next = Known {
+            state,
+            last_action,
+            assignment: next_assignment(&known.assignment, &event),
+            conversation: next_conversation(&known.conversation, &event),
+        };
+        registration.apply(next);
     }
     true
 }
@@ -322,7 +359,21 @@ fn next_assignment(assignment: &Option<String>, event: &Value) -> Option<String>
             (!prompt.is_empty()).then(|| prompt.to_owned())
         }
         Some("SessionEnd") => None,
+        Some("SessionStart") if event["source"] == "clear" => None,
         _ => assignment.clone(),
+    }
+}
+
+/// Das Gespräch nach dem Ereignis `event`: das, dessen Kennung die Meldung
+/// trägt. Beendet sich der Agent, gibt es keines mehr; nach `/clear` meldet
+/// Claude Code das neue gleich mit seinem Start.
+fn next_conversation(conversation: &Option<String>, event: &Value) -> Option<String> {
+    if event["hook_event_name"] == "SessionEnd" {
+        return None;
+    }
+    match event["session_id"].as_str() {
+        Some(id) if !id.is_empty() => Some(id.to_owned()),
+        _ => conversation.clone(),
     }
 }
 

@@ -809,6 +809,27 @@ button {
   flex-direction: column;
 }
 
+/*
+ * Hier startet ein Terminal, dessen Tab verdeckt ist, etwa ein fortgesetzter
+ * Agent. Außerhalb des Fensters, aber mit einer Größe wie im Hauptbereich.
+ */
+.terminal-unseen {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 900px;
+  height: 600px;
+  visibility: hidden;
+}
+
+/* Jedes Terminal bekommt den ganzen Platz, auch wenn mehrere hier starten. */
+.terminal-unseen > div {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Der Behälter von xterm.js; seine Größe bestimmt Spalten und Zeilen. */
 .terminal-screen {
   flex: 1;
