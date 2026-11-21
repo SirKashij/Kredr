@@ -41,8 +41,9 @@ pub struct Settings {
     pub default_shell: Shell,
     /// Der Befehl, mit dem „Neuer Agent“ Claude Code startet.
     pub agent_command: String,
-    /// Ob Kredr sich meldet, wenn ein Agent auf Eingabe wartet und sein
-    /// Fenster nicht im Vordergrund ist.
+    /// Ob Kredr eine Windows-Benachrichtigung zeigt, wenn ein Agent auf
+    /// Eingabe wartet und sein Fenster nicht im Vordergrund ist. Das
+    /// Taskleisten-Symbol meldet sich unabhängig davon.
     pub notifications: bool,
 }
 

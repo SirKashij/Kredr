@@ -25,10 +25,10 @@ pub fn start(app: &AppHandle) {
     app.manage(Notifications::new(app_id));
 }
 
-/// Zeigt die Benachrichtigung des aufrufenden Fensters und lässt sein
-/// Taskleisten-Symbol auf sich aufmerksam machen, bis es den Fokus erhält.
-/// Ein Klick auf die Benachrichtigung holt das Fenster nach vorn und nennt
-/// ihm `tab_id`.
+/// Lässt das Taskleisten-Symbol des aufrufenden Fensters auf sich aufmerksam
+/// machen, bis es den Fokus erhält, und zeigt mit `notification` dazu seine
+/// Benachrichtigung. Ein Klick auf die Benachrichtigung holt das Fenster nach
+/// vorn und nennt ihm `tab_id`.
 #[tauri::command(async)]
 pub fn waiting_alert(
     app: AppHandle,
@@ -37,12 +37,17 @@ pub fn waiting_alert(
     title: String,
     body: String,
     tab_id: String,
+    notification: bool,
 ) -> Result<(), String> {
     let in_foreground = || window.is_focused().unwrap_or(false);
     if in_foreground() {
         return Ok(());
     }
     let _ = window.request_user_attention(Some(UserAttentionType::Critical));
+    // Der Schalter „Benachrichtigungen“ gilt nur der Windows-Benachrichtigung.
+    if !notification {
+        return Ok(());
+    }
     let label = window.label().to_string();
     let shown = notifications.show(window.label(), &title, &body, move || {
         crate::projects::focus(&app, &label);

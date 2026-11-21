@@ -6,7 +6,7 @@ import { decide, noAlerts } from "./waitingAlerts";
 
 interface WaitingAlerts {
   statuses: AgentStatuses;
-  /** Der Schalter „Benachrichtigungen“ der Einstellungen. */
+  /** Der Schalter „Benachrichtigungen“ der Einstellungen; er gilt nur der Windows-Benachrichtigung. */
   enabled: boolean;
   /** Titel und Text der Benachrichtigung für die Agenten in diesen Tabs. */
   describe: (tabIds: readonly string[]) => { title: string; body: string };
@@ -15,8 +15,8 @@ interface WaitingAlerts {
 }
 
 /**
- * Meldet wartende Agenten dieses Fensters mit einer Windows-Benachrichtigung
- * und am Taskleisten-Symbol. Wann, entscheidet `decide`; hier kommen nur
+ * Meldet wartende Agenten dieses Fensters am Taskleisten-Symbol und, wenn
+ * eingeschaltet, mit einer Windows-Benachrichtigung. Wann, entscheidet `decide`; hier kommen nur
  * Agentenstatus, Vordergrund und Uhr zusammen.
  */
 export function useWaitingAlerts({ statuses, enabled, describe, onSelect }: WaitingAlerts) {
@@ -43,10 +43,13 @@ export function useWaitingAlerts({ statuses, enabled, describe, onSelect }: Wait
       }
       if (!decision.notify) return;
       const tabId = decision.notify[0];
-      // Ohne Benachrichtigung bleiben Tab und Agenten-Ansicht der Hinweis.
-      invoke("waiting_alert", { ...latest.current.describe(decision.notify), tabId }).catch(
-        () => {},
-      );
+      const { notification } = decision;
+      // Scheitert das Melden, bleiben Tab und Agenten-Ansicht der Hinweis.
+      invoke("waiting_alert", {
+        ...latest.current.describe(decision.notify),
+        tabId,
+        notification,
+      }).catch(() => {});
     };
     const attend = (focused: boolean) => {
       foreground.current = focused;
