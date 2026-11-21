@@ -80,6 +80,13 @@ pub enum ErrorReason {
     /// Beim Zusammenführen sind Konflikte entstanden; die betroffenen
     /// Dateien stehen als `Conflicted` im Zustand.
     Conflict,
+    /// Der Branch-Wechsel würde lokale Änderungen überschreiben; Git hat ihn
+    /// deshalb nicht ausgeführt, und alles ist wie zuvor.
+    LocalChangesBlockSwitch,
+    /// Einen Branch mit diesem Namen gibt es schon.
+    BranchExists,
+    /// So darf ein Branch nicht heißen.
+    InvalidBranchName,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -152,6 +159,10 @@ pub struct RepositoryState {
     /// Wie viele Commits das Gegenstück voraus ist, nach dem Stand des
     /// letzten Fetch.
     pub behind: u32,
+    /// Was Git ignoriert, nach Pfad sortiert: Pfade ab dem Projektordner mit
+    /// `/`. Ein ignorierter Ordner steht für alles darin und wird nicht
+    /// Datei für Datei aufgeführt; der leere Pfad ist der Projektordner selbst.
+    pub ignored: Vec<String>,
 }
 
 /// Der Zustand oder der Grund, warum es keinen gibt (kein Git, kein
@@ -200,6 +211,9 @@ impl VersionControl {
                 "--branch",
                 "-z",
                 "--untracked-files=all",
+                // Ignorierte Ordner nur nennen, nicht durchsuchen: Sonst
+                // kostete `node_modules` jede Abfrage ein Vielfaches.
+                "--ignored=matching",
                 "--",
                 ".",
             ],
@@ -594,6 +608,7 @@ fn parse_status(output: &[u8], prefix: &str) -> RepositoryState {
         upstream: None,
         ahead: 0,
         behind: 0,
+        ignored: Vec::new(),
     };
     let mut untracked = Vec::new();
     let mut records = text.split('\0');
@@ -649,10 +664,12 @@ fn parse_status(output: &[u8], prefix: &str) -> RepositoryState {
                 status: FileStatus::Untracked,
                 staged: false,
             }),
+            "!" => state.ignored.push(ignored_path(prefix, rest)),
             _ => {}
         }
     }
     state.files.append(&mut untracked);
+    state.ignored.sort();
     state
 }
 
@@ -919,4 +936,304 @@ fn sync_failure(details: &str) -> ErrorReason {
     } else {
         ErrorReason::Failed
     }
+}
+
+// Commit-Liste (Verlauf)
+
+/// Ein Commit des aktuellen Branches.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Commit {
+    /// Die volle Kennung (Hash).
+    pub id: String,
+    /// Die vollständige Nachricht, auch mehrzeilig; ohne Leerzeilen am Ende.
+    pub message: String,
+    /// Der Name des Autors.
+    pub author: String,
+    /// Wann der Autor festgeschrieben hat, in Sekunden seit 1970 (UTC).
+    pub time: i64,
+    /// Ob der Commit auf einem Branch eines Remotes liegt. Ohne
+    /// eingetragenes Remote gilt jeder Commit als gepusht, weil es nichts
+    /// gibt, wohin er fehlen könnte.
+    pub pushed: bool,
+}
+
+/// Eine Datei, die ein Commit geändert hat.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitFile {
+    /// Relativ zum Projektordner und mit `/` getrennt.
+    pub path: String,
+    /// Der frühere Pfad einer umbenannten Datei.
+    pub original_path: Option<String>,
+    /// `Modified`, `Added`, `Deleted` oder `Renamed`.
+    pub status: FileStatus,
+}
+
+impl VersionControl {
+    /// Liefert Commits des aktuellen Branches, die neuesten zuerst: höchstens
+    /// `limit` Stück nach den ersten `skip`. Kommen weniger als `limit`
+    /// zurück, gibt es keine älteren mehr. Vor dem ersten Commit ist die
+    /// Liste leer.
+    pub fn commits(&self, skip: usize, limit: usize) -> Result<Vec<Commit>, VersionControlError> {
+        let (skip, limit) = (format!("--skip={skip}"), format!("--max-count={limit}"));
+        // Je Commit ein Abschnitt, die Felder durch das Zeichen 0x1f getrennt.
+        let format = "--format=%H%x1f%an%x1f%at%x1f%B";
+        let output = match self.git(&["log", "-z", format, &skip, &limit, "HEAD", "--"], None) {
+            Ok(output) => output,
+            // Ein frisches Repository hat noch keinen Commit.
+            Err(error) if error.details.contains("bad revision 'HEAD'") => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        let text = String::from_utf8_lossy(&output);
+        let mut commits = Vec::new();
+        for record in text.split('\0').filter(|record| !record.is_empty()) {
+            let fields: Vec<&str> = record.splitn(4, '\x1f').collect();
+            let [id, author, time, message] = fields[..] else {
+                return Err(failed("unexpected output of git log"));
+            };
+            commits.push(Commit {
+                id: id.to_owned(),
+                message: message.trim_end().to_owned(),
+                author: author.to_owned(),
+                time: time.parse().unwrap_or_default(),
+                pushed: true,
+            });
+        }
+        if commits.is_empty() {
+            return Ok(commits);
+        }
+        let unpushed = self.unpushed()?;
+        for commit in &mut commits {
+            commit.pushed = !unpushed.contains(&commit.id);
+        }
+        Ok(commits)
+    }
+
+    /// Die Commits des aktuellen Branches, die auf keinem Branch eines
+    /// Remotes liegen (nach dem Stand des letzten Abgleichs; es wird nichts
+    /// geholt). Ohne eingetragenes Remote ist die Menge leer.
+    fn unpushed(&self) -> Result<std::collections::HashSet<String>, VersionControlError> {
+        if self.git(&["remote"], None)?.is_empty() {
+            return Ok(std::collections::HashSet::new());
+        }
+        let output = self.git(&["rev-list", "HEAD", "--not", "--remotes", "--"], None)?;
+        let text = String::from_utf8_lossy(&output);
+        Ok(text.lines().map(str::to_owned).collect())
+    }
+
+    /// Liefert die Dateien im Projektordner, die der Commit gegenüber seinem
+    /// Vorgänger geändert hat (bei einer Zusammenführung gegenüber dem ersten
+    /// Vorgänger), nach Pfad sortiert.
+    pub fn commit_files(&self, commit: &str) -> Result<Vec<CommitFile>, VersionControlError> {
+        let commit = commit_id(commit)?;
+        let output = self.git(
+            &[
+                "diff-tree",
+                "-r",
+                "-z",
+                "--no-commit-id",
+                "--name-status",
+                "--find-renames",
+                // Der erste Commit hat keinen Vorgänger: Alles ist neu.
+                "--root",
+                "--diff-merges=first-parent",
+                // Nur der Projektordner, die Pfade ab dort.
+                "--relative",
+                commit,
+                "--",
+            ],
+            None,
+        )?;
+        let text = String::from_utf8_lossy(&output);
+        let mut fields = text.split('\0');
+        let mut files = Vec::new();
+        while let Some(code) = fields.next().filter(|code| !code.is_empty()) {
+            let unexpected = || failed("unexpected output of git diff-tree");
+            let status = match code.chars().next() {
+                Some('A' | 'C') => FileStatus::Added,
+                Some('D') => FileStatus::Deleted,
+                Some('R') => FileStatus::Renamed,
+                _ => FileStatus::Modified,
+            };
+            // Bei einer Umbenennung steht der frühere Pfad vor dem neuen.
+            let original_path = match status {
+                FileStatus::Renamed => Some(fields.next().ok_or_else(unexpected)?.to_owned()),
+                _ => None,
+            };
+            files.push(CommitFile {
+                path: fields.next().ok_or_else(unexpected)?.to_owned(),
+                original_path,
+                status,
+            });
+        }
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(files)
+    }
+
+    /// Liefert die beiden Fassungen, die der Diff einer Datei eines Commits
+    /// gegenüberstellt: die des (ersten) Vorgängers und die des Commits. Eine
+    /// Fassung, die es nicht gibt (neue oder gelöschte Datei), ist `Missing`.
+    pub fn commit_diff(
+        &self,
+        commit: &str,
+        file: &CommitFile,
+    ) -> Result<Diff, VersionControlError> {
+        let commit = commit_id(commit)?;
+        let path = &file.path;
+        let earlier = file.original_path.as_deref().unwrap_or(path);
+        let revisions = [
+            format!("{commit}^:./{earlier}"),
+            format!("{commit}:./{path}"),
+        ];
+        let [original, modified] = self.versions(revisions)?;
+        Ok(Diff { original, modified })
+    }
+}
+
+/// Lässt als Commit nur eine Kennung (Hash) zu, damit die Angabe weder als
+/// Option noch als anderer Stand gelesen werden kann.
+fn commit_id(commit: &str) -> Result<&str, VersionControlError> {
+    if commit.is_empty() || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(failed(format!("not a commit id: {commit}")));
+    }
+    Ok(commit)
+}
+
+/// Macht aus einem ignorierten Pfad ab dem Repository einen Pfad ab dem
+/// Projektordner. Ordner nennt Git mit `/` am Ende; hier stehen sie ohne.
+fn ignored_path(prefix: &str, path: &str) -> String {
+    // Der Projektordner selbst oder ein Ordner über ihm ist ignoriert.
+    if path.ends_with('/') && prefix.starts_with(path) {
+        return String::new();
+    }
+    project_path(prefix, path.strip_suffix('/').unwrap_or(path))
+}
+
+/// Ein Branch, zu dem sich wechseln lässt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Branch {
+    /// Der Name ohne das Remote davor, etwa `feature/x`.
+    pub name: String,
+    /// Das Remote (in der Regel `origin`, also GitHub), wenn es den Branch
+    /// nur dort gibt; fehlt bei einem lokalen Branch.
+    pub remote: Option<String>,
+    /// Ob dies der aktuelle Branch ist.
+    pub current: bool,
+}
+
+/// Branches: Liste, Wechsel und Anlage.
+impl VersionControl {
+    /// Alle lokalen Branches und danach die der Remotes, die es lokal noch
+    /// nicht gibt; jeweils der mit dem jüngsten Commit zuerst. Gelesen wird,
+    /// was das Repository vom Remote zuletzt geholt hat; der Aufruf selbst
+    /// geht nicht ins Netz.
+    pub fn branches(&self) -> Result<Vec<Branch>, VersionControlError> {
+        let output = self.git(
+            &[
+                "for-each-ref",
+                "--format=%(refname)%00%(HEAD)%00%(symref)",
+                "--sort=refname",
+                "--sort=-committerdate",
+                "refs/heads",
+                "refs/remotes",
+            ],
+            None,
+        )?;
+        let output = String::from_utf8_lossy(&output);
+        let mut local = Vec::new();
+        let mut remote = Vec::new();
+        for line in output.lines() {
+            let fields: Vec<&str> = line.split('\0').collect();
+            // Ein Verweis auf einen anderen Branch (`origin/HEAD`) ist kein eigener.
+            let [refname, head, ""] = fields[..] else {
+                continue;
+            };
+            if let Some(name) = refname.strip_prefix("refs/heads/") {
+                local.push(Branch {
+                    name: name.to_owned(),
+                    remote: None,
+                    current: head == "*",
+                });
+            } else if let Some((origin, name)) = refname
+                .strip_prefix("refs/remotes/")
+                .and_then(|name| name.split_once('/'))
+            {
+                remote.push(Branch {
+                    name: name.to_owned(),
+                    remote: Some(origin.to_owned()),
+                    current: false,
+                });
+            }
+        }
+        remote.retain(|branch| local.iter().all(|local| local.name != branch.name));
+        local.append(&mut remote);
+        Ok(local)
+    }
+
+    /// Wechselt zu einem Branch aus [`VersionControl::branches`]. Einen
+    /// Branch des Remotes legt der Wechsel lokal an; er folgt dann dem des
+    /// Remotes. Lokale Änderungen kommen mit. Würde der Wechsel welche
+    /// überschreiben, scheitert er mit `LocalChangesBlockSwitch`, ohne etwas
+    /// zu verändern.
+    pub fn switch_branch(&self, branch: &Branch) -> Result<(), VersionControlError> {
+        let target = match &branch.remote {
+            Some(remote) => format!("{remote}/{}", branch.name),
+            None => branch.name.clone(),
+        };
+        // Was wie ein Schalter aussieht, ist kein Branch.
+        if target.starts_with('-') {
+            return Err(invalid_branch_name(&target));
+        }
+        let args: &[&str] = match branch.remote {
+            Some(_) => &["switch", "--track", &target],
+            // Nur genau dieser Branch, kein gleichnamiger eines Remotes.
+            None => &["switch", "--no-guess", &target],
+        };
+        self.git(args, None).map_err(blocked_switch)?;
+        Ok(())
+    }
+
+    /// Legt vom aktuellen Stand aus einen Branch an und wechselt zu ihm;
+    /// lokale Änderungen kommen mit.
+    pub fn create_branch(&self, name: &str) -> Result<(), VersionControlError> {
+        self.git(&["check-ref-format", "--branch", name], None)
+            .map_err(|error| match error.reason {
+                ErrorReason::Failed => invalid_branch_name(name),
+                _ => error,
+            })?;
+        self.git(&["switch", "--create", name], None)
+            .map_err(|error| match error.reason {
+                ErrorReason::Failed if error.details.contains("already exists") => {
+                    VersionControlError {
+                        reason: ErrorReason::BranchExists,
+                        ..error
+                    }
+                }
+                _ => error,
+            })?;
+        Ok(())
+    }
+}
+
+fn invalid_branch_name(name: &str) -> VersionControlError {
+    VersionControlError {
+        reason: ErrorReason::InvalidBranchName,
+        details: format!("'{name}' is not a valid branch name"),
+    }
+}
+
+/// Erkennt den Wechsel, den Git zum Schutz lokaler Änderungen verweigert hat
+/// (geänderte ebenso wie Git noch unbekannte Dateien).
+fn blocked_switch(error: VersionControlError) -> VersionControlError {
+    if error.reason == ErrorReason::Failed
+        && error.details.contains("would be overwritten by checkout")
+    {
+        return VersionControlError {
+            reason: ErrorReason::LocalChangesBlockSwitch,
+            ..error
+        };
+    }
+    error
 }

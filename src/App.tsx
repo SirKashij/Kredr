@@ -40,6 +40,7 @@ import { openFileExternally, openUrl } from "./openExternally";
 import { projectName } from "./project";
 import { ProjectFileList } from "./projectFileList";
 import { watchProjectFiles } from "./projectFiles";
+import { BranchPicker } from "./BranchPicker";
 import { QuickOpen } from "./QuickOpen";
 import { Sidebar } from "./Sidebar";
 import { StartPage } from "./StartPage";
@@ -99,6 +100,7 @@ export function App() {
   /** Die Dateiliste des Projekts für „Datei per Namen öffnen“. */
   const [fileList] = useState(() => new ProjectFileList());
   const [quickOpen, setQuickOpen] = useState(false);
+  const [branchPicker, setBranchPicker] = useState(false);
   /** Die in diesem Fenster zuletzt geöffneten Dateien, die jüngste zuerst. */
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [versionControl] = useState(() => new VersionControlStore());
@@ -260,9 +262,10 @@ export function App() {
     if (isFileView && line !== undefined) files.get(project, file).reveal({ line, ...position });
   }
 
-  /** Schließt „Datei per Namen öffnen“; die Tastatur geht zurück in den Hauptbereich. */
+  /** Schließt „Datei per Namen öffnen“ und die Branch-Liste; die Tastatur geht zurück in den Hauptbereich. */
   const closeQuickOpen = useCallback(() => {
     setQuickOpen(false);
+    setBranchPicker(false);
     setFocusRequest((count) => count + 1);
   }, []);
 
@@ -509,8 +512,9 @@ export function App() {
           onClose={closeQuickOpen}
         />
       )}
+      {branchPicker && project && <BranchPicker project={project} onClose={closeQuickOpen} />}
       <footer className="status">
-        <BranchStatus />
+        <BranchStatus onSwitch={() => setBranchPicker(true)} />
         <SyncStatus />
         <span>{project ? projectName(project) : t("status.noProject")}</span>
         <AgentCounters statuses={statuses} />

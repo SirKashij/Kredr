@@ -13,8 +13,8 @@ use tauri::State;
 
 use crate::project_files::ProjectWatcher;
 use crate::version_control::{
-    BackgroundFetch, ChangedFile, Committed, Diff, RepositoryState, StateResult, StateSubscription,
-    StateWatch, VersionControl, VersionControlError,
+    BackgroundFetch, Branch, ChangedFile, Committed, Diff, RepositoryState, StateResult,
+    StateSubscription, StateWatch, VersionControl, VersionControlError,
 };
 use crate::ProjectWatchers;
 
@@ -224,4 +224,60 @@ pub(crate) fn version_control_pull(project: PathBuf) -> Result<(), VersionContro
 #[tauri::command(async)]
 pub(crate) fn version_control_pull_and_push(project: PathBuf) -> Result<(), VersionControlError> {
     VersionControl::open(&project).pull_and_push()
+}
+
+/// Commits des aktuellen Branches, die neuesten zuerst: höchstens `limit`
+/// nach den ersten `skip`.
+#[tauri::command(async)]
+pub(crate) fn version_control_commits(
+    project: PathBuf,
+    skip: usize,
+    limit: usize,
+) -> Result<Vec<crate::version_control::Commit>, VersionControlError> {
+    VersionControl::open(&project).commits(skip, limit)
+}
+
+/// Die Dateien, die ein Commit geändert hat.
+#[tauri::command(async)]
+pub(crate) fn version_control_commit_files(
+    project: PathBuf,
+    commit: String,
+) -> Result<Vec<crate::version_control::CommitFile>, VersionControlError> {
+    VersionControl::open(&project).commit_files(&commit)
+}
+
+/// Die beiden Fassungen, die der Diff einer Datei eines Commits gegenüberstellt.
+#[tauri::command(async)]
+pub(crate) fn version_control_commit_diff(
+    project: PathBuf,
+    commit: String,
+    file: crate::version_control::CommitFile,
+) -> Result<Diff, VersionControlError> {
+    VersionControl::open(&project).commit_diff(&commit, &file)
+}
+
+/// Die Branches des Projekts: die lokalen und die des Remotes.
+#[tauri::command(async)]
+pub(crate) fn version_control_branches(
+    project: PathBuf,
+) -> Result<Vec<Branch>, VersionControlError> {
+    VersionControl::open(&project).branches()
+}
+
+/// Wechselt zu einem Branch aus der Liste.
+#[tauri::command(async)]
+pub(crate) fn version_control_switch_branch(
+    project: PathBuf,
+    branch: Branch,
+) -> Result<(), VersionControlError> {
+    VersionControl::open(&project).switch_branch(&branch)
+}
+
+/// Legt vom aktuellen Stand aus einen Branch an und wechselt zu ihm.
+#[tauri::command(async)]
+pub(crate) fn version_control_create_branch(
+    project: PathBuf,
+    name: String,
+) -> Result<(), VersionControlError> {
+    VersionControl::open(&project).create_branch(&name)
 }

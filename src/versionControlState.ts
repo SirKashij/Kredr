@@ -35,6 +35,12 @@ export interface RepositoryState {
   ahead: number;
   /** Wie viele Commits GitHub voraus ist, nach dem Stand der letzten Abfrage. */
   behind: number;
+  /**
+   * Was Git ignoriert: Pfade wie in `files`. Ein ignorierter Ordner steht für
+   * alles darin; der leere Pfad ist der Projektordner selbst. Der Kern liefert
+   * die Liste immer; fehlt sie, ist nichts ignoriert.
+   */
+  ignored?: string[];
 }
 
 export type ErrorReason =
@@ -46,7 +52,10 @@ export type ErrorReason =
   | "pushRejected"
   | "unreachable"
   | "noRemote"
-  | "conflict";
+  | "conflict"
+  | "localChangesBlockSwitch"
+  | "branchExists"
+  | "invalidBranchName";
 
 /** Warum die Versionskontrolle etwas nicht liefern konnte. */
 export interface VersionControlError {
@@ -117,6 +126,9 @@ export const errorMessages: Record<ErrorReason, MessageKey> = {
   unreachable: "versionControl.error.unreachable",
   noRemote: "versionControl.error.noRemote",
   conflict: "versionControl.error.conflict",
+  localChangesBlockSwitch: "versionControl.error.localChangesBlockSwitch",
+  branchExists: "versionControl.error.branchExists",
+  invalidBranchName: "versionControl.error.invalidBranchName",
 };
 
 /** Ob beide dieselbe Zeile der Liste meinen. */
