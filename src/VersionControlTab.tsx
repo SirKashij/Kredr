@@ -262,7 +262,7 @@ function LoadedDiff({
 let modelCount = 0;
 
 /** Der Diff-Editor von Monaco für zwei Fassungen einer Datei, nur zum Lesen. */
-function DiffEditor({
+export function DiffEditor({
   project,
   path,
   originalPath,
@@ -288,31 +288,11 @@ function DiffEditor({
   const texts = useRef({ original, modified });
   texts.current = { original, modified };
 
-  useEffect(() => {
-    let created: editor.IStandaloneDiffEditor | null = null;
-    let cancelled = false;
-    loadMonaco().then(({ monaco, baseOptions }) => {
-      if (cancelled) return;
-      created = monaco.editor.createDiffEditor(host.current!, {
-        ...baseOptions,
-        readOnly: true,
-        originalEditable: false,
-        renderSideBySide: initial.current.sideBySide,
-        // Die Darstellung wählt der Nutzer, nicht die Breite der Gruppe.
-        useInlineViewWhenSpaceIsLimited: false,
-        fontFamily: initial.current.settings.fontFamily,
-        fontSize: initial.current.settings.fontSize,
-      });
-      setShown(created);
-    });
-    return () => {
-      cancelled = true;
-      created?.dispose();
-      setShown(null);
-    };
-  }, []);
-
   // Je Datei zwei Texte in Monaco; die Sprache ergibt sich aus dem Dateinamen.
+  // Dieser Effekt steht vor dem, der den Editor erzeugt: Beim Aushängen räumt
+  // React in dieser Reihenfolge auf, und die Modelle müssen sich vom Editor
+  // lösen, bevor er zerstört ist. Ein zerstörter Editor wirft bei `setModel`,
+  // und ohne Fehlergrenze ist dann das ganze Fenster grau.
   useEffect(() => {
     if (!shown) return;
     let models: editor.IDiffEditorModel | null = null;
@@ -339,6 +319,30 @@ function DiffEditor({
       models?.modified.dispose();
     };
   }, [shown, project, path, originalPath]);
+
+  useEffect(() => {
+    let created: editor.IStandaloneDiffEditor | null = null;
+    let cancelled = false;
+    loadMonaco().then(({ monaco, baseOptions }) => {
+      if (cancelled) return;
+      created = monaco.editor.createDiffEditor(host.current!, {
+        ...baseOptions,
+        readOnly: true,
+        originalEditable: false,
+        renderSideBySide: initial.current.sideBySide,
+        // Die Darstellung wählt der Nutzer, nicht die Breite der Gruppe.
+        useInlineViewWhenSpaceIsLimited: false,
+        fontFamily: initial.current.settings.fontFamily,
+        fontSize: initial.current.settings.fontSize,
+      });
+      setShown(created);
+    });
+    return () => {
+      cancelled = true;
+      created?.dispose();
+      setShown(null);
+    };
+  }, []);
 
   // Ändert sich eine Fassung, bleibt die Stelle stehen, an der gelesen wird.
   useEffect(() => {
