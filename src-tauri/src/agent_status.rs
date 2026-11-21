@@ -95,6 +95,8 @@ pub struct StatusUpdate {
 #[serde(rename_all = "camelCase")]
 pub enum SubagentState {
     Working,
+    /// Er wartet auf eine Genehmigung oder Eingabe der Person.
+    Waiting,
     Done,
 }
 
@@ -580,6 +582,17 @@ fn next_subagents(next: &mut Known, subagent: Option<&str>, event: &Value) {
             }
         }
         _ => {}
+    }
+    // Er wartet, solange seine Rückfrage offen ist; jedes weitere Ereignis
+    // von ihm beantwortet sie.
+    if next
+        .questions
+        .iter()
+        .any(|question| question.subagent == id)
+    {
+        known.state = SubagentState::Waiting;
+    } else if known.state == SubagentState::Waiting {
+        known.state = SubagentState::Working;
     }
 }
 

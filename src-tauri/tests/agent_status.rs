@@ -586,6 +586,65 @@ fn ein_ereignis_eines_subagenten_wird_seine_letzte_aktion() {
     assert_eq!(update.last_action.as_deref(), Some("Agent(Felder finden)"));
 }
 
+/// Die Zustände der Subagenten in der Reihenfolge ihres Starts.
+fn subagent_states(update: &StatusUpdate) -> Vec<SubagentState> {
+    update.subagents.iter().map(|s| s.state).collect()
+}
+
+#[test]
+fn nur_der_fragende_subagent_wartet_bis_zur_antwort() {
+    let status = AgentStatus::start(runtime_folder("subagenten-fragt")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "npm.cmd run check" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Prüfe alles" }));
+    launch(
+        &agent,
+        "a1",
+        "general-purpose",
+        "Prüfung laufen lassen",
+        "t1",
+    );
+    launch(&agent, "b2", "Explore", "Changelog lesen", "t2");
+    settle(&agent);
+
+    agent.report("PermissionRequest", from_subagent("a1", bash.clone()));
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(
+        subagent_states(&update),
+        [SubagentState::Waiting, SubagentState::Working]
+    );
+    assert_eq!(
+        update.subagents[0].last_action.as_deref(),
+        Some("Bash(npm.cmd run check)")
+    );
+
+    // Genehmigt: Der Subagent arbeitet wieder.
+    agent.report("PostToolUse", from_subagent("a1", bash));
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Working);
+    assert_eq!(
+        subagent_states(&update),
+        [SubagentState::Working, SubagentState::Working]
+    );
+}
+
+#[test]
+fn ein_abgelehnter_subagent_ist_fertig() {
+    let status = AgentStatus::start(runtime_folder("subagenten-abgelehnt")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Veröffentliche" }));
+    launch(&agent, "a1", "Explore", "Veröffentlichen", "t1");
+    agent.report("PermissionRequest", from_subagent("a1", bash));
+    assert_eq!(subagent_states(&settle(&agent)), [SubagentState::Waiting]);
+
+    agent.report("SubagentStop", from_subagent("a1", json!({})));
+    assert_eq!(subagent_states(&settle(&agent)), [SubagentState::Done]);
+}
+
 #[test]
 fn ohne_bekannte_beschreibung_bleibt_der_typ() {
     let status = AgentStatus::start(runtime_folder("subagenten-typ")).unwrap();
