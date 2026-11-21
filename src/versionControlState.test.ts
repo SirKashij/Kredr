@@ -16,7 +16,15 @@ function change(path: string, status: FileStatus = "modified", staged = false): 
 }
 
 function repository(files: ChangedFile[], branch: string | null = "main"): RepositoryState {
-  return { kind: "repository", branch, commit: "0123456789abcdef0123456789abcdef01234567", files };
+  return {
+    kind: "repository",
+    branch,
+    commit: "0123456789abcdef0123456789abcdef01234567",
+    files,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+  };
 }
 
 const noRepository: VersionControlState = {
@@ -51,7 +59,7 @@ test("ohne Branch nennt die Statusleiste den gekürzten Commit", () => {
 test("ohne Repository nennt die Statusleiste nichts", () => {
   expect(branchLabel(noRepository)).toBeNull();
   expect(branchLabel(null)).toBeNull();
-  expect(branchLabel({ kind: "repository", branch: null, commit: null, files: [] })).toBeNull();
+  expect(branchLabel({ ...repository([], null), commit: null })).toBeNull();
 });
 
 test("ausgewählte und nicht ausgewählte Änderungen stehen getrennt, je nach Pfad sortiert", () => {

@@ -29,9 +29,24 @@ export interface RepositoryState {
   /** Der aktuelle Commit; `null`, solange es noch keinen gibt. */
   commit: string | null;
   files: ChangedFile[];
+  /** Das Gegenstück des Branches auf GitHub; `null`, solange er noch nie gepusht wurde. */
+  upstream: string | null;
+  /** Wie viele Commits noch nicht gepusht sind. */
+  ahead: number;
+  /** Wie viele Commits GitHub voraus ist, nach dem Stand der letzten Abfrage. */
+  behind: number;
 }
 
-export type ErrorReason = "gitMissing" | "notARepository" | "timedOut" | "failed";
+export type ErrorReason =
+  | "gitMissing"
+  | "notARepository"
+  | "timedOut"
+  | "failed"
+  | "authenticationRequired"
+  | "pushRejected"
+  | "unreachable"
+  | "noRemote"
+  | "conflict";
 
 /** Warum die Versionskontrolle etwas nicht liefern konnte. */
 export interface VersionControlError {
@@ -97,6 +112,11 @@ export const errorMessages: Record<ErrorReason, MessageKey> = {
   notARepository: "versionControl.noRepository",
   timedOut: "versionControl.error.timedOut",
   failed: "versionControl.error.failed",
+  authenticationRequired: "versionControl.error.authenticationRequired",
+  pushRejected: "versionControl.error.pushRejected",
+  unreachable: "versionControl.error.unreachable",
+  noRemote: "versionControl.error.noRemote",
+  conflict: "versionControl.error.conflict",
 };
 
 /** Ob beide dieselbe Zeile der Liste meinen. */
@@ -119,4 +139,59 @@ export function followSelection(
     state.files.find((file) => file.path === selected.path) ??
     null
   );
+}
+
+/** Was die Versionskontrolle eines Fensters gerade ausführt; immer nur eines. */
+export type Operation =
+  "stage" | "unstage" | "discard" | "commit" | "commitAndPush" | "push" | "pull" | "pullAndPush";
+
+/** Der Text der Sprachdatei, der eine laufende Operation benennt. */
+export const operationLabels: Record<Operation, MessageKey> = {
+  stage: "versionControl.busy.stage",
+  unstage: "versionControl.busy.unstage",
+  discard: "versionControl.busy.discard",
+  commit: "versionControl.busy.commit",
+  commitAndPush: "versionControl.busy.commitAndPush",
+  push: "versionControl.busy.push",
+  pull: "versionControl.busy.pull",
+  pullAndPush: "versionControl.busy.pullAndPush",
+};
+
+/** Ob sich festschreiben lässt: Es gibt Änderungen, eine Nachricht, und nichts läuft. */
+export function canCommit(
+  state: VersionControlState | null,
+  message: string,
+  busy: Operation | null,
+): boolean {
+  return (
+    busy === null && state?.kind === "repository" && state.files.length > 0 && message.trim() !== ""
+  );
+}
+
+/** Ob ein Commit alle Änderungen festschreibt, weil keine ausdrücklich ausgewählt ist (wie VS Code). */
+export function commitsEverything(state: RepositoryState): boolean {
+  return !state.files.some((file) => file.staged);
+}
+
+/** Ob sich pushen lässt; ein Branch ohne Gegenstück wird dabei auf GitHub angelegt. */
+export function canPush(state: VersionControlState | null, busy: Operation | null): boolean {
+  return busy === null && state?.kind === "repository" && state.branch !== null;
+}
+
+/** Ob sich pullen lässt; dafür braucht der Branch ein Gegenstück. */
+export function canPull(state: VersionControlState | null, busy: Operation | null): boolean {
+  return busy === null && state?.kind === "repository" && state.upstream !== null;
+}
+
+/** Vorsprung und Rückstand gegenüber GitHub; `null` ohne Gegenstück. */
+export function syncCounts(
+  state: VersionControlState | null,
+): { ahead: number; behind: number } | null {
+  if (state?.kind !== "repository" || state.upstream === null) return null;
+  return { ahead: state.ahead, behind: state.behind };
+}
+
+/** Ob nach diesem Fehler „Erst holen, dann pushen“ der Ausweg ist. */
+export function offersPullAndPush(error: VersionControlError | null): boolean {
+  return error?.reason === "pushRejected";
 }
