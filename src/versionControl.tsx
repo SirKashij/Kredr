@@ -1,5 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
+import type { ShownCommitFile } from "./commitHistory";
 import type { FileContent } from "./fileState";
 import { followSelection, type ChangedFile, type VersionControlState } from "./versionControlState";
 
@@ -25,6 +26,8 @@ export interface VersionControlSnapshot {
   state: VersionControlState | null;
   /** Die Änderung, deren Diff der Tab „Versionskontrolle“ zeigt. */
   selected: ChangedFile | null;
+  /** Die Datei eines Commits aus dem Verlauf, deren Diff der Tab stattdessen zeigt. */
+  commitFile: ShownCommitFile | null;
   /** Ob der Diff beide Fassungen nebeneinander zeigt statt untereinander. */
   sideBySide: boolean;
 }
@@ -39,6 +42,7 @@ export class VersionControlStore {
     project: null,
     state: null,
     selected: null,
+    commitFile: null,
     sideBySide: true,
   };
   private readonly listeners = new Set<() => void>();
@@ -55,7 +59,7 @@ export class VersionControlStore {
   /** Folgt dem Zustand des Projekts, bis der Rückgabewert aufgerufen wird. */
   watch(project: string): () => void {
     let stopped = false;
-    this.replace({ ...this.current, project, state: null, selected: null });
+    this.replace({ ...this.current, project, state: null, selected: null, commitFile: null });
     const onState = new Channel<VersionControlState>();
     onState.onmessage = (state) => {
       if (stopped) return;
@@ -76,7 +80,12 @@ export class VersionControlStore {
 
   /** Wählt die Änderung, deren Diff gezeigt wird. */
   select(file: ChangedFile) {
-    this.replace({ ...this.current, selected: file });
+    this.replace({ ...this.current, selected: file, commitFile: null });
+  }
+
+  /** Zeigt statt einer Änderung den Diff einer Datei eines Commits aus dem Verlauf. */
+  showCommitFile(shown: ShownCommitFile) {
+    this.replace({ ...this.current, selected: null, commitFile: shown });
   }
 
   setSideBySide(sideBySide: boolean) {

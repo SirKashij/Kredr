@@ -28,10 +28,20 @@ export function translate(
 }
 
 const I18nContext = createContext<Translate>((key, values) => translate("en", key, values));
+const LanguageContext = createContext<Language>("en");
 
 export function I18nProvider({ language, children }: { language: Language; children: ReactNode }) {
   const t: Translate = (key, values) => translate(language, key, values);
-  return <I18nContext.Provider value={t}>{children}</I18nContext.Provider>;
+  return (
+    <LanguageContext.Provider value={language}>
+      <I18nContext.Provider value={t}>{children}</I18nContext.Provider>
+    </LanguageContext.Provider>
+  );
+}
+
+/** Die Sprache des Fensters, etwa für Datumsangaben. */
+export function useLanguage(): Language {
+  return useContext(LanguageContext);
 }
 
 /** Liefert die Übersetzungsfunktion für die Sprache des Fensters. */
