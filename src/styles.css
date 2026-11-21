@@ -1080,6 +1080,14 @@ button {
   margin-left: auto;
 }
 
+.status .status-error {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--git-deleted);
+}
+
 .status .agent-count {
   display: inline-flex;
   align-items: center;
