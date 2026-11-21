@@ -12,8 +12,8 @@ use tauri::State;
 
 use crate::project_files::ProjectWatcher;
 use crate::version_control::{
-    ChangedFile, Diff, RepositoryState, StateResult, StateSubscription, StateWatch, VersionControl,
-    VersionControlError,
+    Branch, ChangedFile, Diff, RepositoryState, StateResult, StateSubscription, StateWatch,
+    VersionControl, VersionControlError,
 };
 use crate::ProjectWatchers;
 
@@ -147,4 +147,30 @@ pub(crate) fn version_control_diff(
     file: ChangedFile,
 ) -> Result<Diff, VersionControlError> {
     VersionControl::open(&project).diff(&file)
+}
+
+/// Die Branches des Projekts: die lokalen und die des Remotes.
+#[tauri::command(async)]
+pub(crate) fn version_control_branches(
+    project: PathBuf,
+) -> Result<Vec<Branch>, VersionControlError> {
+    VersionControl::open(&project).branches()
+}
+
+/// Wechselt zu einem Branch aus der Liste.
+#[tauri::command(async)]
+pub(crate) fn version_control_switch_branch(
+    project: PathBuf,
+    branch: Branch,
+) -> Result<(), VersionControlError> {
+    VersionControl::open(&project).switch_branch(&branch)
+}
+
+/// Legt vom aktuellen Stand aus einen Branch an und wechselt zu ihm.
+#[tauri::command(async)]
+pub(crate) fn version_control_create_branch(
+    project: PathBuf,
+    name: String,
+) -> Result<(), VersionControlError> {
+    VersionControl::open(&project).create_branch(&name)
 }
