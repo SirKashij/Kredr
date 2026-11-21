@@ -276,8 +276,10 @@ fn changed_names(mut answer: &[u8]) -> Option<Vec<PathBuf>> {
         let name_length = field(8)?;
         let name: Vec<u16> = answer
             .get(NAME_OFFSET..NAME_OFFSET + name_length)?
-            .chunks_exact(2)
-            .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|unit| u16::from_le_bytes(*unit))
             .collect();
         names.push(PathBuf::from(OsString::from_wide(&name)));
         if next == 0 {

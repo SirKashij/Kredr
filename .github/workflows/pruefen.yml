@@ -5,9 +5,9 @@ on:
   push:
     branches: [main]
 
-concurrency:
-  group: pruefen-${{ github.ref }}
-  cancel-in-progress: true
+# Bewusst ohne cancel-in-progress: Beim Umsetzen eines Specs landet jeder Ticket-Merge als eigener
+# Push im Integrationszweig, und jeder braucht ein eigenes Ergebnis. Abgebrochene Läufe haben in
+# Version 1 einen wiederkehrend roten Test drei Stunden lang wie Zufall aussehen lassen.
 
 jobs:
   pruefen:
@@ -21,33 +21,16 @@ jobs:
           node-version: 24
           cache: npm
 
-      - run: npm ci
-
-      - name: Formatierung der Oberfläche
-        run: npm run format:check
-
-      - name: Typprüfung der Oberfläche
-        run: npm run typecheck
-
-      - name: Tests der Oberfläche
-        run: npm test
-
-      # Der Kern bettet die gebaute Oberfläche ein und übersetzt ohne sie nicht.
-      - name: Oberfläche bauen
-        run: npm run build
-
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
-      - name: Formatierung des Kerns
-        run: cargo fmt --check
-        working-directory: src-tauri
+      - run: npm ci
 
-      - name: Tests des Kerns
-        run: cargo test
-        working-directory: src-tauri
+      # Dieselbe Prüfkette wie lokal; die Schritte stehen in scripts/check.mjs.
+      - name: Prüfen
+        run: npm run check

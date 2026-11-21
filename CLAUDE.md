@@ -14,11 +14,13 @@ Die fünf Standard-Labels (`needs-triage`, `needs-info`, `ready-for-agent`, `rea
 
 Single-context: ein `GLOSSARY.md` und `docs/adr/` im Hauptverzeichnis. See `docs/agents/domain.md`.
 
+### Parallele Worktrees und Integrationszweig
+
+Build-Cache, Prüfen und Warten auf CI nach jedem Merge: `docs/agents/integration.md`.
+
 ## Befehle
 
+- Alles prüfen wie CI (Formatierung, Typen, Tests, Build, Clippy, Kern-Tests): `npm run check`
+- Formatieren: `npm run format` bzw. `cargo fmt` in `src-tauri/`
 - Entwicklung starten: `npm run tauri dev`
-- Typprüfung der Oberfläche: `npm run typecheck`
-- Formatierung der Oberfläche: `npm run format` (prüfen: `npm run format:check`)
-- Tests der Oberfläche: `npm test`
-- Tests des Kerns (starten echte PowerShell): `cargo test` in `src-tauri/`
 - Installer bauen: `npm run tauri build` (Ergebnis in `src-tauri/target/release/bundle/nsis/`)

@@ -10,6 +10,7 @@
     "test": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "check": "node scripts/check.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

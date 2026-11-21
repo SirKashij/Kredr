@@ -1,7 +1,7 @@
 //! Tests des Aufteilungsspeichers über seine öffentliche Schnittstelle,
 //! gegen echte Dateien in temporären Ordnern.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use kredr_lib::arrangement_store::ArrangementStore;
 
@@ -14,7 +14,7 @@ fn temp_dir(name: &str) -> PathBuf {
 }
 
 /// Legt unterhalb von `root` einen Ordner an, der als Projekt dient.
-fn project(root: &PathBuf, name: &str) -> PathBuf {
+fn project(root: &Path, name: &str) -> PathBuf {
     let dir = root.join(name);
     std::fs::create_dir_all(&dir).expect("Projektordner sollte anlegbar sein");
     dir
