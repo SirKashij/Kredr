@@ -9,6 +9,24 @@ const A = 65;
 const B = 66;
 const E = 69;
 
+test("Strg+W schließt den aktiven Tab wie Strg+F4", () => {
+  expect(resolveKey(key(87, { ctrlKey: true }), false)).toEqual({ kind: "closeTab" });
+  expect(resolveKey(key(115, { ctrlKey: true }), false)).toEqual({ kind: "closeTab" });
+  // Ohne Strg bleibt W eine gewöhnliche Eingabe.
+  expect(resolveKey(key(87), false)).toBeNull();
+});
+
+test("Strg+Tab und Strg+Umschalt+Tab wechseln zum nächsten und vorigen Tab der Gruppe", () => {
+  const Tab = 9;
+  expect(resolveKey(key(Tab, { ctrlKey: true }), false)).toEqual({ kind: "nextTab" });
+  expect(resolveKey(key(Tab, { ctrlKey: true, shiftKey: true }), false)).toEqual({
+    kind: "previousTab",
+  });
+  // Tab allein gehört der Shell und der Dateiansicht.
+  expect(resolveKey(key(Tab), false)).toBeNull();
+  expect(resolveKey(key(Tab, { shiftKey: true }), false)).toBeNull();
+});
+
 test("Strg+Umschalt+A startet einen neuen Agenten", () => {
   expect(resolveKey(key(A, { ctrlKey: true, shiftKey: true }), false)).toEqual({
     kind: "newAgent",
