@@ -149,6 +149,36 @@ pub(crate) fn version_control_diff(
     VersionControl::open(&project).diff(&file)
 }
 
+/// Commits des aktuellen Branches, die neuesten zuerst: höchstens `limit`
+/// nach den ersten `skip`.
+#[tauri::command(async)]
+pub(crate) fn version_control_commits(
+    project: PathBuf,
+    skip: usize,
+    limit: usize,
+) -> Result<Vec<crate::version_control::Commit>, VersionControlError> {
+    VersionControl::open(&project).commits(skip, limit)
+}
+
+/// Die Dateien, die ein Commit geändert hat.
+#[tauri::command(async)]
+pub(crate) fn version_control_commit_files(
+    project: PathBuf,
+    commit: String,
+) -> Result<Vec<crate::version_control::CommitFile>, VersionControlError> {
+    VersionControl::open(&project).commit_files(&commit)
+}
+
+/// Die beiden Fassungen, die der Diff einer Datei eines Commits gegenüberstellt.
+#[tauri::command(async)]
+pub(crate) fn version_control_commit_diff(
+    project: PathBuf,
+    commit: String,
+    file: crate::version_control::CommitFile,
+) -> Result<Diff, VersionControlError> {
+    VersionControl::open(&project).commit_diff(&commit, &file)
+}
+
 /// Die Branches des Projekts: die lokalen und die des Remotes.
 #[tauri::command(async)]
 pub(crate) fn version_control_branches(

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { editor } from "monaco-editor/editor/editor.api";
+import { CommitHistory, loadCommitDiff } from "./CommitHistoryView";
+import { summaryOf, type ShownCommitFile } from "./commitHistory";
 import { fileName, fullPath } from "./filePath";
 import { useT } from "./i18n/i18n";
 import { loadMonaco } from "./monacoLoader";
@@ -17,7 +19,8 @@ import { statusLabels, type ChangedFile, type VersionControlError } from "./vers
 
 /**
  * Der Tab „Versionskontrolle“ im Hauptbereich: der große Diff der Änderung,
- * die in der Seitenleiste gewählt ist. Mit `focused` erhält der Diff die
+ * die in der Seitenleiste gewählt ist, oder der Datei eines Commits aus dem
+ * Verlauf, der rechts daneben steht. Mit `focused` erhält der Diff die
  * Tastatureingaben, erneut bei jedem neuen `focusRequest`.
  */
 export function VersionControlTab({
@@ -29,18 +32,25 @@ export function VersionControlTab({
 }) {
   const t = useT();
   const store = useVersionControlStore();
-  const { project, state, selected, sideBySide } = useVersionControl();
+  const { project, state, selected, commitFile, sideBySide } = useVersionControl();
+  // Was zuletzt angeklickt wurde: eine Datei eines Commits oder eine Änderung.
+  const shown = commitFile?.file ?? selected;
 
   return (
     <div className="vc-tab">
       <div className="vc-diff">
-        {project && selected ? (
+        {project && shown ? (
           <>
             <div className="vc-head">
-              <span className="vc-path" title={selected.path}>
-                {selected.path}
+              <span className="vc-path" title={shown.path}>
+                {shown.path}
               </span>
-              <span className={`git-${selected.status}`}>{t(statusLabels[selected.status])}</span>
+              <span className={`git-${shown.status}`}>{t(statusLabels[shown.status])}</span>
+              {commitFile && (
+                <span className="vc-commit" title={commitFile.commit.message}>
+                  {commitFile.commit.id.slice(0, 7)} · {summaryOf(commitFile.commit.message)}
+                </span>
+              )}
               <div className="seg" role="group">
                 <button
                   className={sideBySide ? "on" : ""}
@@ -58,13 +68,25 @@ export function VersionControlTab({
                 </button>
               </div>
             </div>
-            <ChangeDiff
-              project={project}
-              file={selected}
-              sideBySide={sideBySide}
-              focused={focused}
-              focusRequest={focusRequest}
-            />
+            {commitFile ? (
+              <CommitDiff
+                project={project}
+                shown={commitFile}
+                sideBySide={sideBySide}
+                focused={focused}
+                focusRequest={focusRequest}
+              />
+            ) : (
+              selected && (
+                <ChangeDiff
+                  project={project}
+                  file={selected}
+                  sideBySide={sideBySide}
+                  focused={focused}
+                  focusRequest={focusRequest}
+                />
+              )
+            )}
           </>
         ) : state?.kind === "unavailable" ? (
           <GitError error={state} />
@@ -78,13 +100,17 @@ export function VersionControlTab({
           )
         )}
       </div>
-      {/* Rechts neben dem Diff folgt die Spalte „Verlauf“ mit den letzten Commits (#17). */}
+      <CommitHistory />
     </div>
   );
 }
 
+/** Die Datei, deren Diff gezeigt wird: eine Änderung oder eine Datei eines Commits. */
+type DiffFile = Pick<ChangedFile, "path" | "originalPath">;
+
 /** Was der Diff zuletzt geladen hat. */
-type Loaded = { file: ChangedFile; diff: Diff } | { file: ChangedFile; error: VersionControlError };
+type Loaded<File extends DiffFile = ChangedFile> =
+  { file: File; diff: Diff } | { file: File; error: VersionControlError };
 
 /** Der Text einer Fassung; eine fehlende Fassung (neue oder gelöschte Datei) ist leer. */
 function textOf(version: Version): string | null {
@@ -107,7 +133,6 @@ function ChangeDiff({
   focused: boolean;
   focusRequest: number;
 }) {
-  const t = useT();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
   // `file` ist nach jedem neuen Zustand ein neues Objekt; auch dann lädt der Diff neu.
@@ -144,6 +169,59 @@ function ChangeDiff({
     };
   }, [project, file]);
 
+  return <LoadedDiff project={project} loaded={loaded} {...view} />;
+}
+
+/**
+ * Der Diff einer Datei eines Commits aus dem Verlauf. Ein Commit ändert sich
+ * nicht mehr; geladen wird einmal.
+ */
+function CommitDiff({
+  project,
+  shown,
+  ...view
+}: {
+  project: string;
+  shown: ShownCommitFile;
+  sideBySide: boolean;
+  focused: boolean;
+  focusRequest: number;
+}) {
+  const [loaded, setLoaded] = useState<Loaded<ShownCommitFile["file"]> | null>(null);
+  const { file } = shown;
+  const commit = shown.commit.id;
+
+  useEffect(() => {
+    let stopped = false;
+    loadCommitDiff(project, commit, file)
+      .then(
+        (diff) => ({ file, diff }),
+        (error: VersionControlError) => ({ file, error }),
+      )
+      .then((next) => {
+        if (!stopped) setLoaded(next);
+      });
+    return () => {
+      stopped = true;
+    };
+  }, [project, commit, file]);
+
+  return <LoadedDiff project={project} loaded={loaded} {...view} />;
+}
+
+/** Zeigt, was ein Diff geladen hat: die beiden Fassungen oder warum es keine gibt. */
+function LoadedDiff({
+  project,
+  loaded,
+  ...view
+}: {
+  project: string;
+  loaded: Loaded<DiffFile> | null;
+  sideBySide: boolean;
+  focused: boolean;
+  focusRequest: number;
+}) {
+  const t = useT();
   // Bis der Diff der neu gewählten Datei da ist, bleibt der bisherige stehen.
   if (!loaded) return <div className="vc-body" />;
   if ("error" in loaded) {
@@ -282,8 +360,9 @@ function DiffEditor({
   useEffect(() => {
     if (!focused || !shown) return;
     const active = document.activeElement;
-    // Wer in der Seitenleiste durch die Änderungen klickt, behält dort die Tastatur.
-    if (host.current!.contains(active) || active?.closest(".sidebar")) return;
+    // Wer in der Seitenleiste durch die Änderungen oder im Verlauf durch die
+    // Commits klickt, behält dort die Tastatur.
+    if (host.current!.contains(active) || active?.closest(".sidebar, .vc-history")) return;
     shown.focus();
   }, [focused, focusRequest, shown]);
 

@@ -1454,7 +1454,7 @@ button {
   border-radius: 4px;
 }
 
-/* Der Tab „Versionskontrolle“: der Diff, rechts daneben später der Verlauf. */
+/* Der Tab „Versionskontrolle“: der Diff, rechts daneben der Verlauf. */
 .vc-tab {
   flex: 1;
   min-width: 0;
@@ -1528,6 +1528,105 @@ button {
 .vc-body > .git-notice pre,
 .vc-diff > .git-notice pre {
   text-align: left;
+}
+
+/* Die Spalte „Verlauf“ rechts im Tab „Versionskontrolle“: die letzten Commits. */
+.vc-history {
+  width: 300px;
+  flex: none;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--side);
+}
+
+.commit-row {
+  display: grid;
+  gap: 1px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.commit-row:hover {
+  background: #2a2d2e;
+}
+
+.commit.open > .commit-row {
+  background: var(--sel);
+}
+
+.commit-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.commit-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-row small {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.commit-author {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Markiert einen Commit, der noch auf keinem Remote liegt. */
+.commit-row .pill {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--wait);
+  border-radius: 8px;
+  font-size: 10px;
+  color: var(--wait);
+}
+
+.commit-details {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Die vollständige Nachricht, auch mehrzeilig. */
+.commit-message {
+  margin: 0;
+  padding: 6px 12px 2px;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  user-select: text;
+}
+
+.commit-meta {
+  padding: 2px 12px 6px;
+  font-size: 11.5px;
+  color: var(--dim);
+  user-select: text;
+}
+
+.commit-details .change-row {
+  padding-left: 12px;
+}
+
+/* Der Commit, aus dem die gezeigte Datei stammt, in der Kopfzeile des Diffs. */
+.vc-commit {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
 }
 
 /* „Maximieren“ und „Terminals einblenden“ in der Tab-Leiste. */
