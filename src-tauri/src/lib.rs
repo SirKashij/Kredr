@@ -81,8 +81,13 @@ fn agent_start_command(settings: &SettingsStore) -> String {
 struct OpenedTerminal {
     id: u32,
     /// Das Programm des Agent-Startbefehls, wenn ein Agent starten sollte,
-    /// es aber nicht installiert ist. Das Terminal ist dann eine gewöhnliche Shell.
+    /// es aber im Suchpfad nicht zu finden ist. Der Startbefehl läuft
+    /// trotzdem: Ein Alias oder eine Funktion aus dem Profil der Shell kennt
+    /// nur die Shell selbst.
     missing_agent_program: Option<String>,
+    /// Die gewünschte Shell, wenn es sie auf diesem Rechner nicht (mehr)
+    /// gibt. Das Terminal läuft dann mit PowerShell.
+    missing_shell: Option<Shell>,
 }
 
 /// Der Empfänger für den Agentenstatus. Er fehlt, wenn er sich beim Start
@@ -110,15 +115,14 @@ fn terminal_open(
 ) -> Result<OpenedTerminal, String> {
     let id = terminals.next_id.fetch_add(1, Ordering::Relaxed);
     // Ohne Angabe gilt die Standard-Shell aus den Einstellungen.
-    let shell = shell.unwrap_or_else(|| settings.get().default_shell);
+    let wanted = shell.unwrap_or_else(|| settings.get().default_shell);
+    let shell = terminal::startable_shell(wanted, &terminal::available_shells());
+    let missing_shell = (shell != wanted).then_some(wanted);
     let mut start_command = agent.then(|| agent_start_command(&settings));
     let search_path = std::env::var_os("PATH").unwrap_or_default();
     let missing_agent_program = start_command
         .as_deref()
         .and_then(|command| agent::missing_program(command, &search_path));
-    if missing_agent_program.is_some() {
-        start_command = None;
-    }
     // Der Agent meldet seinen Status über eine Konfiguration, die nur für
     // dieses Terminal gilt. Lässt sie sich nicht anlegen, startet er ohne.
     let status = agent_status
@@ -172,6 +176,7 @@ fn terminal_open(
     Ok(OpenedTerminal {
         id,
         missing_agent_program,
+        missing_shell,
     })
 }
 
@@ -509,7 +514,10 @@ fn available_shells() -> Vec<Shell> {
 pub fn run() {
     // Der Empfänger für den Agentenstatus aller Fenster; sein Laufzeitordner
     // gehört diesem Kredr-Prozess.
-    let runtime_dir = std::env::temp_dir().join(format!("kredr-{}", std::process::id()));
+    let temp = std::env::temp_dir();
+    let runtime_dir = agent_status::runtime_folder_of(&temp, std::process::id());
+    // Was frühere Kredr-Prozesse dort hinterlassen haben, hält den Start nicht auf.
+    std::thread::spawn(move || agent_status::remove_orphaned_runtime_folders(&temp));
     let agent_status: AgentStatusReceiver = AgentStatus::start(runtime_dir).ok().map(Arc::new);
     let mut builder = tauri::Builder::default();
     // Ein einziger Prozess verwaltet alle Fenster. Die Entwicklungsfassung

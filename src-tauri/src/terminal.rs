@@ -40,6 +40,17 @@ pub fn available_shells() -> Vec<Shell> {
     shells
 }
 
+/// Die Shell, mit der ein Terminal startet, das `wanted` haben soll: `wanted`
+/// selbst, wenn es sie unter `available` (noch) gibt, sonst PowerShell. So
+/// startet ein Terminal auch, nachdem Git für Windows deinstalliert wurde.
+pub fn startable_shell(wanted: Shell, available: &[Shell]) -> Shell {
+    if available.contains(&wanted) {
+        wanted
+    } else {
+        Shell::Powershell
+    }
+}
+
 pub struct TerminalOptions {
     pub shell: Shell,
     /// Startordner der Shell.

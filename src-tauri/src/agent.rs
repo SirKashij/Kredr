@@ -20,8 +20,9 @@ const EXTENSIONS: [&str; 5] = ["exe", "cmd", "bat", "com", "ps1"];
 /// Geprüft wird nur ein schlichter Programmname am Anfang des Befehls. Ein
 /// Pfad, ein Aufruf mit `&` oder eine Variable gilt nie als fehlend; das
 /// entscheidet die Shell. Ebenso wenig erkennt die Prüfung Aliase und
-/// Funktionen aus dem PowerShell-Profil: Wer `claude` nur so bereitstellt,
-/// bekommt den Hinweis zu Unrecht.
+/// Funktionen aus dem Profil der Shell: Wer `claude` nur so bereitstellt,
+/// bekommt den Hinweis zu Unrecht. Der Aufrufer führt den Befehl deshalb
+/// trotzdem aus und zeigt den Hinweis nur dazu.
 pub fn missing_program(command: &str, search_path: &OsStr) -> Option<String> {
     let program = command.split_whitespace().next()?;
     let plain = program

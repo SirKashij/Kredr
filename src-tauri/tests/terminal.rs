@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
-use kredr_lib::terminal::{available_shells, Shell, Terminal, TerminalEvent, TerminalOptions};
+use kredr_lib::terminal::{
+    available_shells, startable_shell, Shell, Terminal, TerminalEvent, TerminalOptions,
+};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -201,6 +203,23 @@ fn prozessende_wird_nach_der_letzten_ausgabe_gemeldet() {
 #[test]
 fn powershell_wird_immer_angeboten() {
     assert_eq!(available_shells().first(), Some(&Shell::Powershell));
+}
+
+#[test]
+fn fehlt_die_gewuenschte_shell_startet_das_terminal_mit_powershell() {
+    // Git für Windows wurde deinstalliert, die Einstellung nennt noch Git Bash.
+    assert_eq!(
+        startable_shell(Shell::GitBash, &[Shell::Powershell]),
+        Shell::Powershell
+    );
+    assert_eq!(
+        startable_shell(Shell::GitBash, &[Shell::Powershell, Shell::GitBash]),
+        Shell::GitBash
+    );
+    assert_eq!(
+        startable_shell(Shell::Powershell, &[Shell::Powershell]),
+        Shell::Powershell
+    );
 }
 
 /// Git Bash gehört zu Git für Windows; ohne es gibt es hier nichts zu prüfen.
