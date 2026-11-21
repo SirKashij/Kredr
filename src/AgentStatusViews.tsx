@@ -2,16 +2,19 @@ import { Fragment, useEffect, useState, type ReactNode } from "react";
 import {
   countStates,
   duration,
+  stateCounters as counters,
   subagentLabel,
   subagentsInOrder,
+  subagentSummary,
   subagentTooltip,
   useAgentStatuses,
   type AgentState,
   type AgentStatus,
   type AgentStatuses,
   type SubagentStatus,
+  type SummaryPart,
 } from "./agentStatus";
-import { plural, useT, type MessageKey, type Translate } from "./i18n/i18n";
+import { plural, useT, type MessageKey } from "./i18n/i18n";
 
 const labels: Record<AgentState, MessageKey> = {
   working: "agentStatus.working",
@@ -25,22 +28,15 @@ const tooltips: Record<AgentState, MessageKey> = {
   done: "agentStatus.doneTooltip",
 };
 
-/** Die Texte der Zähler, je für genau einen und für mehrere Agenten. */
-const counters: Record<AgentState, [one: MessageKey, other: MessageKey]> = {
-  working: ["agentStatus.count.working.one", "agentStatus.count.working.other"],
-  waiting: ["agentStatus.count.waiting.one", "agentStatus.count.waiting.other"],
-  done: ["agentStatus.count.done.one", "agentStatus.count.done.other"],
-};
-
 /** Die Reihenfolge der Zähler in der Statusleiste. */
 const states: AgentState[] = ["working", "waiting", "done"];
 
 /** Der Farbpunkt eines Zustands mit Kurzbeschreibung beim Überfahren. */
-function Dot({ state }: { state: AgentState }) {
+function Dot({ state, small = false }: { state: AgentState; small?: boolean }) {
   const t = useT();
   return (
     <span
-      className={`dot ${state}`}
+      className={small ? `dot small ${state}` : `dot ${state}`}
       role="img"
       title={t(tooltips[state])}
       aria-label={t(tooltips[state])}
@@ -82,57 +78,33 @@ function Runtime({ since, until = null }: { since: number; until?: number | null
 /** Wie viele Subagenten eine Karte zeigt, bis „+ N weitere“ sie aufklappt. */
 const VISIBLE_SUBAGENTS = 3;
 
-/** Ein Teil der Zusammenfassung; mit `state` in der Farbe dieses Zustands. */
-export interface SummaryPart {
-  text: string;
-  state: AgentState | null;
-}
-
-/**
- * Die Zusammenfassung eingeklappter Subagenten, etwa „6 Subagenten · 3
- * arbeiten“: die Anzahl, dann die wartenden und die arbeitenden, ohne beide
- * „alle fertig“.
- */
-export function subagentSummary(t: Translate, subagents: readonly SubagentStatus[]): SummaryPart[] {
-  const counts: Record<AgentState, number> = { working: 0, waiting: 0, done: 0 };
-  for (const { state } of subagents) counts[state]++;
-  const parts: SummaryPart[] = [
-    {
-      text: plural(t, subagents.length, "agent.subagents.count.one", "agent.subagents.count.other"),
-      state: null,
-    },
-  ];
-  for (const state of ["waiting", "working"] as const) {
-    if (counts[state] > 0)
-      parts.push({ text: plural(t, counts[state], ...counters[state]), state });
-  }
-  if (parts.length === 1) parts.push({ text: t("agent.subagents.allDone"), state: null });
-  return parts;
-}
-
 /**
  * Der Abschnitt „Subagenten“ auf der Karte eines Agenten: je Subagent
  * Farbpunkt, Beschreibung und Laufzeit, Typ und letzte Aktion im Tooltip.
- * Wartende stehen vor arbeitenden, diese vor fertigen. Von mehr als drei
- * Subagenten zeigt „+ N weitere“ den Rest. Der Pfeil an der Überschrift
- * klappt den Abschnitt zu einer Zusammenfassung ein. Ein Klick auf eine
- * Zeile wirkt wie ein Klick auf die Karte, Pfeil und „weitere“ nicht. Ohne
- * Subagenten erscheint nichts.
+ * Wartende stehen vor arbeitenden, diese vor fertigen. Von mehr als
+ * {@link VISIBLE_SUBAGENTS} Subagenten zeigt „+ N weitere“ den Rest
+ * (`showsAll`). Der Pfeil an der Überschrift klappt den Abschnitt zu einer
+ * Zusammenfassung ein (`collapsed`). Jede Zeile ist ein Knopf, der wie ein
+ * Klick auf die Karte wirkt, Pfeil und „weitere“ nicht. Ohne Subagenten
+ * erscheint nichts.
  */
 export function SubagentSection({
   subagents,
   collapsed,
   onToggleCollapsed,
+  showsAll,
+  onToggleShowsAll,
 }: {
   subagents: readonly SubagentStatus[];
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  showsAll: boolean;
+  onToggleShowsAll: () => void;
 }) {
   const t = useT();
-  const [all, setAll] = useState(false);
   if (subagents.length === 0) return null;
   const ordered = subagentsInOrder(subagents);
-  const shown = all ? ordered : ordered.slice(0, VISIBLE_SUBAGENTS);
+  const shown = showsAll ? ordered : ordered.slice(0, VISIBLE_SUBAGENTS);
   const hidden = ordered.length - shown.length;
   return (
     <span className="subagents">
@@ -155,25 +127,28 @@ export function SubagentSection({
       </span>
       {!collapsed &&
         shown.map((subagent) => (
-          <span
+          // Ohne eigenen Klick: Er geht an die Karte und wählt ihr Terminal.
+          <button
             key={subagent.id}
             className={`subagent ${subagent.state}`}
             title={subagentTooltip(subagent)}
           >
-            <span className={`dot small ${subagent.state}`} />
+            <Dot state={subagent.state} small />
             <span className="description">{subagentLabel(subagent)}</span>
             <Runtime since={subagent.started} until={subagent.ended} />
-          </span>
+          </button>
         ))}
-      {!collapsed && (hidden > 0 || all) && ordered.length > VISIBLE_SUBAGENTS && (
+      {!collapsed && ordered.length > VISIBLE_SUBAGENTS && (
         <button
           className="more"
           onClick={(event) => {
             event.stopPropagation();
-            setAll(!all);
+            onToggleShowsAll();
           }}
         >
-          {all ? t("agent.subagents.less") : t("agent.subagents.more", { count: String(hidden) })}
+          {showsAll
+            ? t("agent.subagents.less")
+            : t("agent.subagents.more", { count: String(hidden) })}
         </button>
       )}
     </span>
@@ -231,7 +206,7 @@ export function AgentCardStatus({ status }: { status: AgentStatus }) {
 /** Die Zahl der wartenden Agenten am Symbol der Agenten-Ansicht. */
 export function WaitingBadge({ statuses }: { statuses: AgentStatuses }) {
   const t = useT();
-  const { waiting } = countStates(useAgentStatuses(statuses));
+  const { waiting } = countStates(useAgentStatuses(statuses).values());
   if (waiting === 0) return null;
   const text = plural(t, waiting, ...counters.waiting);
   return (
@@ -244,7 +219,7 @@ export function WaitingBadge({ statuses }: { statuses: AgentStatuses }) {
 /** Die Zähler für arbeitende, wartende und fertige Agenten in der Statusleiste. */
 export function AgentCounters({ statuses }: { statuses: AgentStatuses }) {
   const t = useT();
-  const counts = countStates(useAgentStatuses(statuses));
+  const counts = countStates(useAgentStatuses(statuses).values());
   return (
     <>
       {states

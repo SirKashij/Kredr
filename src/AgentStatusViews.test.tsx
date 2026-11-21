@@ -3,12 +3,10 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SubagentStatus } from "./agentStatus";
-import { SubagentSection, subagentSummary } from "./AgentStatusViews";
-import { I18nProvider, translate } from "./i18n/i18n";
+import { SubagentSection } from "./AgentStatusViews";
+import { I18nProvider } from "./i18n/i18n";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-const t = translate.bind(null, "de");
 
 function sub(id: string, state: SubagentStatus["state"]): SubagentStatus {
   return {
@@ -21,45 +19,6 @@ function sub(id: string, state: SubagentStatus["state"]): SubagentStatus {
     ended: state === "done" ? 1_000 : null,
   };
 }
-
-const text = (subagents: SubagentStatus[]) =>
-  subagentSummary(t, subagents)
-    .map((part) => part.text)
-    .join(" · ");
-
-describe("Zusammenfassung eingeklappter Subagenten", () => {
-  it("nennt die Anzahl und wie viele arbeiten", () => {
-    const six = ["a", "b", "c"].flatMap((id) => [sub(id, "working"), sub(`${id}2`, "done")]);
-    expect(text(six)).toBe("6 Subagenten · 3 arbeiten");
-    expect(text([sub("a", "working"), sub("b", "done")])).toBe("2 Subagenten · 1 arbeitet");
-  });
-
-  it("sagt „alle fertig“, wenn keiner mehr arbeitet", () => {
-    expect(text([sub("a", "done"), sub("b", "done")])).toBe("2 Subagenten · alle fertig");
-    expect(text([sub("a", "done")])).toBe("1 Subagent · alle fertig");
-  });
-
-  it("nennt wartende vor arbeitenden", () => {
-    expect(text([sub("a", "waiting"), sub("b", "done")])).toBe("2 Subagenten · 1 wartet");
-    expect(text([sub("a", "working"), sub("b", "waiting"), sub("c", "waiting")])).toBe(
-      "3 Subagenten · 2 warten · 1 arbeitet",
-    );
-  });
-
-  it("färbt den Teil der wartenden wie ihren Zustand", () => {
-    expect(subagentSummary(t, [sub("a", "waiting")])[1]).toEqual({
-      text: "1 wartet",
-      state: "waiting",
-    });
-  });
-
-  it("färbt den Teil der arbeitenden wie ihren Zustand", () => {
-    expect(subagentSummary(t, [sub("a", "working")])).toEqual([
-      { text: "1 Subagent", state: null },
-      { text: "1 arbeitet", state: "working" },
-    ]);
-  });
-});
 
 describe("Abschnitt Subagenten auf der Karte", () => {
   let host: HTMLDivElement;
@@ -78,15 +37,18 @@ describe("Abschnitt Subagenten auf der Karte", () => {
     host.remove();
   });
 
-  /** Die Karte eines Agenten mit Einklappen wie in der Agenten-Ansicht. */
+  /** Die Karte eines Agenten mit Einklappen und „weitere“ wie in der Agenten-Ansicht. */
   function Card({ subagents }: { subagents: SubagentStatus[] }) {
     const [collapsed, setCollapsed] = useState(false);
+    const [showsAll, setShowsAll] = useState(false);
     return (
       <div onClick={selected}>
         <SubagentSection
           subagents={subagents}
           collapsed={collapsed}
           onToggleCollapsed={() => setCollapsed(!collapsed)}
+          showsAll={showsAll}
+          onToggleShowsAll={() => setShowsAll(!showsAll)}
         />
       </div>
     );

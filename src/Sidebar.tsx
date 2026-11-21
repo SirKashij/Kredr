@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { views, type View } from "./ActivityBar";
 import { useAgentStatuses, type AgentStatuses } from "./agentStatus";
 import { AgentCardStatus, AgentCardTop, SubagentSection } from "./AgentStatusViews";
@@ -28,10 +28,43 @@ interface AgentsViewProps {
   onNewTerminal?: () => void;
 }
 
-/** Welche Agenten ihre Subagenten eingeklappt zeigen, nach Tab. */
+/** Wie die Agenten ihre Subagenten zeigen, nach Tab. */
 interface SubagentFolding {
-  collapsedSubagents: ReadonlySet<string>;
-  onToggleSubagents: (tabId: string) => void;
+  /** Die Agenten, deren Subagenten eingeklappt sind. */
+  collapsed: TabSet;
+  /** Die Agenten, die mit „+ N weitere“ alle Subagenten zeigen. */
+  showingAll: TabSet;
+}
+
+/** Eine Menge von Tabs samt Umschalten eines Tabs. */
+interface TabSet {
+  has: (tabId: string) => boolean;
+  toggle: (tabId: string) => void;
+}
+
+/**
+ * Eine Menge von Tabs, die nur im Speicher lebt: Sie gehört nicht zur
+ * Aufteilung und wird nicht gespeichert. Geschlossene Tabs fallen heraus.
+ */
+function useTabSet(arrangement: Arrangement): TabSet {
+  const [tabIds, setTabIds] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    const open = new Set(tabsOf(arrangement).map((tab) => tab.id));
+    setTabIds((current) =>
+      [...current].every((tabId) => open.has(tabId))
+        ? current
+        : new Set([...current].filter((tabId) => open.has(tabId))),
+    );
+  }, [arrangement]);
+  return {
+    has: (tabId) => tabIds.has(tabId),
+    toggle: (tabId) =>
+      setTabIds((current) => {
+        const next = new Set(current);
+        if (!next.delete(tabId)) next.add(tabId);
+        return next;
+      }),
+  };
 }
 
 interface SidebarProps extends AgentsViewProps {
@@ -68,15 +101,10 @@ export function Sidebar({
 }: SidebarProps) {
   const t = useT();
   const [width, setWidth] = useState(280);
-  // Hier statt in der Agenten-Ansicht, damit das Einklappen einen Wechsel der
-  // Ansicht übersteht. Es gehört nicht zur Aufteilung und wird nicht gespeichert.
-  const [collapsedSubagents, setCollapsedSubagents] = useState<ReadonlySet<string>>(new Set());
-  const onToggleSubagents = (tabId: string) =>
-    setCollapsedSubagents((collapsed) => {
-      const next = new Set(collapsed);
-      if (!next.delete(tabId)) next.add(tabId);
-      return next;
-    });
+  // Hier statt in der Agenten-Ansicht, damit beides einen Wechsel der
+  // Ansicht übersteht.
+  const collapsed = useTabSet(agents.arrangement);
+  const showingAll = useTabSet(agents.arrangement);
   const sidebar = useRef<HTMLElement>(null);
   const title = views.find(({ id }) => id === view)!.label;
   const showsExplorer = view === "explorer" && project !== null;
@@ -94,11 +122,7 @@ export function Sidebar({
       <div className="side-title">{t(title)}</div>
       <div className="side-body" hidden={showsExplorer || showsSearch}>
         {view === "agents" ? (
-          <AgentsView
-            {...agents}
-            collapsedSubagents={collapsedSubagents}
-            onToggleSubagents={onToggleSubagents}
-          />
+          <AgentsView {...agents} collapsed={collapsed} showingAll={showingAll} />
         ) : view === "versionControl" && project !== null ? (
           <VersionControlView onShowChange={onShowChange} />
         ) : (
@@ -151,8 +175,8 @@ function AgentsView({
   onSelectTab,
   onNewAgent,
   onNewTerminal,
-  collapsedSubagents,
-  onToggleSubagents,
+  collapsed,
+  showingAll,
 }: AgentsViewProps & SubagentFolding) {
   const t = useT();
   const { settings } = useSettings();
@@ -169,38 +193,37 @@ function AgentsView({
     // Arbeitete der Agent beim Schließen, hat er sich seit dem Fortsetzen noch
     // nicht gemeldet: Das steht an Stelle der letzten Aktion.
     const interrupted = !status && tab.conversation?.working;
-    // Kein `button`: Pfeil und „weitere“ der Subagenten sind eigene Knöpfe.
+    // Die Karte selbst ist kein Knopf, damit keine Knöpfe in einem Knopf
+    // stehen: Ihr oberer Teil und jede Zeile eines Subagenten sind je ein
+    // Knopf, ihre Klicks gehen an die Karte. Pfeil und „weitere“ halten ihre
+    // Klicks zurück. Mit der Maus wirkt die ganze Karte.
     return (
       <div
         key={tab.id}
         className={classes.filter(Boolean).join(" ")}
-        role="button"
-        tabIndex={0}
         onClick={() => onSelectTab(tab.id)}
-        onKeyDown={(event) => {
-          if (event.target !== event.currentTarget) return;
-          if (event.key !== "Enter" && event.key !== " ") return;
-          event.preventDefault();
-          onSelectTab(tab.id);
-        }}
       >
-        <AgentCardTop
-          status={status}
-          name={tabLabel(tab, t)}
-          kicker={assignment === null ? undefined : tab.name ? "named" : "agent"}
-        />
-        {assignment !== null && (
-          <span className="assignment" title={assignment}>
-            {assignment}
-          </span>
-        )}
-        {status && <AgentCardStatus status={status} />}
-        {interrupted && <span className="last">{t("agent.interrupted")}</span>}
+        <button className="card-main">
+          <AgentCardTop
+            status={status}
+            name={tabLabel(tab, t)}
+            kicker={assignment === null ? undefined : tab.name ? "named" : "agent"}
+          />
+          {assignment !== null && (
+            <span className="assignment" title={assignment}>
+              {assignment}
+            </span>
+          )}
+          {status && <AgentCardStatus status={status} />}
+          {interrupted && <span className="last">{t("agent.interrupted")}</span>}
+        </button>
         {status && (
           <SubagentSection
             subagents={status.subagents}
-            collapsed={collapsedSubagents.has(tab.id)}
-            onToggleCollapsed={() => onToggleSubagents(tab.id)}
+            collapsed={collapsed.has(tab.id)}
+            onToggleCollapsed={() => collapsed.toggle(tab.id)}
+            showsAll={showingAll.has(tab.id)}
+            onToggleShowsAll={() => showingAll.toggle(tab.id)}
           />
         )}
       </div>

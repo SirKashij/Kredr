@@ -483,9 +483,23 @@ button {
   cursor: pointer;
 }
 
-.card:focus-visible,
+/* Der obere Teil der Karte ist ein Knopf; den Fokus zeigt die ganze Karte. */
+.card .card-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.card .card-main:focus-visible {
+  outline: none;
+}
+
+.card:has(.card-main:focus-visible),
 .card .toggle:focus-visible,
-.card .more:focus-visible {
+.card .more:focus-visible,
+.card .subagent:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
@@ -647,6 +661,7 @@ button {
   padding: 2px 6px;
   margin: 0 -6px;
   border-radius: 3px;
+  text-align: left;
 }
 
 .card .subagent:hover {

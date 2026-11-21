@@ -6,9 +6,12 @@ import {
   duration,
   subagentLabel,
   subagentsInOrder,
+  subagentSummary,
   subagentTooltip,
   type SubagentState,
+  type SubagentStatus,
 } from "./agentStatus";
+import { translate } from "./i18n/i18n";
 
 const working = {
   state: "working",
@@ -201,7 +204,7 @@ describe("Agentenstatus eines Fensters", () => {
       1_000,
     );
 
-    expect(countStates(statuses.snapshot())).toEqual({ working: 2, waiting: 1, done: 0 });
+    expect(countStates(statuses.snapshot().values())).toEqual({ working: 2, waiting: 1, done: 0 });
   });
 });
 
@@ -285,7 +288,7 @@ describe("Subagenten eines Agenten", () => {
       1_000,
     );
 
-    expect(countStates(statuses.snapshot())).toEqual({ working: 1, waiting: 0, done: 0 });
+    expect(countStates(statuses.snapshot().values())).toEqual({ working: 1, waiting: 0, done: 0 });
   });
 });
 
@@ -342,6 +345,55 @@ describe("Viele Subagenten", () => {
     ]);
 
     expect(ordered.map(({ id }) => id)).toEqual(["check", "standards", "bugs"]);
+  });
+});
+
+describe("Zusammenfassung eingeklappter Subagenten", () => {
+  const t = translate.bind(null, "de");
+  const sub = (id: string, state: SubagentState): SubagentStatus => ({
+    id,
+    kind: "general-purpose",
+    description: id,
+    state,
+    lastAction: null,
+    started: 0,
+    ended: state === "done" ? 1_000 : null,
+  });
+  const text = (subagents: SubagentStatus[]) =>
+    subagentSummary(t, subagents)
+      .map((part) => part.text)
+      .join(" · ");
+
+  it("nennt die Anzahl und wie viele arbeiten", () => {
+    const six = ["a", "b", "c"].flatMap((id) => [sub(id, "working"), sub(`${id}2`, "done")]);
+    expect(text(six)).toBe("6 Subagenten · 3 arbeiten");
+    expect(text([sub("a", "working"), sub("b", "done")])).toBe("2 Subagenten · 1 arbeitet");
+  });
+
+  it("sagt „alle fertig“, wenn keiner mehr arbeitet", () => {
+    expect(text([sub("a", "done"), sub("b", "done")])).toBe("2 Subagenten · alle fertig");
+    expect(text([sub("a", "done")])).toBe("1 Subagent · alle fertig");
+  });
+
+  it("nennt wartende vor arbeitenden", () => {
+    expect(text([sub("a", "waiting"), sub("b", "done")])).toBe("2 Subagenten · 1 wartet");
+    expect(text([sub("a", "working"), sub("b", "waiting"), sub("c", "waiting")])).toBe(
+      "3 Subagenten · 2 warten · 1 arbeitet",
+    );
+  });
+
+  it("färbt den Teil der wartenden wie ihren Zustand", () => {
+    expect(subagentSummary(t, [sub("a", "waiting")])[1]).toEqual({
+      text: "1 wartet",
+      state: "waiting",
+    });
+  });
+
+  it("färbt den Teil der arbeitenden wie ihren Zustand", () => {
+    expect(subagentSummary(t, [sub("a", "working")])).toEqual([
+      { text: "1 Subagent", state: null },
+      { text: "1 arbeitet", state: "working" },
+    ]);
   });
 });
 
