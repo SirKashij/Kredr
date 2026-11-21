@@ -52,13 +52,21 @@ export function ChangesBadge() {
   );
 }
 
-/** Der aktuelle Branch in der Statusleiste; ohne Repository erscheint nichts. */
-export function BranchStatus() {
+/**
+ * Der aktuelle Branch in der Statusleiste; ohne Repository erscheint nichts.
+ * Ein Klick öffnet die Branch-Liste zum Wechseln und Anlegen.
+ */
+export function BranchStatus({ onSwitch }: { onSwitch: () => void }) {
   const t = useT();
   const branch = branchLabel(useVersionControl().state);
   if (branch === null) return null;
   return (
-    <span className="branch" title={t("status.branch", { branch })}>
+    <button
+      type="button"
+      className="branch"
+      title={t("branches.tooltip", { branch })}
+      onClick={onSwitch}
+    >
       <svg viewBox="0 0 24 24">
         <circle cx="7" cy="5" r="2.2" />
         <circle cx="7" cy="19" r="2.2" />
@@ -66,7 +74,7 @@ export function BranchStatus() {
         <path d="M7 7.2v9.6M17 11.2c0 3-4 3.3-10 4.3" />
       </svg>
       {branch}
-    </span>
+    </button>
   );
 }
 

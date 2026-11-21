@@ -1270,6 +1270,22 @@ button {
   color: var(--dim);
 }
 
+/* Meldung in der Branch-Liste, etwa ein verhinderter Wechsel. */
+.quick-open > .git-notice {
+  margin: 4px 6px;
+}
+
+/* Der Branch in der Statusleiste öffnet die Branch-Liste. */
+.status button.branch {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.status button.branch:hover {
+  filter: brightness(1.15);
+}
+
 /* Versionskontrolle */
 :root {
   /* Farben der Git-Status wie in VS Code; auch für den Explorer gedacht. */
@@ -1295,6 +1311,24 @@ button {
 
 .git-conflicted {
   color: var(--git-conflicted);
+}
+
+/* Der Explorer zeichnet Ignoriertes ausgegraut wie VS Code. */
+.git-ignored {
+  color: #8c8c8c;
+}
+
+/* Kürzel des Git-Status am rechten Rand einer Zeile des Explorers. */
+.tree-badge {
+  flex: none;
+  width: 12px;
+  margin-left: auto;
+  text-align: center;
+  font-size: 11px;
+}
+
+.tree-row .tree-name {
+  min-width: 0;
 }
 
 /* Die Zahl der geänderten Dateien am Symbol der Versionskontrolle. */

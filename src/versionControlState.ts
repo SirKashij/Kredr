@@ -29,9 +29,22 @@ export interface RepositoryState {
   /** Der aktuelle Commit; `null`, solange es noch keinen gibt. */
   commit: string | null;
   files: ChangedFile[];
+  /**
+   * Was Git ignoriert: Pfade wie in `files`. Ein ignorierter Ordner steht für
+   * alles darin; der leere Pfad ist der Projektordner selbst. Der Kern liefert
+   * die Liste immer; fehlt sie, ist nichts ignoriert.
+   */
+  ignored?: string[];
 }
 
-export type ErrorReason = "gitMissing" | "notARepository" | "timedOut" | "failed";
+export type ErrorReason =
+  | "gitMissing"
+  | "notARepository"
+  | "timedOut"
+  | "failed"
+  | "localChangesBlockSwitch"
+  | "branchExists"
+  | "invalidBranchName";
 
 /** Warum die Versionskontrolle etwas nicht liefern konnte. */
 export interface VersionControlError {
@@ -97,6 +110,9 @@ export const errorMessages: Record<ErrorReason, MessageKey> = {
   notARepository: "versionControl.noRepository",
   timedOut: "versionControl.error.timedOut",
   failed: "versionControl.error.failed",
+  localChangesBlockSwitch: "versionControl.error.localChangesBlockSwitch",
+  branchExists: "versionControl.error.branchExists",
+  invalidBranchName: "versionControl.error.invalidBranchName",
 };
 
 /** Ob beide dieselbe Zeile der Liste meinen. */
