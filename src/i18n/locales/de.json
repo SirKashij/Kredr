@@ -179,6 +179,8 @@
   "tab.renameTooltip": "Doppelklick zum Umbenennen",
   "tab.close": "Schließen",
   "tab.closeTooltip": "Schließen (Strg+W)",
+  "tab.crashed": "In diesem Tab ist ein Fehler aufgetreten: {details}",
+  "tab.reload": "Tab neu laden",
   "agent.new": "Neuer Agent",
   "agent.newTooltip": "Neuer Agent (Strg+Umschalt+A)",
   "agent.name": "Agent",

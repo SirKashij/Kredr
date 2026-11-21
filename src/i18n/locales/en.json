@@ -179,6 +179,8 @@
   "tab.renameTooltip": "Double-click to rename",
   "tab.close": "Close",
   "tab.closeTooltip": "Close (Ctrl+W)",
+  "tab.crashed": "Something went wrong in this tab: {details}",
+  "tab.reload": "Reload tab",
   "agent.new": "New Agent",
   "agent.newTooltip": "New Agent (Ctrl+Shift+A)",
   "agent.name": "Agent",
