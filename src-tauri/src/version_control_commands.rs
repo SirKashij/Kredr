@@ -12,11 +12,11 @@ use tauri::ipc::Channel;
 use tauri::State;
 
 use crate::project_files::ProjectWatcher;
+use crate::project_files_commands::ProjectWatchers;
 use crate::version_control::{
     BackgroundFetch, Branch, ChangedFile, Committed, Diff, RepositoryState, StateResult,
     StateSubscription, StateWatch, VersionControl, VersionControlError,
 };
-use crate::ProjectWatchers;
 
 /// Was die Oberfläche über den Zustand eines Projekts erfährt.
 #[derive(Clone, Serialize)]
