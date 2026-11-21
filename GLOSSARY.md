@@ -28,6 +28,10 @@ _Vermeiden_: Konsole, Shell-Fenster
 Eine Claude-Code-Sitzung, die in einem Terminal läuft.
 _Vermeiden_: Bot, KI, Claude-Terminal
 
+**Gespräch**:
+Der Verlauf eines Agenten mit der Person. Es überdauert das Ende seines Prozesses und lässt sich fortsetzen; leert die Person es, beginnt ein neues.
+_Vermeiden_: Sitzung, Session, Chat
+
 **Auftrag**:
 Der erste Prompt, den ein Agent seit seinem Start oder dem letzten Leeren des Gesprächs bekommen hat. Er steht am Tab und in der Agenten-Ansicht, solange die Person dem Terminal keinen eigenen Namen gegeben hat; ein eigener Name geht immer vor.
 _Vermeiden_: Titel, Sitzungsname, erster Prompt
@@ -40,7 +44,7 @@ Die Übersicht aller Agenten und Terminals eines Fensters in der Seitenleiste, j
 _Vermeiden_: Agentenliste, Agenten-Leiste, Dashboard
 
 **Aufteilung**:
-Die Anordnung der Gruppen und Terminals eines Fensters samt Namen und Startordnern; sie wird pro Projekt gespeichert und beim Öffnen wiederhergestellt. Laufende Prozesse gehören nicht dazu.
+Die Anordnung der Gruppen und Terminals eines Fensters samt Namen, Startordnern und den Gesprächen der Agenten; sie wird pro Projekt gespeichert und beim Öffnen wiederhergestellt. Laufende Prozesse gehören nicht dazu: Ein Agent kommt zurück, indem sein Gespräch fortgesetzt wird.
 _Vermeiden_: Layout, Sitzungszustand
 
 **Dateiansicht**:
