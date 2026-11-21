@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { Conversation } from "./arrangement";
-import type { MessageKey } from "./i18n/i18n";
+import { plural, type MessageKey, type Translate } from "./i18n/i18n";
 
 /** Die Zustände eines erkannten Agenten; ohne Eintrag ist der Status „unbekannt“. */
 export type AgentState = "working" | "done" | "waiting";
@@ -16,8 +16,8 @@ export interface AgentStatus {
   subagents: readonly SubagentStatus[];
 }
 
-/** Die Zustände eines Subagenten. */
-export type SubagentState = "working" | "waiting" | "done";
+/** Die Zustände eines Subagenten: dieselben wie die eines Agenten. */
+export type SubagentState = AgentState;
 
 /** Ein Subagent, wie der Kern ihn meldet. */
 export interface SubagentUpdate {
@@ -152,11 +152,45 @@ export function useAgentStatuses(statuses: AgentStatuses): Statuses {
   return useSyncExternalStore(statuses.subscribe, statuses.snapshot);
 }
 
-/** Wie viele Agenten arbeiten, auf Eingabe warten und fertig sind. */
-export function countStates(statuses: Statuses): Record<AgentState, number> {
+/** Wie viele (Sub-)Agenten arbeiten, auf Eingabe warten und fertig sind. */
+export function countStates(agents: Iterable<{ state: AgentState }>): Record<AgentState, number> {
   const counts = { working: 0, waiting: 0, done: 0 };
-  for (const { state } of statuses.values()) counts[state]++;
+  for (const { state } of agents) counts[state]++;
   return counts;
+}
+
+/** Die Texte der Zähler, je für genau einen und für mehrere (Sub-)Agenten. */
+export const stateCounters: Record<AgentState, [one: MessageKey, other: MessageKey]> = {
+  working: ["agentStatus.count.working.one", "agentStatus.count.working.other"],
+  waiting: ["agentStatus.count.waiting.one", "agentStatus.count.waiting.other"],
+  done: ["agentStatus.count.done.one", "agentStatus.count.done.other"],
+};
+
+/** Ein Teil der Zusammenfassung; mit `state` in der Farbe dieses Zustands. */
+export interface SummaryPart {
+  text: string;
+  state: AgentState | null;
+}
+
+/**
+ * Die Zusammenfassung eingeklappter Subagenten, etwa „6 Subagenten · 3
+ * arbeiten“: die Anzahl, dann die wartenden und die arbeitenden, ohne beide
+ * „alle fertig“.
+ */
+export function subagentSummary(t: Translate, subagents: readonly SubagentStatus[]): SummaryPart[] {
+  const counts = countStates(subagents);
+  const parts: SummaryPart[] = [
+    {
+      text: plural(t, subagents.length, "agent.subagents.count.one", "agent.subagents.count.other"),
+      state: null,
+    },
+  ];
+  for (const state of ["waiting", "working"] as const) {
+    if (counts[state] > 0)
+      parts.push({ text: plural(t, counts[state], ...stateCounters[state]), state });
+  }
+  if (parts.length === 1) parts.push({ text: t("agent.subagents.allDone"), state: null });
+  return parts;
 }
 
 /** Eine Laufzeit von `milliseconds` als Text der Sprachdatei samt Werten. */

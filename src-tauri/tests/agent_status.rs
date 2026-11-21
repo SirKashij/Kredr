@@ -393,9 +393,11 @@ fn eine_rueckfrage_aus_einem_subagenten_laesst_den_agenten_warten() {
     agent.report("PermissionRequest", from_subagent("a1", bash.clone()));
     let update = agent.next();
     assert_eq!(update.state, AgentState::Waiting);
+    assert!(update.state_changed);
+    // Wonach der Subagent fragt, steht in seiner Zeile, nicht beim Agenten.
     assert_eq!(
         update.last_action.as_deref(),
-        Some("Bash(echo hallo > c.txt)")
+        Some("Der Subagent schreibt.")
     );
 
     // Genehmigt: Der Subagent macht weiter, der Agent ist wieder fertig.
@@ -405,6 +407,212 @@ fn eine_rueckfrage_aus_einem_subagenten_laesst_den_agenten_warten() {
     assert_eq!(
         update.last_action.as_deref(),
         Some("Der Subagent schreibt.")
+    );
+}
+
+/// Die Meldung, mit der Claude Code etwa sechs Sekunden nach einer
+/// Genehmigungsabfrage noch einmal auf sie aufmerksam macht, ohne `agent_id`.
+fn permission_notification() -> Value {
+    json!({ "message": "Claude needs your permission", "notification_type": "permission_prompt" })
+}
+
+#[test]
+fn die_spaete_meldung_einer_beantworteten_rueckfrage_laesst_den_agenten_fertig() {
+    let status = AgentStatus::start(runtime_folder("subagent-spaet")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "echo x > d.txt" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Schreibe d.txt" }));
+    launch(&agent, "a1", "general-purpose", "Spät schreiben", "t1");
+    agent.report("Stop", json!({ "last_assistant_message": "Läuft." }));
+    assert_eq!(settle(&agent).state, AgentState::Done);
+
+    agent.report("PermissionRequest", from_subagent("a1", bash.clone()));
+    assert_eq!(settle(&agent).state, AgentState::Waiting);
+    // Schnell genehmigt, die Meldung von Claude Code kommt erst danach.
+    agent.report("PostToolUse", from_subagent("a1", bash));
+    assert_eq!(settle(&agent).state, AgentState::Done);
+    agent.report("Notification", permission_notification());
+
+    agent.expect_silence();
+}
+
+#[test]
+fn die_spaete_meldung_einer_eigenen_beantworteten_rueckfrage_laesst_den_agenten_arbeiten() {
+    let status = AgentStatus::start(runtime_folder("rueckfrage-spaet")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Veröffentliche" }));
+    agent.report("PermissionRequest", bash.clone());
+    agent.report("PostToolUse", bash);
+    assert_eq!(settle(&agent).state, AgentState::Working);
+    agent.report("Notification", permission_notification());
+
+    agent.expect_silence();
+}
+
+#[test]
+fn eine_eigene_rueckfrage_des_agenten_geht_neben_der_eines_subagenten_nicht_verloren() {
+    let status = AgentStatus::start(runtime_folder("subagent-und-eigene-rueckfrage")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    launch(&agent, "a1", "general-purpose", "Veröffentlichen", "t1");
+    agent.report("PermissionRequest", from_subagent("a1", bash.clone()));
+    assert_eq!(settle(&agent).state, AgentState::Waiting);
+
+    // Ein MCP-Server fragt den Agenten selbst; das meldet nur die Notification.
+    agent.report(
+        "Notification",
+        json!({ "message": "Der Server braucht ein Token", "notification_type": "elicitation_dialog" }),
+    );
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(
+        update.last_action.as_deref(),
+        Some("Der Server braucht ein Token")
+    );
+
+    // Die Rückfrage des Subagenten ist beantwortet, die des Agenten noch offen.
+    agent.report("PostToolUse", from_subagent("a1", bash));
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(
+        update.last_action.as_deref(),
+        Some("Der Server braucht ein Token")
+    );
+}
+
+#[test]
+fn eine_eigene_genehmigung_des_agenten_geht_neben_der_eines_subagenten_nicht_verloren() {
+    let status = AgentStatus::start(runtime_folder("subagent-und-eigene-genehmigung")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let push = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
+    let test = json!({ "tool_name": "Bash", "tool_input": { "command": "cargo test" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    launch(&agent, "a1", "general-purpose", "Veröffentlichen", "t1");
+    agent.report("PermissionRequest", from_subagent("a1", push.clone()));
+    agent.report("PermissionRequest", test);
+    agent.report("Notification", permission_notification());
+    agent.report("PostToolUse", from_subagent("a1", push));
+    agent.report("Notification", permission_notification());
+
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(update.last_action.as_deref(), Some("Bash(cargo test)"));
+}
+
+#[test]
+fn ein_prompt_der_person_beendet_offene_rueckfragen_von_subagenten() {
+    let status = AgentStatus::start(runtime_folder("subagent-prompt-beantwortet")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    launch(&agent, "a1", "general-purpose", "Veröffentlichen", "t1");
+    agent.report("Stop", json!({ "last_assistant_message": "Läuft." }));
+    agent.report("PermissionRequest", from_subagent("a1", bash));
+    assert_eq!(settle(&agent).state, AgentState::Waiting);
+
+    // Abgelehnt, ohne dass Claude Code noch etwas vom Subagenten meldet.
+    agent.report("UserPromptSubmit", json!({ "prompt": "Lass das" }));
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Working);
+    assert_eq!(subagent_states(&update), [SubagentState::Working]);
+}
+
+/// Ein Aufruf des `Agent`-Werkzeugs, wie ihn Claude Code vor dem Start meldet.
+fn agent_call(description: &str, kind: &str, tool_use: &str) -> Value {
+    json!({
+        "tool_name": "Agent",
+        "tool_use_id": tool_use,
+        "tool_input": { "description": description, "subagent_type": kind },
+    })
+}
+
+/// Die Beschreibungen der Subagenten in der Reihenfolge ihres Starts.
+fn descriptions(update: &StatusUpdate) -> Vec<Option<String>> {
+    update
+        .subagents
+        .iter()
+        .map(|s| s.description.clone())
+        .collect()
+}
+
+#[test]
+fn ein_abgelehnter_aufruf_verschiebt_die_beschreibungen_nach_dem_naechsten_prompt_nicht() {
+    let status = AgentStatus::start(runtime_folder("subagent-aufruf-abgelehnt")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    // Abgelehnt: Es kommen weder Start noch `PostToolUse`.
+    agent.report("PreToolUse", agent_call("Abgelehnt", "Explore", "t1"));
+    agent.report("UserPromptSubmit", json!({ "prompt": "Dann anders" }));
+    agent.report("PreToolUse", agent_call("Datei a lesen", "Explore", "t2"));
+    agent.report(
+        "SubagentStart",
+        json!({ "agent_id": "a1", "agent_type": "Explore" }),
+    );
+
+    assert_eq!(
+        descriptions(&settle(&agent)),
+        [Some("Datei a lesen".to_owned())]
+    );
+}
+
+#[test]
+fn ein_abgelehnter_aufruf_verfaellt_mit_dem_ende_der_antwort() {
+    let status = AgentStatus::start(runtime_folder("subagent-aufruf-verfaellt")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.report("PreToolUse", agent_call("Abgelehnt", "Explore", "t1"));
+    agent.report("Stop", json!({ "last_assistant_message": "Gut." }));
+    // Das Ende eines anderen Subagenten weckt den Agenten, er startet einen neuen.
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "prompt": "<task-notification>\n<task-id>x</task-id>\n</task-notification>" }),
+    );
+    agent.report("PreToolUse", agent_call("Datei b lesen", "Explore", "t2"));
+    agent.report(
+        "SubagentStart",
+        json!({ "agent_id": "b2", "agent_type": "Explore" }),
+    );
+
+    assert_eq!(
+        descriptions(&settle(&agent)),
+        [Some("Datei b lesen".to_owned())]
+    );
+}
+
+#[test]
+fn eine_frage_eines_subagenten_steht_in_seiner_zeile() {
+    let status = AgentStatus::start(runtime_folder("subagent-frage-zeile")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    launch(&agent, "a1", "general-purpose", "Planen", "t1");
+    agent.report(
+        "PreToolUse",
+        from_subagent(
+            "a1",
+            json!({
+                "tool_name": "AskUserQuestion",
+                "tool_input": { "questions": [{ "question": "Welche Datenbank?" }] },
+            }),
+        ),
+    );
+
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(update.last_action.as_deref(), Some("Agent(Planen)"));
+    assert_eq!(subagent_states(&update), [SubagentState::Waiting]);
+    assert_eq!(
+        update.subagents[0].last_action.as_deref(),
+        Some("Welche Datenbank?")
     );
 }
 
@@ -443,10 +651,10 @@ fn solange_ein_subagent_fragt_wartet_der_agent_auch_nach_seiner_antwort() {
     // Die Rückfrage steht weiter im Terminal, auch wenn der Agent antwortet
     // und Claude Code sie ohne Kennung des Subagenten noch einmal meldet.
     agent.report("Stop", json!({ "last_assistant_message": "Erledigt." }));
-    agent.report(
-        "Notification",
-        json!({ "message": "Claude needs your permission", "notification_type": "permission_prompt" }),
-    );
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(update.last_action.as_deref(), Some("Erledigt."));
+    agent.report("Notification", permission_notification());
     agent.expect_silence();
 
     // Beantwortet: Es gilt, was der Agent inzwischen gemeldet hat.

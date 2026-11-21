@@ -213,13 +213,16 @@ struct Known {
     state: AgentState,
     /// Was der Agent zuletzt getan, gefragt oder gesagt hat.
     last_action: Option<String>,
-    /// Die offenen Rückfragen von Subagenten, die älteste zuerst. Sie
-    /// stehen im Terminal des Agenten, er wartet also.
-    questions: Vec<Question>,
+    /// Die Kennungen der Subagenten mit offener Rückfrage. Sie steht im
+    /// Terminal des Agenten, er wartet also.
+    asking: Vec<String>,
+    /// Wie viele Genehmigungsabfragen (`PermissionRequest`, auch von
+    /// Subagenten) Claude Code noch mit einer `Notification` wiederholen kann.
+    unrepeated_permissions: u32,
     /// Die Subagenten, die die Person sieht.
     subagents: Vec<Subagent>,
-    /// Die Aufrufe des `Agent`-Werkzeugs, deren Subagent noch nicht
-    /// gestartet ist, der älteste zuerst.
+    /// Die Aufrufe des `Agent`-Werkzeugs der laufenden Antwort, deren
+    /// Subagent noch nicht gestartet ist, der älteste zuerst.
     launches: Vec<Launch>,
     /// Der Auftrag des laufenden Gesprächs.
     assignment: Option<String>,
@@ -227,12 +230,9 @@ struct Known {
     conversation: Option<String>,
 }
 
-/// Eine Rückfrage, die ein Subagent im Terminal seines Agenten stellt.
-#[derive(Clone, PartialEq, Eq)]
+/// Eine Rückfrage an die Person.
 struct Question {
-    /// Die Kennung des Subagenten (`agent_id`).
-    subagent: String,
-    /// Wonach er fragt, wie die letzte Aktion.
+    /// Wonach gefragt wird, als letzte Aktion.
     action: Option<String>,
 }
 
@@ -248,13 +248,16 @@ struct Launch {
 const DEFAULT_SUBAGENT_TYPE: &str = "general-purpose";
 
 impl Known {
-    /// Zustand und letzte Aktion, wie die Person sie sieht: Eine offene
-    /// Rückfrage eines Subagenten geht vor.
-    fn shown(&self) -> (AgentState, Option<String>) {
-        match self.questions.first() {
-            Some(question) => (AgentState::Waiting, question.action.clone()),
-            None => (self.state, self.last_action.clone()),
-        }
+    /// Zustand und letzte Aktion, wie die Person sie sieht: Solange ein
+    /// Subagent fragt, wartet der Agent. Wonach der Subagent fragt, steht in
+    /// dessen Zeile; die letzte Aktion des Agenten bleibt.
+    fn displayed_status(&self) -> (AgentState, Option<String>) {
+        let state = if self.asking.is_empty() {
+            self.state
+        } else {
+            AgentState::Waiting
+        };
+        (state, self.last_action.clone())
     }
 }
 
@@ -264,7 +267,7 @@ impl Registration {
     fn apply(&mut self, next: Known) {
         let visible = |known: &Known| {
             (
-                known.shown(),
+                known.displayed_status(),
                 known.assignment.clone(),
                 known.conversation.clone(),
                 known.subagents.clone(),
@@ -283,9 +286,9 @@ impl Registration {
     }
 
     fn report(&mut self, next: Known, resume_failed: bool) {
-        let (before, _) = self.known.shown();
+        let (before, _) = self.known.displayed_status();
         self.known = next;
-        let (state, last_action) = self.known.shown();
+        let (state, last_action) = self.known.displayed_status();
         (self.on_update)(StatusUpdate {
             state,
             last_action,
@@ -445,45 +448,78 @@ fn receive(registrations: &Registrations, url: &str, body: Option<&String>) -> b
 
 /// Was Kredr nach dem Ereignis `event` über den Agenten weiß.
 fn next_known(known: &Known, event: &Value) -> Known {
+    let name = event["hook_event_name"].as_str().unwrap_or_default();
+    // Mit dem Ende der Sitzung, auch durch `/clear`, ist alles vergessen:
+    // Status, Rückfragen, Subagenten, Auftrag und Gespräch.
+    if name == "SessionEnd" {
+        return Known::default();
+    }
     let subagent = event["agent_id"].as_str().filter(|id| !id.is_empty());
     let mut next = known.clone();
+    if is_prompt_of_person(event) {
+        // Solange eine Rückfrage im Terminal steht, nimmt Claude Code keinen
+        // Prompt an: Alle sind beantwortet, auch die, nach deren Ablehnung
+        // Claude Code nichts mehr meldet. Ebenso abgelehnte Aufrufe des
+        // `Agent`-Werkzeugs, die keinen Subagenten starten.
+        next.asking.clear();
+        next.unrepeated_permissions = 0;
+        next.launches.clear();
+    }
+    // Claude Code wiederholt jede Genehmigungsabfrage etwa sechs Sekunden
+    // später als `Notification` vom Typ `permission_prompt`, auch die eines
+    // Subagenten, dann aber ohne `agent_id`, und mit der allgemeinen Meldung
+    // „Claude needs your permission“. Von welcher Abfrage sie stammt und ob
+    // sie noch offen ist, steht nicht darin. Darum zählt sie, solange eine
+    // Abfrage aussteht, nur als deren Wiederholung und ändert nichts: Der
+    // `PermissionRequest` hat das Warten schon gezeigt, und eine inzwischen
+    // beantwortete Abfrage darf niemanden mehr warten lassen. Andere
+    // wartende Meldungen (etwa `elicitation_dialog`) gehen keinem
+    // Hook-Ereignis voraus und sind immer eine Rückfrage des Agenten selbst.
+    let repeated_permission =
+        name == "Notification" && event["notification_type"] == "permission_prompt";
+    if name == "PermissionRequest" {
+        next.unrepeated_permissions += 1;
+    } else if repeated_permission && next.unrepeated_permissions > 0 {
+        next.unrepeated_permissions -= 1;
+        return next;
+    }
     match subagent {
         // Ereignisse eines Subagenten ändern Status und letzte Aktion des
-        // Agenten nicht. Nur seine Rückfragen stehen im Terminal des Agenten.
+        // Agenten nicht. Nur seine Rückfragen lassen ihn warten; jedes
+        // weitere Ereignis des Subagenten beantwortet sie.
         Some(subagent) => {
-            next.questions
-                .retain(|question| question.subagent != subagent);
-            if let Some(action) = question_of(event) {
-                next.questions.push(Question {
-                    subagent: subagent.to_owned(),
-                    action,
-                });
+            next.asking.retain(|asking| asking != subagent);
+            if question_of(event).is_some() {
+                next.asking.push(subagent.to_owned());
             }
         }
         None => {
-            // Ohne Kennung meldet Claude Code auch Rückfragen eines
-            // Subagenten noch einmal; die ist schon bekannt.
-            let repeated = !known.questions.is_empty()
-                && event["hook_event_name"] == "Notification"
-                && event["notification_type"]
-                    .as_str()
-                    .is_some_and(|kind| WAITING_NOTIFICATIONS.contains(&kind));
-            let status = (!repeated)
-                .then(|| next_status(known.state, &known.last_action, event))
-                .flatten();
-            if let Some((state, last_action)) = status {
+            if let Some((state, last_action)) = next_status(known.state, &known.last_action, event)
+            {
                 next.state = state;
                 next.last_action = last_action;
             }
-            if event["hook_event_name"] == "SessionEnd" {
-                next.questions.clear();
+            if matches!(name, "Stop" | "StopFailure") {
+                // Bis zum Ende der Antwort ist jeder Aufruf des
+                // `Agent`-Werkzeugs gestartet oder abgelehnt.
+                next.launches.clear();
             }
         }
     }
     next_subagents(&mut next, subagent, event);
+    mark_asking(&mut next);
     next.assignment = next_assignment(&known.assignment, event);
     next.conversation = next_conversation(&known.conversation, event);
     next
+}
+
+/// Ob `event` ein Prompt der Person ist. Auch über das Ende eines Subagenten
+/// unterrichtet Claude Code den Agenten mit einem Prompt; der zählt nicht.
+fn is_prompt_of_person(event: &Value) -> bool {
+    event["hook_event_name"] == "UserPromptSubmit"
+        && !event["prompt"]
+            .as_str()
+            .is_some_and(|prompt| prompt.trim_start().starts_with(TASK_NOTIFICATION))
 }
 
 /// Führt die Subagenten und die offenen Aufrufe des `Agent`-Werkzeugs nach
@@ -531,18 +567,9 @@ fn next_subagents(next: &mut Known, subagent: Option<&str>, event: &Value) {
             }
             // Ein Prompt der Person beginnt eine neue Runde: Die fertigen
             // Subagenten der letzten verschwinden.
-            "UserPromptSubmit" => {
-                let notification = event["prompt"]
-                    .as_str()
-                    .is_some_and(|prompt| prompt.trim_start().starts_with(TASK_NOTIFICATION));
-                if !notification {
-                    next.subagents
-                        .retain(|known| known.state != SubagentState::Done);
-                }
-            }
-            "SessionEnd" => {
-                next.subagents.clear();
-                next.launches.clear();
+            _ if is_prompt_of_person(event) => {
+                next.subagents
+                    .retain(|known| known.state != SubagentState::Done);
             }
             _ => {}
         }
@@ -573,7 +600,10 @@ fn next_subagents(next: &mut Known, subagent: Option<&str>, event: &Value) {
     match name {
         "PreToolUse" | "PermissionRequest" => {
             known.state = SubagentState::Working;
-            known.last_action = tool_action(event);
+            known.last_action = match question_of(event) {
+                Some(question) => question.action,
+                None => tool_action(event),
+            };
         }
         "SubagentStop" => {
             known.state = SubagentState::Done;
@@ -583,56 +613,52 @@ fn next_subagents(next: &mut Known, subagent: Option<&str>, event: &Value) {
         }
         _ => {}
     }
-    // Er wartet, solange seine Rückfrage offen ist; jedes weitere Ereignis
-    // von ihm beantwortet sie.
-    if next
-        .questions
-        .iter()
-        .any(|question| question.subagent == id)
-    {
-        known.state = SubagentState::Waiting;
-    } else if known.state == SubagentState::Waiting {
-        known.state = SubagentState::Working;
+}
+
+/// Lässt die Subagenten mit offener Rückfrage warten und die übrigen, die
+/// noch nicht fertig sind, arbeiten.
+fn mark_asking(next: &mut Known) {
+    for subagent in &mut next.subagents {
+        if subagent.state != SubagentState::Done {
+            subagent.state = if next.asking.contains(&subagent.id) {
+                SubagentState::Waiting
+            } else {
+                SubagentState::Working
+            };
+        }
     }
 }
 
-/// Die Rückfrage, die das Ereignis `event` an die Person stellt, als letzte
-/// Aktion; `None`, wenn es keine Rückfrage ist.
-fn question_of(event: &Value) -> Option<Option<String>> {
-    match event["hook_event_name"].as_str()? {
-        "PermissionRequest" => Some(tool_action(event)),
-        "PreToolUse" if event["tool_name"] == "AskUserQuestion" => Some(
-            event["tool_input"]["questions"][0]["question"]
-                .as_str()
-                .and_then(one_line)
-                .or_else(|| tool_action(event)),
-        ),
-        _ => None,
-    }
+/// Die Rückfrage, die das Ereignis `event` an die Person stellt; `None`,
+/// wenn es keine Rückfrage ist.
+fn question_of(event: &Value) -> Option<Question> {
+    let action = match event["hook_event_name"].as_str()? {
+        "PermissionRequest" => tool_action(event),
+        "PreToolUse" if event["tool_name"] == "AskUserQuestion" => event["tool_input"]["questions"]
+            [0]["question"]
+            .as_str()
+            .and_then(one_line)
+            .or_else(|| tool_action(event)),
+        _ => return None,
+    };
+    Some(Question { action })
 }
 
 /// Der Auftrag nach dem Ereignis `event`: Nur der erste Prompt einer Sitzung
-/// zählt, der von der Person kommt. Mit dem Ende der Sitzung, auch durch
-/// `/clear`, ist er vergessen; der nächste Prompt beginnt die neue Sitzung.
+/// zählt, der von der Person kommt. Nach dem Ende der Sitzung, auch durch
+/// `/clear`, beginnt der nächste Prompt die neue Sitzung.
 fn next_assignment(assignment: &Option<String>, event: &Value) -> Option<String> {
-    match event["hook_event_name"].as_str() {
-        Some("UserPromptSubmit") if assignment.is_none() => {
-            let prompt = event["prompt"].as_str()?.trim();
-            (!prompt.is_empty() && !prompt.starts_with(TASK_NOTIFICATION))
-                .then(|| prompt.to_owned())
-        }
-        Some("SessionEnd") => None,
-        _ => assignment.clone(),
+    if assignment.is_none() && is_prompt_of_person(event) {
+        let prompt = event["prompt"].as_str()?.trim();
+        return (!prompt.is_empty()).then(|| prompt.to_owned());
     }
+    assignment.clone()
 }
 
 /// Das Gespräch nach dem Ereignis `event`: das, dessen Kennung die Meldung
-/// trägt. Beendet sich der Agent, gibt es keines mehr, auch nach `/clear`:
-/// Das neue Gespräch kommt mit dem nächsten Prompt.
+/// trägt. Nach dem Ende der Sitzung, auch durch `/clear`, kommt das neue
+/// Gespräch mit dem nächsten Prompt.
 fn next_conversation(conversation: &Option<String>, event: &Value) -> Option<String> {
-    if event["hook_event_name"] == "SessionEnd" {
-        return None;
-    }
     match event["session_id"].as_str() {
         Some(id) if !id.is_empty() => Some(id.to_owned()),
         _ => conversation.clone(),
@@ -648,7 +674,7 @@ fn next_status(
 ) -> Option<(AgentState, Option<String>)> {
     let text = |field: &str| event[field].as_str().and_then(one_line);
     if let Some(question) = question_of(event) {
-        return Some((AgentState::Waiting, question));
+        return Some((AgentState::Waiting, question.action));
     }
     match event["hook_event_name"].as_str()? {
         "UserPromptSubmit" => Some((AgentState::Working, None)),
@@ -676,7 +702,6 @@ fn next_status(
             AgentState::Done,
             text("last_assistant_message").or_else(|| text("error")),
         )),
-        "SessionEnd" => Some((AgentState::Unknown, None)),
         _ => None,
     }
 }
