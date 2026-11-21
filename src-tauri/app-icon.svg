@@ -1,4 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect x="32" y="32" width="448" height="448" rx="96" fill="#0078d4"/>
-  <path d="M176 136v240M176 268l144-132M224 226l112 150" fill="none" stroke="#fff" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Quelle des App-Icons. Nach Änderungen: npx tauri icon src-tauri/app-icon.svg -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3f8cff" />
+      <stop offset="1" stop-color="#1f63e0" />
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d2d4d" />
+      <stop offset="1" stop-color="#0b1322" />
+    </linearGradient>
+    <clipPath id="clip">
+      <rect x="32" y="32" width="448" height="448" rx="104" />
+    </clipPath>
+  </defs>
+  <rect x="32" y="32" width="448" height="448" rx="104" fill="url(#bg)" />
+  <g clip-path="url(#clip)">
+    <path
+      d="M30 500 C52 400 70 310 92 236 C112 150 176 96 240 96 C282 96 312 116 328 148 C388 152 436 190 458 252 C420 244 366 250 322 266 C324 296 338 318 334 334 L314 338 C332 360 354 384 358 400 L336 406 C356 436 380 470 392 500 Z"
+      fill="url(#body)"
+    />
+    <path
+      d="M318 236 C360 236 400 242 432 250"
+      fill="none"
+      stroke="#2f77ee"
+      stroke-width="7"
+      stroke-linecap="round"
+    />
+    <path
+      d="M244 166 L274 186 L244 206"
+      fill="none"
+      stroke="#5aa2ff"
+      stroke-width="16"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </g>
 </svg>
