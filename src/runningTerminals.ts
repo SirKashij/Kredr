@@ -7,6 +7,7 @@ import { Terminal } from "@xterm/xterm";
 import type { AgentStatuses, StatusUpdate } from "./agentStatus";
 import type { Translate } from "./i18n/i18n";
 import type { Shell } from "./settingsStore";
+import { shellLabel } from "./tabLabel";
 import { clipboardCommand } from "./terminalClipboard";
 import { linkProvider, type LinkActions } from "./terminalLinkProvider";
 
@@ -56,8 +57,10 @@ const theme = {
 /** Was der Kern nach dem Öffnen eines Terminals meldet. */
 interface OpenedTerminal {
   id: number;
-  /** Das Programm des Agent-Startbefehls, wenn es nicht installiert ist. */
+  /** Das Programm des Agent-Startbefehls, wenn es im Suchpfad nicht zu finden ist. */
   missingAgentProgram: string | null;
+  /** Die gewünschte Shell, wenn es sie nicht (mehr) gibt; das Terminal läuft dann mit PowerShell. */
+  missingShell: Shell | null;
 }
 
 /**
@@ -221,7 +224,7 @@ export class RunningTerminal {
     const { cwd, shell, agent } = this.options;
     const channels = { onOutput, onExit, onAgentStatus };
     invoke<OpenedTerminal>("terminal_open", { shell, cwd, cols, rows, agent, ...channels })
-      .then(({ id, missingAgentProgram }) => {
+      .then(({ id, missingAgentProgram, missingShell }) => {
         if (this.closed) {
           invoke("terminal_close", { id });
           return;
@@ -230,7 +233,13 @@ export class RunningTerminal {
         // Die Gruppe kann ihre Größe geändert haben, während die Shell startete.
         this.resize();
         if (this.earlyInput) this.write(this.earlyInput);
-        if (missingAgentProgram) this.showAgentMissing(missingAgentProgram);
+        const t = this.host.translate();
+        if (missingShell) {
+          this.showNotice(t("terminal.shellMissing", { shell: shellLabel(missingShell, t) }));
+        }
+        if (missingAgentProgram) {
+          this.showNotice(t("agent.missing", { program: missingAgentProgram }));
+        }
       })
       .catch((details) => {
         if (this.closed) return;
@@ -242,16 +251,16 @@ export class RunningTerminal {
   }
 
   /**
-   * Zeigt über dem Terminal an, dass das Programm des Agent-Startbefehls
-   * fehlt. In das Terminal selbst geschrieben, würde die Shell den Hinweis
-   * mit ihrer eigenen Ausgabe überschreiben.
+   * Zeigt über dem Terminal einen Hinweis an, etwa dass das Programm des
+   * Agent-Startbefehls nicht gefunden wurde. In das Terminal selbst
+   * geschrieben, würde die Shell ihn mit ihrer eigenen Ausgabe überschreiben.
    */
-  private showAgentMissing(program: string) {
+  private showNotice(text: string) {
     const notice = document.createElement("div");
     notice.className = "terminal-notice";
     notice.setAttribute("role", "alert");
-    notice.textContent = this.host.translate()("agent.missing", { program });
-    this.element.prepend(notice);
+    notice.textContent = text;
+    this.screen.before(notice);
   }
 
   /** Passt Spalten und Zeilen an den Platz an; unsichtbar gibt es nichts zu messen. */
@@ -306,6 +315,13 @@ export class RunningTerminals {
 
   find(tabId: string): RunningTerminal | undefined {
     return this.terminals.get(tabId);
+  }
+
+  /** Ob in irgendeinem Terminal des Fensters noch ein Programm läuft, etwa ein Agent. */
+  async anyHasChildProcess(): Promise<boolean> {
+    const terminals = [...this.terminals.values()];
+    const running = await Promise.all(terminals.map((terminal) => terminal.hasChildProcess()));
+    return running.includes(true);
   }
 
   /** Beendet alle Terminals, deren Tab es nicht mehr gibt. */

@@ -1,7 +1,8 @@
 import { confirm } from "@tauri-apps/plugin-dialog";
 import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
+import { ChangeRow } from "./ChangeRow";
 import { fileName } from "./filePath";
-import { useT } from "./i18n/i18n";
+import { plural, useT } from "./i18n/i18n";
 import { useVersionControl, useVersionControlStore } from "./versionControl";
 import {
   branchLabel,
@@ -15,8 +16,6 @@ import {
   offersPullAndPush,
   operationLabels,
   sameChange,
-  statusLabels,
-  statusLetter,
   type ChangedFile,
   type RepositoryState,
   type VersionControlError,
@@ -52,8 +51,12 @@ export function ChangesBadge() {
   const t = useT();
   const count = changedFileCount(useVersionControl().state);
   if (count === 0) return null;
-  const key = count === 1 ? "versionControl.changeCount.one" : "versionControl.changeCount.other";
-  const text = t(key, { count: String(count) });
+  const text = plural(
+    t,
+    count,
+    "versionControl.changeCount.one",
+    "versionControl.changeCount.other",
+  );
   return (
     <span className="badge changes" title={text} aria-label={text}>
       {count}
@@ -63,18 +66,22 @@ export function ChangesBadge() {
 
 /**
  * Der aktuelle Branch in der Statusleiste; ohne Repository erscheint nichts.
- * Ein Klick öffnet die Branch-Liste zum Wechseln und Anlegen.
+ * Ein Klick blendet die Branch-Liste zum Wechseln und Anlegen ein oder aus.
+ * Solange eine Operation läuft, ist er gesperrt.
  */
-export function BranchStatus({ onSwitch }: { onSwitch: () => void }) {
+export function BranchStatus({ onToggle }: { onToggle: () => void }) {
   const t = useT();
-  const branch = branchLabel(useVersionControl().state);
+  const { state, busy } = useVersionControl();
+  const branch = branchLabel(state);
   if (branch === null) return null;
   return (
     <button
       type="button"
       className="branch"
       title={t("branches.tooltip", { branch })}
-      onClick={onSwitch}
+      disabled={busy !== null}
+      data-quick-pick-toggle
+      onClick={onToggle}
     >
       <svg viewBox="0 0 24 24">
         <circle cx="7" cy="5" r="2.2" />
@@ -85,11 +92,6 @@ export function BranchStatus({ onSwitch }: { onSwitch: () => void }) {
       {branch}
     </button>
   );
-}
-
-/** Der Ordner einer Datei, wie er neben ihrem Namen steht. */
-function folderOf(path: string): string {
-  return path.slice(0, Math.max(0, path.lastIndexOf("/")));
 }
 
 /** Ein kleiner Knopf an einer Zeile oder Überschrift der Liste. */
@@ -137,9 +139,10 @@ function CommitBox({ state }: { state: RepositoryState }) {
     : "versionControl.commitScope.staged";
 
   function onKeyDown(event: KeyboardEvent) {
+    // Wie in VS Code: Strg+Eingabe schreibt fest, gepusht wird eigens.
     if (event.key === "Enter" && event.ctrlKey && commit) {
       event.preventDefault();
-      void store.commitAndPush();
+      void store.commit();
     }
   }
 
@@ -275,55 +278,45 @@ export function VersionControlView({
           <span className="count">{files.length}</span>
         </div>
         <div role="list">
-          {files.map((file) => {
-            const status = t(statusLabels[file.status]);
-            const moved = file.originalPath ? `${file.originalPath} → ${file.path}` : file.path;
-            return (
-              <div
-                key={file.path}
-                role="listitem"
-                className={sameChange(file, selected) ? "change-row sel" : "change-row"}
-                title={`${moved} · ${status}`}
-                onClick={() => onShowChange(file)}
-              >
-                <span className={`change-name git-${file.status}`}>{fileName(file.path)}</span>
-                <span className="change-folder">{folderOf(file.path)}</span>
-                <span className="change-actions">
-                  {file.staged ? (
-                    <RowAction
-                      label={t("versionControl.unstage")}
-                      disabled={locked}
-                      onAction={() => void store.unstage([file])}
-                    >
-                      −
-                    </RowAction>
-                  ) : (
-                    <>
-                      {file.status !== "conflicted" && (
-                        <RowAction
-                          label={t("versionControl.discard")}
-                          disabled={locked}
-                          onAction={() => void discard(file)}
-                        >
-                          ↶
-                        </RowAction>
-                      )}
+          {files.map((file) => (
+            <ChangeRow
+              key={file.path}
+              file={file}
+              selected={sameChange(file, selected)}
+              onShow={() => onShowChange(file)}
+            >
+              <span className="change-actions">
+                {file.staged ? (
+                  <RowAction
+                    label={t("versionControl.unstage")}
+                    disabled={locked}
+                    onAction={() => void store.unstage([file])}
+                  >
+                    −
+                  </RowAction>
+                ) : (
+                  <>
+                    {file.status !== "conflicted" && (
                       <RowAction
-                        label={t("versionControl.stage")}
+                        label={t("versionControl.discard")}
                         disabled={locked}
-                        onAction={() => void store.stage([file])}
+                        onAction={() => void discard(file)}
                       >
-                        +
+                        ↶
                       </RowAction>
-                    </>
-                  )}
-                </span>
-                <span className={`change-status git-${file.status}`} aria-label={status}>
-                  {statusLetter(file.status)}
-                </span>
-              </div>
-            );
-          })}
+                    )}
+                    <RowAction
+                      label={t("versionControl.stage")}
+                      disabled={locked}
+                      onAction={() => void store.stage([file])}
+                    >
+                      +
+                    </RowAction>
+                  </>
+                )}
+              </span>
+            </ChangeRow>
+          ))}
         </div>
       </>
     );

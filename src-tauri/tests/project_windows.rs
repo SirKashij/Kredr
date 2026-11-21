@@ -51,6 +51,20 @@ fn ein_vollstaendiger_pfad_gilt_unabhaengig_vom_ordner_des_befehls() {
 }
 
 #[test]
+fn mit_kredr_oeffnen_im_laufwerksstamm_oeffnet_das_laufwerk() {
+    let cwd = temp_dir("laufwerk");
+    let drive = cwd.to_str().unwrap()[..2].to_owned();
+    // Der Explorer ruft `"kredr.exe" "C:\"` auf. Windows liest den Backslash
+    // vor dem Anführungszeichen als dessen Maskierung: Es kommt `C:"` an.
+    let argument = format!("{drive}\"");
+
+    assert_eq!(
+        project_from_args(&args(&["kredr.exe", &argument]), &cwd),
+        Some(PathBuf::from(format!("{drive}\\")))
+    );
+}
+
+#[test]
 fn ohne_ordner_gibt_es_kein_projekt() {
     let cwd = temp_dir("ohne");
     std::fs::write(cwd.join("datei.txt"), "kein Ordner").unwrap();

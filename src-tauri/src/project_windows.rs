@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
-use crate::arrangement_store::same_project;
+use crate::paths;
 
 /// Die offenen Fenster nach Kennung, jeweils mit ihrem Projekt.
 #[derive(Default)]
@@ -42,7 +42,7 @@ impl ProjectWindows {
     pub fn window_of(&self, folder: &Path) -> Option<String> {
         self.lock()
             .iter()
-            .find(|(_, project)| matches!(project, Some(open) if same_project(open, folder)))
+            .find(|(_, project)| matches!(project, Some(open) if paths::same(open, folder)))
             .map(|(label, _)| label.clone())
     }
 
@@ -64,7 +64,15 @@ impl ProjectWindows {
 /// Argument nach dem Programmnamen, wenn es ein Ordner ist. Relative Pfade
 /// wie in `kredr .` gelten ab `cwd`, dem Ordner, in dem der Befehl lief.
 pub fn project_from_args(args: &[String], cwd: &Path) -> Option<PathBuf> {
-    project_folder(&cwd.join(args.get(1)?))
+    let argument = args.get(1)?;
+    // Der Rechtsklick-Eintrag übergibt den Ordner in Anführungszeichen. Endet
+    // er auf einen Backslash (Laufwerksstamm `D:\`), liest Windows diesen als
+    // Maskierung des schließenden Zeichens, und es kommt `D:"` an.
+    let folder = match argument.strip_suffix('"') {
+        Some(start) => format!("{start}\\"),
+        None => argument.clone(),
+    };
+    project_folder(&cwd.join(folder))
 }
 
 /// Der vollständige Pfad des Ordners, wenn es ihn gibt.
@@ -72,6 +80,5 @@ pub fn project_folder(folder: &Path) -> Option<PathBuf> {
     if !folder.is_dir() {
         return None;
     }
-    let absolute = std::path::absolute(folder).ok()?;
-    Some(absolute.components().collect())
+    Some(paths::normalized(folder))
 }

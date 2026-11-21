@@ -4,469 +4,32 @@ pub mod arrangement_store;
 pub mod external;
 pub mod file_list;
 pub mod notifications;
+mod paths;
 pub mod project_files;
+mod project_files_commands;
 pub mod project_windows;
 mod projects;
 pub mod search;
+mod search_commands;
 pub mod settings;
 pub mod terminal;
+mod terminal_commands;
 pub mod version_control;
 mod version_control_commands;
 mod waiting_alerts;
 pub mod window_geometry;
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
+use std::sync::Arc;
 
-use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Emitter, Manager, State};
 
-use agent_status::{AgentStatus, StatusUpdate};
-use project_files::{
-    Entry, FileContent, FileOperationError, ImageContent, ProjectChanges, ProjectWatcher,
-    Subscription,
-};
-use search::{FileMatches, SearchError, SearchOutcome, Searches, TextQuery};
+use agent_status::AgentStatus;
+use project_files_commands::ProjectWatchers;
+use search::Searches;
 use settings::{Settings, SettingsStore, Shell};
-use terminal::{Terminal, TerminalEvent, TerminalOptions};
-
-/// Die laufenden Terminals, nach Kennung.
-#[derive(Default)]
-struct Terminals {
-    next_id: AtomicU32,
-    open: Mutex<HashMap<u32, Arc<Terminal>>>,
-    /// Zu welchem Fenster ein Terminal gehört.
-    owners: Mutex<HashMap<u32, String>>,
-}
-
-impl Terminals {
-    /// Beendet die Terminals eines geschlossenen Fensters; der Prozess läuft
-    /// für die übrigen Fenster weiter.
-    fn close_all_of(&self, window: &str) {
-        let Ok(mut owners) = self.owners.lock() else {
-            return;
-        };
-        let Ok(mut open) = self.open.lock() else {
-            return;
-        };
-        owners.retain(|id, owner| {
-            let keep = owner != window;
-            if !keep {
-                open.remove(id);
-            }
-            keep
-        });
-    }
-
-    /// Liefert das Terminal, ohne die Sperre über alle Terminals zu halten:
-    /// eine Shell, die ihre Eingabe nicht liest, bremst so keine andere.
-    fn get(&self, id: u32) -> Result<Arc<Terminal>, String> {
-        let open = self.open.lock().map_err(|e| e.to_string())?;
-        open.get(&id)
-            .cloned()
-            .ok_or_else(|| format!("terminal {id} not found"))
-    }
-}
-
-/// Der Agent-Startbefehl aus den Einstellungen des Kerns. Er wird bei jedem
-/// Start frisch gelesen, damit eine Änderung sofort gilt.
-fn agent_start_command(settings: &SettingsStore) -> String {
-    settings.get().agent_command
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OpenedTerminal {
-    id: u32,
-    /// Das Programm des Agent-Startbefehls, wenn ein Agent starten sollte,
-    /// es aber nicht installiert ist. Das Terminal ist dann eine gewöhnliche Shell.
-    missing_agent_program: Option<String>,
-}
-
-/// Der Empfänger für den Agentenstatus. Er fehlt, wenn er sich beim Start
-/// nicht öffnen ließ; Agenten starten dann ohne Agentenstatus.
-type AgentStatusReceiver = Option<Arc<AgentStatus>>;
-
-/// Öffnet ein Terminal mit der gewählten Shell. Mit `agent` startet darin
-/// sofort der Agent; `on_agent_status` erhält dann jede Änderung seines
-/// Agentenstatus.
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-fn terminal_open(
-    window: tauri::Window,
-    terminals: State<'_, Terminals>,
-    agent_status: State<'_, AgentStatusReceiver>,
-    settings: State<'_, SettingsStore>,
-    shell: Option<Shell>,
-    cwd: PathBuf,
-    cols: u16,
-    rows: u16,
-    agent: bool,
-    on_output: Channel<InvokeResponseBody>,
-    on_exit: Channel<()>,
-    on_agent_status: Channel<StatusUpdate>,
-) -> Result<OpenedTerminal, String> {
-    let id = terminals.next_id.fetch_add(1, Ordering::Relaxed);
-    // Ohne Angabe gilt die Standard-Shell aus den Einstellungen.
-    let shell = shell.unwrap_or_else(|| settings.get().default_shell);
-    let mut start_command = agent.then(|| agent_start_command(&settings));
-    let search_path = std::env::var_os("PATH").unwrap_or_default();
-    let missing_agent_program = start_command
-        .as_deref()
-        .and_then(|command| agent::missing_program(command, &search_path));
-    if missing_agent_program.is_some() {
-        start_command = None;
-    }
-    // Der Agent meldet seinen Status über eine Konfiguration, die nur für
-    // dieses Terminal gilt. Lässt sie sich nicht anlegen, startet er ohne.
-    let status = agent_status
-        .inner()
-        .clone()
-        .filter(|_| start_command.is_some());
-    if let (Some(status), Some(command)) = (&status, &mut start_command) {
-        let settings_file = status.register(id, move |update| {
-            // Hier beginnt jede Reaktion des Kerns auf einen Statuswechsel.
-            let _ = on_agent_status.send(update);
-        });
-        if let Ok(settings_file) = settings_file {
-            *command = agent::with_status_settings(command, &settings_file, shell);
-        }
-    }
-    let options = TerminalOptions {
-        shell,
-        cwd,
-        cols,
-        rows,
-        start_command,
-    };
-    let exited_status = status.clone();
-    let terminal = Terminal::open(options, move |event| {
-        // Scheitert das Senden, ist das Fenster bereits geschlossen.
-        let _ = match event {
-            TerminalEvent::Output(bytes) => on_output.send(InvokeResponseBody::Raw(bytes)),
-            TerminalEvent::Exited => {
-                if let Some(status) = &exited_status {
-                    status.forget(id);
-                }
-                on_exit.send(())
-            }
-        };
-    })
-    .map_err(|e| {
-        if let Some(status) = &status {
-            status.forget(id);
-        }
-        e.to_string()
-    })?;
-
-    terminals
-        .open
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(id, Arc::new(terminal));
-    if let Ok(mut owners) = terminals.owners.lock() {
-        owners.insert(id, window.label().to_string());
-    }
-    Ok(OpenedTerminal {
-        id,
-        missing_agent_program,
-    })
-}
-
-#[tauri::command]
-fn terminal_write(terminals: State<'_, Terminals>, id: u32, data: String) -> Result<(), String> {
-    let terminal = terminals.get(id)?;
-    terminal.write(data.as_bytes()).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn terminal_resize(
-    terminals: State<'_, Terminals>,
-    id: u32,
-    cols: u16,
-    rows: u16,
-) -> Result<(), String> {
-    let terminal = terminals.get(id)?;
-    terminal.resize(cols, rows).map_err(|e| e.to_string())
-}
-
-/// Ob im Terminal noch ein Kindprozess läuft; danach richtet sich die
-/// Rückfrage beim Schließen.
-#[tauri::command]
-fn terminal_has_child_process(terminals: State<'_, Terminals>, id: u32) -> Result<bool, String> {
-    Ok(terminals.get(id)?.has_child_process())
-}
-
-#[tauri::command]
-fn terminal_close(
-    terminals: State<'_, Terminals>,
-    agent_status: State<'_, AgentStatusReceiver>,
-    id: u32,
-) -> Result<(), String> {
-    if let Some(status) = agent_status.inner() {
-        status.forget(id);
-    }
-    terminals
-        .open
-        .lock()
-        .map_err(|e| e.to_string())?
-        .remove(&id);
-    if let Ok(mut owners) = terminals.owners.lock() {
-        owners.remove(&id);
-    }
-    Ok(())
-}
-
-/// Die Beobachter der geöffneten Projekte und die Abonnements der Fenster.
-/// Je Projektordner gibt es einen Beobachter; an ihm hängen Oberfläche und Kern.
-#[derive(Default)]
-struct ProjectWatchers {
-    next_id: AtomicU32,
-    watchers: Mutex<HashMap<PathBuf, Arc<ProjectWatcher>>>,
-    subscriptions: Mutex<HashMap<u32, WindowSubscription>>,
-}
-
-/// Das Abonnement eines Fensters am Ereignisstrom seines Projekts.
-struct WindowSubscription {
-    window: String,
-    project: PathBuf,
-    _subscription: Subscription,
-}
-
-impl ProjectWatchers {
-    /// Beendet die Abonnements eines geschlossenen Fensters und die
-    /// Beobachter, an denen danach niemand mehr hängt; sonst bliebe der
-    /// Projektordner bis zum Ende des Prozesses beobachtet.
-    fn close_all_of(&self, window: &str) {
-        let Ok(mut subscriptions) = self.subscriptions.lock() else {
-            return;
-        };
-        subscriptions.retain(|_, subscription| subscription.window != window);
-        let Ok(mut watchers) = self.watchers.lock() else {
-            return;
-        };
-        watchers.retain(|project, watcher| {
-            // Wer den Beobachter außerhalb dieser Liste hält, hört noch zu.
-            Arc::strong_count(watcher) > 1
-                || subscriptions
-                    .values()
-                    .any(|subscription| &subscription.project == project)
-        });
-    }
-
-    /// Liefert den Beobachter des Projekts und startet ihn beim ersten Mal.
-    fn for_project(&self, project: &Path) -> Result<Arc<ProjectWatcher>, String> {
-        let mut watchers = self.watchers.lock().map_err(|e| e.to_string())?;
-        if let Some(watcher) = watchers.get(project) {
-            return Ok(watcher.clone());
-        }
-        let watcher = Arc::new(ProjectWatcher::start(project).map_err(|e| e.to_string())?);
-        watchers.insert(project.to_path_buf(), watcher.clone());
-        Ok(watcher)
-    }
-}
-
-/// Die Einträge eines Ordners im Projekt; `folder` ist relativ zum
-/// Projektordner und für diesen selbst leer. Läuft abseits des
-/// Haupt-Threads, damit auch ein sehr großer Ordner das Fenster nicht anhält.
-#[tauri::command(async)]
-fn project_files_list(project: PathBuf, folder: String) -> Result<Vec<Entry>, String> {
-    project_files::list_folder(&project.join(folder)).map_err(|e| e.to_string())
-}
-
-/// Die Dateiliste des Projekts für „Datei per Namen öffnen“: alle nicht
-/// ignorierten Dateien, relativ zum Projektordner.
-#[tauri::command(async)]
-fn project_file_list(project: PathBuf) -> Vec<String> {
-    file_list::list_files(&project)
-}
-
-/// Liest eine Datei für die Dateiansicht. `path` ist relativ zum
-/// Projektordner; ein voller Pfad (Datei außerhalb des Projekts) gilt unverändert.
-#[tauri::command(async)]
-fn project_files_read(project: PathBuf, path: String) -> Result<FileContent, String> {
-    project_files::read_file(&project.join(path)).map_err(|e| e.to_string())
-}
-
-/// Warum ein Bild nicht geliefert wird.
-#[derive(serde::Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-enum ImageUnavailable {
-    NotAnImage,
-    TooLarge { size: u64 },
-    Missing,
-    Failed { details: String },
-}
-
-/// Liest eine Bilddatei als rohe Bytes; `path` wie bei `project_files_read`.
-/// Nur Dateien mit Bildendung werden geliefert.
-#[tauri::command(async)]
-fn project_files_read_image(
-    project: PathBuf,
-    path: String,
-) -> Result<tauri::ipc::Response, ImageUnavailable> {
-    match project_files::read_image(&project.join(path)) {
-        Ok(ImageContent::Image { bytes }) => Ok(tauri::ipc::Response::new(bytes)),
-        Ok(ImageContent::NotAnImage) => Err(ImageUnavailable::NotAnImage),
-        Ok(ImageContent::TooLarge { size }) => Err(ImageUnavailable::TooLarge { size }),
-        Ok(ImageContent::Missing) => Err(ImageUnavailable::Missing),
-        Err(e) => Err(ImageUnavailable::Failed {
-            details: e.to_string(),
-        }),
-    }
-}
-
-/// Welche der Dateien und Ordner es gibt, in der Reihenfolge von `paths`;
-/// jeder Pfad wie bei `project_files_read`. Danach richtet sich, was von
-/// einer gespeicherten Aufteilung wiederhergestellt wird.
-#[tauri::command(async)]
-fn project_files_exist(project: PathBuf, paths: Vec<String>) -> Vec<bool> {
-    paths
-        .iter()
-        .map(|path| project.join(path).exists())
-        .collect()
-}
-
-/// Schreibt den Inhalt einer Datei; `path` wie bei `project_files_read`.
-#[tauri::command(async)]
-fn project_files_write(project: PathBuf, path: String, text: String) -> Result<(), String> {
-    project_files::write_file(&project.join(path), &text).map_err(|e| e.to_string())
-}
-
-/// Legt im Ordner `folder` des Projekts eine leere Datei an.
-#[tauri::command(async)]
-fn project_files_create_file(
-    project: PathBuf,
-    folder: String,
-    name: String,
-) -> Result<(), FileOperationError> {
-    project_files::create_file(&project.join(folder), &name)
-}
-
-/// Legt im Ordner `folder` des Projekts einen leeren Ordner an.
-#[tauri::command(async)]
-fn project_files_create_folder(
-    project: PathBuf,
-    folder: String,
-    name: String,
-) -> Result<(), FileOperationError> {
-    project_files::create_folder(&project.join(folder), &name)
-}
-
-/// Gibt dem Eintrag `path` des Projekts in seinem Ordner einen neuen Namen.
-#[tauri::command(async)]
-fn project_files_rename(
-    project: PathBuf,
-    path: String,
-    new_name: String,
-) -> Result<(), FileOperationError> {
-    project_files::rename(&project.join(path), &new_name)
-}
-
-/// Verschiebt den Eintrag `path` des Projekts in den Windows-Papierkorb.
-#[tauri::command(async)]
-fn project_files_trash(project: PathBuf, path: String) -> Result<(), FileOperationError> {
-    project_files::move_to_trash(&project.join(path))
-}
-
-/// Markiert den Eintrag `path` des Projekts im Windows-Explorer; ein leerer
-/// Pfad meint den Projektordner selbst.
-#[tauri::command(async)]
-fn project_files_reveal(project: PathBuf, path: String) -> Result<(), FileOperationError> {
-    Ok(external::reveal(&project.join(path))?)
-}
-
-/// Abonniert den Ereignisstrom des Projekts und liefert die Kennung des Abonnements.
-#[tauri::command]
-fn project_files_watch(
-    window: tauri::Window,
-    watchers: State<'_, ProjectWatchers>,
-    project: PathBuf,
-    on_change: Channel<ProjectChanges>,
-) -> Result<u32, String> {
-    // Der Beobachter bleibt gehalten, bis das Abonnement eingetragen ist;
-    // so räumt ihn ein gleichzeitig schließendes Fenster nicht weg.
-    let watcher = watchers.for_project(&project)?;
-    let subscription = watcher.subscribe(move |changes| {
-        // Scheitert das Senden, ist das Fenster bereits geschlossen.
-        let _ = on_change.send(changes.clone());
-    });
-    let id = watchers.next_id.fetch_add(1, Ordering::Relaxed);
-    watchers
-        .subscriptions
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(
-            id,
-            WindowSubscription {
-                window: window.label().to_string(),
-                project,
-                _subscription: subscription,
-            },
-        );
-    Ok(id)
-}
-
-#[tauri::command]
-fn project_files_unwatch(watchers: State<'_, ProjectWatchers>, id: u32) -> Result<(), String> {
-    watchers
-        .subscriptions
-        .lock()
-        .map_err(|e| e.to_string())?
-        .remove(&id);
-    Ok(())
-}
-
-/// Durchsucht die Dateien des Projekts nach einem Text. Die Treffer kommen
-/// bündelweise über `on_matches`, solange die Suche läuft; sie endet auch,
-/// wenn das Fenster eine neuere Suche beginnt oder `search_cancel` ruft.
-/// `id` zählt die Suchen des Fensters aufsteigend ab 1.
-#[tauri::command(async)]
-fn search_text(
-    window: tauri::Window,
-    searches: State<'_, Searches>,
-    project: PathBuf,
-    id: u32,
-    query: TextQuery,
-    on_matches: Channel<Vec<FileMatches>>,
-) -> Result<SearchOutcome, SearchError> {
-    let cancelled = SearchOutcome {
-        cancelled: true,
-        limit_reached: false,
-    };
-    let Some(cancellation) = searches.begin(window.label(), id) else {
-        return Ok(cancelled);
-    };
-    let (found, files) = std::sync::mpsc::channel();
-    let outcome = std::thread::scope(|scope| {
-        let search = scope.spawn(|| {
-            search::search_text(&project, &query, &cancellation, move |file| {
-                let _ = found.send(file);
-            })
-        });
-        // Was in kurzer Zeit zusammenkommt, geht als ein Bündel an die Oberfläche.
-        while let Ok(first) = files.recv() {
-            let mut batch = vec![first];
-            batch.extend(files.try_iter());
-            // Scheitert das Senden, ist das Fenster bereits geschlossen.
-            if on_matches.send(batch).is_err() {
-                cancellation.cancel();
-            }
-            std::thread::sleep(std::time::Duration::from_millis(30));
-        }
-        search.join().unwrap_or(Ok(cancelled))
-    });
-    searches.finish(window.label(), id);
-    outcome
-}
-
-/// Bricht die Suche `id` des Fensters ab, auch wenn sie noch nicht begonnen hat.
-#[tauri::command]
-fn search_cancel(window: tauri::Window, searches: State<'_, Searches>, id: u32) {
-    searches.cancel(window.label(), id);
-}
+use terminal_commands::{AgentStatusReceiver, Terminals};
+use version_control_commands::VersionControls;
 
 /// Prüft, welche Texte aus einem Terminal vorhandene Dateien bezeichnen:
 /// je Text der volle Pfad oder nichts. Relative Angaben gelten ab `base`.
@@ -503,13 +66,29 @@ fn settings_set(settings: State<'_, SettingsStore>, value: Settings) -> Result<S
 /// Die Shells, die die Einstellungsseite zur Wahl stellt.
 #[tauri::command]
 fn available_shells() -> Vec<Shell> {
-    settings::available_shells()
+    terminal::available_shells()
+}
+
+/// Gibt alles frei, was zu einem geschlossenen Fenster gehört. Die eine
+/// Stelle dafür: Was künftig an einem Fenster hängt, kommt hier dazu.
+fn release_window(window: &tauri::Window) {
+    let label = window.label();
+    projects::window_closed(window);
+    waiting_alerts::window_closed(window);
+    window.state::<Terminals>().close_all_of(label);
+    // Vor den Beobachtern, damit auch der Beobachter der Projektdateien enden kann.
+    window.state::<VersionControls>().close_all_of(label);
+    window.state::<ProjectWatchers>().close_all_of(label);
+    window.state::<Searches>().close_all_of(label);
 }
 
 pub fn run() {
     // Der Empfänger für den Agentenstatus aller Fenster; sein Laufzeitordner
     // gehört diesem Kredr-Prozess.
-    let runtime_dir = std::env::temp_dir().join(format!("kredr-{}", std::process::id()));
+    let temp = std::env::temp_dir();
+    let runtime_dir = agent_status::runtime_folder_of(&temp, std::process::id());
+    // Was frühere Kredr-Prozesse dort hinterlassen haben, hält den Start nicht auf.
+    std::thread::spawn(move || agent_status::remove_orphaned_runtime_folders(&temp));
     let agent_status: AgentStatusReceiver = AgentStatus::start(runtime_dir).ok().map(Arc::new);
     let mut builder = tauri::Builder::default();
     // Ein einziger Prozess verwaltet alle Fenster. Die Entwicklungsfassung
@@ -526,7 +105,7 @@ pub fn run() {
         .manage(agent_status)
         .manage(ProjectWatchers::default())
         .manage(Searches::default())
-        .manage(version_control_commands::VersionControls::default())
+        .manage(VersionControls::default())
         .manage(project_windows::ProjectWindows::default())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -541,44 +120,35 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
-                projects::window_closed(window);
-                waiting_alerts::window_closed(window);
-                window.state::<Terminals>().close_all_of(window.label());
-                window
-                    .state::<version_control_commands::VersionControls>()
-                    .close_all_of(window.label());
-                window
-                    .state::<ProjectWatchers>()
-                    .close_all_of(window.label());
-                window.state::<Searches>().close_all_of(window.label());
+                release_window(window);
             }
         })
         .invoke_handler(tauri::generate_handler![
-            terminal_open,
-            terminal_write,
-            terminal_resize,
-            terminal_has_child_process,
-            terminal_close,
+            terminal_commands::terminal_open,
+            terminal_commands::terminal_write,
+            terminal_commands::terminal_resize,
+            terminal_commands::terminal_has_child_process,
+            terminal_commands::terminal_close,
             resolve_files,
             open_file,
             open_url,
             settings_get,
             settings_set,
             available_shells,
-            project_files_list,
-            project_file_list,
-            project_files_read,
-            project_files_read_image,
-            project_files_write,
-            project_files_create_file,
-            project_files_create_folder,
-            project_files_rename,
-            project_files_trash,
-            project_files_reveal,
-            project_files_watch,
-            project_files_unwatch,
-            search_text,
-            search_cancel,
+            project_files_commands::project_files_list_folder,
+            project_files_commands::project_files_list_all,
+            project_files_commands::project_files_read,
+            project_files_commands::project_files_read_image,
+            project_files_commands::project_files_write,
+            project_files_commands::project_files_create_file,
+            project_files_commands::project_files_create_folder,
+            project_files_commands::project_files_rename,
+            project_files_commands::project_files_trash,
+            project_files_commands::project_files_reveal,
+            project_files_commands::project_files_watch,
+            project_files_commands::project_files_unwatch,
+            search_commands::search_text,
+            search_commands::search_cancel,
             version_control_commands::version_control_watch,
             version_control_commands::version_control_unwatch,
             version_control_commands::version_control_diff,
@@ -602,7 +172,7 @@ pub fn run() {
             projects::open_project,
             waiting_alerts::waiting_alert,
             waiting_alerts::waiting_alert_clear,
-            project_files_exist,
+            project_files_commands::project_files_exist,
             projects::arrangement_load,
             projects::arrangement_save,
         ])

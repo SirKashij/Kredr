@@ -56,5 +56,5 @@ Die Ansicht, in der Änderungen eines Projekts geprüft, festgeschrieben und mit
 _Vermeiden_: Source Control, Git-Panel
 
 **Änderung**:
-Eine geänderte, neue, gelöschte oder umbenannte Datei des Projekts gegenüber dem letzten Commit. Eine Änderung ist ausgewählt, wenn sie in den nächsten Commit kommt.
+Eine geänderte, neue, gelöschte oder umbenannte Datei des Projekts gegenüber dem letzten Commit. Eine Änderung ist ausgewählt, wenn sie in den nächsten Commit kommt. Im Code und in der englischen Oberfläche heißt „ausgewählt“ wie in Git „staged“, „auswählen“ „stage“.
 _Vermeiden_: gestagt, Stage, Index

@@ -67,7 +67,7 @@ test("ohne Auswahl schreibt der Commit alles fest, mit Auswahl nur die Auswahl",
   );
 });
 
-test("ein Branch ohne Gegenstück lässt sich pushen, aber nicht pullen", () => {
+test("ein Branch, den es auf dem Remote nicht gibt, lässt sich pushen, aber nicht pullen", () => {
   const unpublished = repository({ upstream: null });
 
   expect(canPush(unpublished, null)).toBe(true);
@@ -80,7 +80,7 @@ test("ohne ausgecheckten Branch gibt es nichts zu pushen", () => {
   expect(canPush(noRepository, null)).toBe(false);
 });
 
-test("die Statusleiste nennt Vorsprung und Rückstand nur mit Gegenstück", () => {
+test("die Statusleiste nennt Vorsprung und Rückstand nur für einen Branch, den es auf dem Remote gibt", () => {
   expect(syncCounts(repository({ ahead: 2, behind: 1 }))).toEqual({ ahead: 2, behind: 1 });
   expect(syncCounts(repository({ upstream: null }))).toBeNull();
   expect(syncCounts(noRepository)).toBeNull();
@@ -187,6 +187,53 @@ test("„Erst holen, dann pushen“ ruft die eine Operation des Kerns", async ()
   expect(store.snapshot().busy).toBe("pullAndPush");
   calls[0].resolve(null);
   await done;
+});
+
+test("während „Commit & Push“ läuft, wechselt kein Branch", async () => {
+  const { store, calls } = storeWithCore();
+  store.setMessage("Meine Änderung");
+  const committing = store.commitAndPush();
+
+  const switched = await store.changeBranch({
+    kind: "branch",
+    branch: { name: "andere", remote: null, current: false },
+  });
+
+  expect(switched).toBe(false);
+  expect(calls.map((call) => call.command)).toEqual(["version_control_commit_and_push"]);
+  calls[0].resolve({ pushError: null });
+  await committing;
+});
+
+test("ein Branch-Wechsel sperrt die übrigen Operationen, bis er fertig ist", async () => {
+  const { store, calls } = storeWithCore();
+  const branch = { name: "andere", remote: null, current: false };
+
+  const switching = store.changeBranch({ kind: "branch", branch });
+  const pushing = store.push();
+
+  expect(store.snapshot().busy).toBe("changeBranch");
+  expect(calls.map((call) => call.command)).toEqual(["version_control_switch_branch"]);
+  expect(calls[0].args).toEqual({ project: "C:/projekt", branch });
+  calls[0].resolve(null);
+  expect(await switching).toBe(true);
+  await pushing;
+  expect(store.snapshot().busy).toBeNull();
+});
+
+test("ein neuer Branch entsteht über dieselbe Sperre; ein Scheitern erfährt die Branch-Liste", async () => {
+  const { store, calls } = storeWithCore();
+  const exists: VersionControlError = { reason: "branchExists", details: "already exists" };
+
+  const creating = store.changeBranch({ kind: "create", name: "feature" });
+
+  expect(calls[0].command).toBe("version_control_create_branch");
+  expect(calls[0].args).toEqual({ project: "C:/projekt", name: "feature" });
+  calls[0].reject(exists);
+  await expect(creating).rejects.toEqual(exists);
+  expect(store.snapshot().busy).toBeNull();
+  // Die Meldung gehört der Branch-Liste, nicht dem Feld unter der Commit-Nachricht.
+  expect(store.snapshot().failure).toBeNull();
 });
 
 test("Auswählen ohne Dateien meint alle, mit Dateien genau diese", async () => {

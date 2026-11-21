@@ -720,7 +720,7 @@ fn das_abfragen_im_hintergrund_macht_neuere_commits_von_selbst_sichtbar() {
 fn das_abfragen_im_hintergrund_loest_sich_nicht_selbst_erneut_aus() {
     let (project, _remote) = pushed_project();
     project.push_from_elsewhere("b.txt", "anderswo\n");
-    // Ein „Git“, das jedes Abfragen des Gegenstücks mitschreibt.
+    // Ein „Git“, das jedes Abfragen des Remotes mitschreibt.
     let log = project.path().with_file_name("abfragen.txt");
     let wrapper = project.path().with_file_name("zaehlt.cmd");
     let script = format!(

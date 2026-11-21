@@ -12,8 +12,30 @@ use std::process::Command;
 /// Endungen, deren Dateien Windows beim Öffnen ausführt statt anzeigt,
 /// zusätzlich zu denen aus `PATHEXT`.
 const RUNNING_EXTENSIONS: &[&str] = &[
-    "exe", "com", "bat", "cmd", "vbs", "vbe", "js", "jse", "wsf", "wsh", "msc", "msi", "scr",
-    "lnk", "pif", "hta", "cpl", "jar", "py", "pyw", "reg",
+    "exe",
+    "com",
+    "bat",
+    "cmd",
+    "vbs",
+    "vbe",
+    "js",
+    "jse",
+    "wsf",
+    "wsh",
+    "msc",
+    "msi",
+    "scr",
+    "lnk",
+    "pif",
+    "hta",
+    "cpl",
+    "jar",
+    "py",
+    "pyw",
+    "reg",
+    "url",
+    "chm",
+    "appref-ms",
 ];
 
 /// Der volle Pfad der Datei, die `candidate` bezeichnet; relative Angaben

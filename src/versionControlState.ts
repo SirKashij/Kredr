@@ -17,7 +17,7 @@ export interface ChangedFile {
   /** Der frühere Pfad einer umbenannten Datei. */
   originalPath: string | null;
   status: FileStatus;
-  /** Ob die Änderung zum Festschreiben ausgewählt (gestagt) ist. */
+  /** Ob die Änderung zum Festschreiben ausgewählt ist. */
   staged: boolean;
 }
 
@@ -29,7 +29,7 @@ export interface RepositoryState {
   /** Der aktuelle Commit; `null`, solange es noch keinen gibt. */
   commit: string | null;
   files: ChangedFile[];
-  /** Das Gegenstück des Branches auf GitHub; `null`, solange er noch nie gepusht wurde. */
+  /** Der Branch auf GitHub, dem der aktuelle folgt; `null`, solange er noch nie gepusht wurde. */
   upstream: string | null;
   /** Wie viele Commits noch nicht gepusht sind. */
   ahead: number;
@@ -155,7 +155,15 @@ export function followSelection(
 
 /** Was die Versionskontrolle eines Fensters gerade ausführt; immer nur eines. */
 export type Operation =
-  "stage" | "unstage" | "discard" | "commit" | "commitAndPush" | "push" | "pull" | "pullAndPush";
+  | "stage"
+  | "unstage"
+  | "discard"
+  | "commit"
+  | "commitAndPush"
+  | "push"
+  | "pull"
+  | "pullAndPush"
+  | "changeBranch";
 
 /** Der Text der Sprachdatei, der eine laufende Operation benennt. */
 export const operationLabels: Record<Operation, MessageKey> = {
@@ -167,6 +175,7 @@ export const operationLabels: Record<Operation, MessageKey> = {
   push: "versionControl.busy.push",
   pull: "versionControl.busy.pull",
   pullAndPush: "versionControl.busy.pullAndPush",
+  changeBranch: "versionControl.busy.changeBranch",
 };
 
 /** Ob sich festschreiben lässt: Es gibt Änderungen, eine Nachricht, und nichts läuft. */
@@ -185,17 +194,17 @@ export function commitsEverything(state: RepositoryState): boolean {
   return !state.files.some((file) => file.staged);
 }
 
-/** Ob sich pushen lässt; ein Branch ohne Gegenstück wird dabei auf GitHub angelegt. */
+/** Ob sich pushen lässt; einen Branch, den es dort noch nicht gibt, legt der Push auf GitHub an. */
 export function canPush(state: VersionControlState | null, busy: Operation | null): boolean {
   return busy === null && state?.kind === "repository" && state.branch !== null;
 }
 
-/** Ob sich pullen lässt; dafür braucht der Branch ein Gegenstück. */
+/** Ob sich pullen lässt; dafür muss es den Branch auf dem Remote geben. */
 export function canPull(state: VersionControlState | null, busy: Operation | null): boolean {
   return busy === null && state?.kind === "repository" && state.upstream !== null;
 }
 
-/** Vorsprung und Rückstand gegenüber GitHub; `null` ohne Gegenstück. */
+/** Vorsprung und Rückstand gegenüber GitHub; `null`, solange es den Branch auf dem Remote nicht gibt. */
 export function syncCounts(
   state: VersionControlState | null,
 ): { ahead: number; behind: number } | null {

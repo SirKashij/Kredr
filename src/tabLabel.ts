@@ -1,14 +1,9 @@
 import type { Tab } from "./arrangement";
-import type { MessageKey, Translate } from "./i18n/i18n";
-import type { Shell } from "./settingsStore";
-
-const shellNames: Record<Shell, MessageKey> = {
-  powershell: "terminal.powershell",
-  gitBash: "terminal.gitBash",
-};
+import type { Translate } from "./i18n/i18n";
+import { shellLabels, type Shell } from "./settingsStore";
 
 export function shellLabel(shell: Shell | undefined, t: Translate): string {
-  return t(shellNames[shell ?? "powershell"]);
+  return t(shellLabels[shell ?? "powershell"]);
 }
 
 /**

@@ -25,6 +25,7 @@ describe("Wann sich Kredr wegen eines wartenden Agenten meldet", () => {
     });
 
     expect(decision.notify).toEqual(["t1"]);
+    expect(decision.notification).toBe(true);
   });
 
   it("meldet nichts, solange das Fenster im Vordergrund ist", () => {
@@ -39,7 +40,7 @@ describe("Wann sich Kredr wegen eines wartenden Agenten meldet", () => {
     expect(decision.checkAgainAt).toBeNull();
   });
 
-  it("meldet nichts, wenn Benachrichtigungen abgeschaltet sind", () => {
+  it("meldet sich bei abgeschalteten Benachrichtigungen nur am Taskleisten-Symbol", () => {
     const decision = decide(noAlerts, {
       foreground: false,
       enabled: false,
@@ -47,8 +48,8 @@ describe("Wann sich Kredr wegen eines wartenden Agenten meldet", () => {
       now: 1_000,
     });
 
-    expect(decision.notify).toBeNull();
-    expect(decision.checkAgainAt).toBeNull();
+    expect(decision.notify).toEqual(["t1"]);
+    expect(decision.notification).toBe(false);
   });
 
   it("meldet nur den Wechsel auf „wartet auf Eingabe“, nicht jede weitere Meldung", () => {
@@ -197,7 +198,7 @@ describe("Mehrere kurz hintereinander wartende Agenten", () => {
     expect(decision.notify).toEqual(["t2", "t3"]);
   });
 
-  it("werden nicht mehr gemeldet, wenn der Schalter in der Ruhezeit ausgeht", () => {
+  it("kommen ohne Windows-Benachrichtigung, wenn der Schalter in der Ruhezeit ausgeht", () => {
     const { alerts, all } = threeWaiting();
 
     const decision = decide(alerts, {
@@ -207,8 +208,8 @@ describe("Mehrere kurz hintereinander wartende Agenten", () => {
       now: 1_000 + QUIET_MS,
     });
 
-    expect(decision.notify).toBeNull();
-    expect(decision.checkAgainAt).toBeNull();
+    expect(decision.notify).toEqual(["t1", "t2", "t3"]);
+    expect(decision.notification).toBe(false);
   });
 
   it("zählen nach dem Blick ins Fenster von vorn", () => {

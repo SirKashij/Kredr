@@ -1,8 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { languageFor, type Language } from "./i18n/i18n";
+import { languageFor, type Language, type MessageKey } from "./i18n/i18n";
 
 export type Shell = "powershell" | "gitBash";
+
+/** Jede Shell, die Kredr kennt, mit dem Text der Sprachdatei, der sie benennt. */
+export const shellLabels: Record<Shell, MessageKey> = {
+  powershell: "terminal.powershell",
+  gitBash: "terminal.gitBash",
+};
+
+/** Ob der Wert eine Shell benennt, die Kredr kennt (etwa aus einer gespeicherten Aufteilung). */
+export function isShell(value: unknown): value is Shell {
+  return typeof value === "string" && value in shellLabels;
+}
 
 /** Die Einstellungen von Kredr, wie der Kern sie speichert. */
 export interface Settings {

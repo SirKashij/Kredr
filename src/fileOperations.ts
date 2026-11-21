@@ -60,12 +60,6 @@ export function errorMessage(
   }
 }
 
-/** Der volle Windows-Pfad eines Eintrags im Projekt; ein leerer Pfad meint den Projektordner. */
-export function absolutePath(project: string, path: string): string {
-  if (path === "") return project;
-  return `${project.replace(/[\\/]+$/, "")}\\${path.replaceAll("/", "\\")}`;
-}
-
 /** Der Pfad relativ zum Projektordner in Windows-Schreibweise, wie ihn VS Code kopiert. */
 export function relativePath(path: string): string {
   return path.replaceAll("/", "\\");

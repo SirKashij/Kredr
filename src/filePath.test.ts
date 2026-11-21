@@ -1,23 +1,21 @@
 import { expect, test } from "vitest";
 import { fileName, fullPath, isOutsideProject, opensExternally, toProjectPath } from "./filePath";
 
-const project = "C:\\Users\\kevin\\Kredr";
+const project = "C:\\Users\\test\\Kredr";
 
 test("ein voller Pfad im Projekt wird projekt-relativ mit Schrägstrichen", () => {
-  expect(toProjectPath(project, "C:\\Users\\kevin\\Kredr\\src\\ui\\App.tsx")).toBe(
-    "src/ui/App.tsx",
-  );
-  expect(toProjectPath(project, "C:/Users/kevin/Kredr/README.md")).toBe("README.md");
+  expect(toProjectPath(project, "C:\\Users\\test\\Kredr\\src\\ui\\App.tsx")).toBe("src/ui/App.tsx");
+  expect(toProjectPath(project, "C:/Users/test/Kredr/README.md")).toBe("README.md");
 });
 
 test("Groß- und Kleinschreibung des Projektordners spielt keine Rolle", () => {
-  expect(toProjectPath(project, "c:\\users\\KEVIN\\kredr\\src\\App.tsx")).toBe("src/App.tsx");
-  expect(toProjectPath(project + "\\", "C:\\Users\\kevin\\Kredr\\a.txt")).toBe("a.txt");
+  expect(toProjectPath(project, "c:\\users\\TEST\\kredr\\src\\App.tsx")).toBe("src/App.tsx");
+  expect(toProjectPath(project + "\\", "C:\\Users\\test\\Kredr\\a.txt")).toBe("a.txt");
 });
 
 test("ein voller Pfad außerhalb des Projekts bleibt ein voller Pfad", () => {
-  expect(toProjectPath(project, "C:\\Users\\kevin\\Kredr-wt\\notes\\a.md")).toBe(
-    "C:/Users/kevin/Kredr-wt/notes/a.md",
+  expect(toProjectPath(project, "C:\\Users\\test\\Kredr-wt\\notes\\a.md")).toBe(
+    "C:/Users/test/Kredr-wt/notes/a.md",
   );
   expect(toProjectPath(project, "D:\\anderes\\b.txt")).toBe("D:/anderes/b.txt");
   expect(toProjectPath(project, "\\\\server\\freigabe\\c.txt")).toBe("//server/freigabe/c.txt");
@@ -36,8 +34,8 @@ test("der Dateiname ist der letzte Teil des Pfads", () => {
 });
 
 test("der volle Pfad steht in der Schreibweise von Windows", () => {
-  expect(fullPath(project, "src/ui/App.tsx")).toBe("C:\\Users\\kevin\\Kredr\\src\\ui\\App.tsx");
-  expect(fullPath(project + "\\", "a.txt")).toBe("C:\\Users\\kevin\\Kredr\\a.txt");
+  expect(fullPath(project, "src/ui/App.tsx")).toBe("C:\\Users\\test\\Kredr\\src\\ui\\App.tsx");
+  expect(fullPath(project + "\\", "a.txt")).toBe("C:\\Users\\test\\Kredr\\a.txt");
   expect(fullPath(project, "D:/anderes/b.txt")).toBe("D:\\anderes\\b.txt");
   expect(fullPath(project, "//server/freigabe/c.txt")).toBe("\\\\server\\freigabe\\c.txt");
 });

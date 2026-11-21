@@ -34,7 +34,10 @@ export interface Situation {
   statuses: Statuses;
   /** Ob das Fenster im Vordergrund ist. */
   foreground: boolean;
-  /** Der Schalter „Benachrichtigungen“ der Einstellungen. */
+  /**
+   * Der Schalter „Benachrichtigungen“ der Einstellungen. Er gilt nur der
+   * Windows-Benachrichtigung; das Taskleisten-Symbol meldet sich immer.
+   */
   enabled: boolean;
   /** Die aktuelle Zeit (Millisekunden wie `Date.now()`). */
   now: number;
@@ -43,10 +46,15 @@ export interface Situation {
 export interface Decision {
   alerts: Alerts;
   /**
-   * Die Tabs der Agenten, die die Benachrichtigung jetzt nennt; der erste
-   * wartet am längsten. `null`: Es erscheint keine.
+   * Die Tabs der Agenten, derentwegen sich Kredr jetzt meldet; der erste
+   * wartet am längsten. `null`: Es meldet sich nicht.
    */
   notify: readonly string[] | null;
+  /**
+   * Ob dazu die Windows-Benachrichtigung erscheint. Ohne sie macht nur das
+   * Taskleisten-Symbol auf sich aufmerksam.
+   */
+  notification: boolean;
   /** Wann erneut zu entscheiden ist, auch wenn sich bis dahin nichts ändert. */
   checkAgainAt: number | null;
 }
@@ -61,11 +69,12 @@ export function decide(alerts: Alerts, situation: Situation): Decision {
   for (const [tabId, status] of statuses) {
     if (status.state === "waiting") waitingSince.set(tabId, status.since);
   }
-  // Was der Nutzer vor Augen hat oder nicht gemeldet haben will, gilt als gesehen.
-  if (foreground || !enabled) {
+  // Was der Nutzer vor Augen hat, gilt als gesehen.
+  if (foreground) {
     return {
       alerts: { waitingSince, unattended: [], pending: false, quietUntil: alerts.quietUntil },
       notify: null,
+      notification: enabled,
       checkAgainAt: null,
     };
   }
@@ -83,12 +92,14 @@ export function decide(alerts: Alerts, situation: Situation): Decision {
     return {
       alerts: { waitingSince, unattended, pending: false, quietUntil: now + QUIET_MS },
       notify: unattended,
+      notification: enabled,
       checkAgainAt: null,
     };
   }
   return {
     alerts: { waitingSince, unattended, pending, quietUntil: alerts.quietUntil },
     notify: null,
+    notification: enabled,
     checkAgainAt: pending ? alerts.quietUntil : null,
   };
 }

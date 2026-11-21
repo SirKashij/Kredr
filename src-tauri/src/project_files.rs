@@ -4,7 +4,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, Weak};
 use std::thread;
@@ -221,8 +221,16 @@ type Subscribers = Mutex<HashMap<u64, Subscriber>>;
 pub struct ProjectWatcher {
     subscribers: Arc<Subscribers>,
     next_id: AtomicU64,
-    /// Hält die Beobachtung des Betriebssystems am Leben.
-    _watcher: RecommendedWatcher,
+    /// Die Beobachtung des Betriebssystems; sie endet mit diesem Wert.
+    watcher: Mutex<RecommendedWatcher>,
+    included: Arc<Mutex<Vec<IncludedFolder>>>,
+}
+
+/// Ein Ordner außerhalb des Projektordners, dessen Änderungen der
+/// Ereignisstrom unter dem Pfad `shown_as` meldet.
+struct IncludedFolder {
+    folder: PathBuf,
+    shown_as: String,
 }
 
 impl ProjectWatcher {
@@ -235,17 +243,21 @@ impl ProjectWatcher {
 
         let subscribers = Arc::new(Subscribers::default());
         let listeners = subscribers.clone();
-        let project = project.to_path_buf();
+        let included = Arc::new(Mutex::new(Vec::new()));
+        let folders = Folders {
+            project: project.to_path_buf(),
+            included: included.clone(),
+        };
         // Endet von selbst, sobald der Beobachter verworfen ist.
         thread::spawn(move || {
             while let Ok(first) = events.recv() {
                 let mut batch = Batch::default();
-                batch.add(&project, first);
+                batch.add(&folders, first);
                 let deadline = Instant::now() + CHANGE_WINDOW;
                 loop {
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     match events.recv_timeout(remaining) {
-                        Ok(event) => batch.add(&project, event),
+                        Ok(event) => batch.add(&folders, event),
                         Err(_) => break,
                     }
                 }
@@ -263,8 +275,29 @@ impl ProjectWatcher {
         Ok(ProjectWatcher {
             subscribers,
             next_id: AtomicU64::new(0),
-            _watcher: watcher,
+            watcher: Mutex::new(watcher),
+            included,
         })
+    }
+
+    /// Beobachtet zusätzlich einen Ordner außerhalb des Projektordners samt
+    /// Unterordnern. Seine Änderungen erscheinen im Ereignisstrom, als läge
+    /// er im Projektordner unter `shown_as`. So meldet der Strom auch ein
+    /// Git-Verzeichnis, das über dem Projektordner liegt, unter `.git/`.
+    pub fn include(&self, folder: &Path, shown_as: &str) -> Result<(), ProjectFilesError> {
+        let mut watcher = self.watcher.lock().map_err(error)?;
+        let mut included = self.included.lock().map_err(error)?;
+        if included.iter().any(|known| known.folder == folder) {
+            return Ok(());
+        }
+        watcher
+            .watch(folder, RecursiveMode::Recursive)
+            .map_err(error)?;
+        included.push(IncludedFolder {
+            folder: folder.to_path_buf(),
+            shown_as: shown_as.to_owned(),
+        });
+        Ok(())
     }
 
     /// Abonniert den Ereignisstrom. `on_change` wird der Reihe nach aus
@@ -299,6 +332,32 @@ impl Drop for Subscription {
     }
 }
 
+/// Die beobachteten Ordner: der Projektordner und was zusätzlich dazugehört.
+struct Folders {
+    project: PathBuf,
+    included: Arc<Mutex<Vec<IncludedFolder>>>,
+}
+
+impl Folders {
+    /// Der Pfad, unter dem der Ereignisstrom `path` meldet: relativ zum
+    /// Projektordner und mit `/` getrennt; leer für den Projektordner selbst.
+    /// Fehlt, wenn der Pfad zu keinem beobachteten Ordner gehört.
+    fn shown_path(&self, path: &Path) -> Option<String> {
+        let shown = |relative: &Path| relative.to_string_lossy().replace('\\', "/");
+        if let Ok(relative) = path.strip_prefix(&self.project) {
+            return Some(shown(relative));
+        }
+        let included = self.included.lock().ok()?;
+        included.iter().find_map(|known| {
+            let relative = shown(path.strip_prefix(&known.folder).ok()?);
+            Some(match relative.as_str() {
+                "" => known.shown_as.clone(),
+                _ => format!("{}/{relative}", known.shown_as),
+            })
+        })
+    }
+}
+
 /// Die Änderungen eines Zeitfensters, ohne Doppelte.
 #[derive(Default)]
 struct Batch {
@@ -307,7 +366,7 @@ struct Batch {
 }
 
 impl Batch {
-    fn add(&mut self, project: &Path, event: notify::Result<notify::Event>) {
+    fn add(&mut self, folders: &Folders, event: notify::Result<notify::Event>) {
         let Ok(event) = event else {
             // Was bei einem Fehler der Beobachtung verloren ging, ist unbekannt.
             self.rescan = true;
@@ -321,13 +380,12 @@ impl Batch {
             return;
         }
         for path in &event.paths {
-            match path.strip_prefix(project) {
-                Ok(relative) if relative.as_os_str().is_empty() => {}
-                Ok(relative) => {
-                    self.paths
-                        .insert(relative.to_string_lossy().replace('\\', "/"));
+            match folders.shown_path(path) {
+                Some(shown) if shown.is_empty() => {}
+                Some(shown) => {
+                    self.paths.insert(shown);
                 }
-                Err(_) => self.rescan = true,
+                None => self.rescan = true,
             }
         }
         if self.paths.len() > MAX_PATHS {

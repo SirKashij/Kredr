@@ -10,7 +10,9 @@ use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
 use kredr_lib::agent::with_status_settings;
-use kredr_lib::agent_status::{AgentState, AgentStatus, StatusUpdate};
+use kredr_lib::agent_status::{
+    remove_orphaned_runtime_folders, runtime_folder_of, AgentState, AgentStatus, StatusUpdate,
+};
 use kredr_lib::terminal::{available_shells, Shell, Terminal, TerminalEvent, TerminalOptions};
 use serde_json::{json, Value};
 
@@ -385,6 +387,49 @@ fn unbekannte_und_unlesbare_meldungen_aendern_nichts() {
     assert_eq!(post(&url, "{\"hook_event_name\":\"PostCompact\"}"), 200);
 
     agent.expect_silence();
+}
+
+#[test]
+fn beim_start_verschwinden_nur_die_laufzeitordner_beendeter_kredr_prozesse() {
+    // Steht für `%TEMP%`; aufgeräumt wird nur in diesem Ordner des Tests.
+    let temp = runtime_folder("aufraeumen");
+    std::fs::create_dir_all(&temp).unwrap();
+    // Ein Prozess, der sicher nicht mehr läuft.
+    let mut ended = std::process::Command::new("cmd")
+        .args(["/c", "exit"])
+        .spawn()
+        .unwrap();
+    let ended_pid = ended.id();
+    ended.wait().unwrap();
+    let orphaned = runtime_folder_of(&temp, ended_pid);
+    std::fs::create_dir_all(&orphaned).unwrap();
+    std::fs::write(orphaned.join("terminal-3.json"), "{}").unwrap();
+    // Ein Kredr, das noch läuft: hier der Testprozess selbst.
+    let running = runtime_folder_of(&temp, std::process::id());
+    std::fs::create_dir_all(&running).unwrap();
+    std::fs::write(running.join("terminal-1.json"), "{}").unwrap();
+    // Was nicht nach einem Laufzeitordner aussieht, gehört jemand anderem.
+    let foreign = temp.join("kredr-notizen");
+    std::fs::create_dir_all(&foreign).unwrap();
+    // Ein Ordner mit fremdem Inhalt wird nicht geleert.
+    let mut other = std::process::Command::new("cmd")
+        .args(["/c", "exit"])
+        .spawn()
+        .unwrap();
+    let other_pid = other.id();
+    other.wait().unwrap();
+    let mixed = runtime_folder_of(&temp, other_pid);
+    std::fs::create_dir_all(&mixed).unwrap();
+    std::fs::write(mixed.join("wichtig.txt"), "nicht von Kredr").unwrap();
+
+    remove_orphaned_runtime_folders(&temp);
+
+    assert!(!orphaned.exists(), "Der verwaiste Ordner sollte fort sein");
+    assert!(running.join("terminal-1.json").exists());
+    assert!(foreign.exists());
+    if mixed != orphaned {
+        assert!(mixed.join("wichtig.txt").exists());
+    }
 }
 
 #[test]

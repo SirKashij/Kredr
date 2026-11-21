@@ -71,6 +71,72 @@ pub struct StatusUpdate {
     pub state_changed: bool,
 }
 
+/// Der Laufzeitordner des Kredr-Prozesses `pid` unterhalb von `temp`, dem
+/// temporären Verzeichnis des Benutzers.
+pub fn runtime_folder_of(temp: &Path, pid: u32) -> PathBuf {
+    temp.join(format!("{RUNTIME_FOLDER_PREFIX}{pid}"))
+}
+
+const RUNTIME_FOLDER_PREFIX: &str = "kredr-";
+
+/// Entfernt aus `temp` die Laufzeitordner von Kredr-Prozessen, die nicht mehr
+/// laufen: Wird Kredr beendet, bleibt sein Ordner sonst liegen. Der Ordner
+/// eines laufenden Prozesses bleibt unberührt, ebenso alles, was nicht die
+/// Konfigurationsdatei eines Terminals ist.
+pub fn remove_orphaned_runtime_folders(temp: &Path) {
+    let Ok(entries) = std::fs::read_dir(temp) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let pid = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(RUNTIME_FOLDER_PREFIX))
+            .and_then(|pid| pid.parse::<u32>().ok());
+        let Some(pid) = pid else { continue };
+        if is_running(pid) {
+            continue;
+        }
+        let folder = entry.path();
+        let Ok(files) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let name = file.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("terminal-") && name.ends_with(".json") {
+                let _ = std::fs::remove_file(file.path());
+            }
+        }
+        // Gelingt nur, wenn der Ordner jetzt leer ist.
+        let _ = std::fs::remove_dir(&folder);
+    }
+}
+
+/// Ob es einen laufenden Prozess mit dieser Kennung gibt. Im Zweifel ja:
+/// Dann bleibt sein Ordner stehen.
+fn is_running(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    // SAFETY: Die Kennung des Prozesses wird nur hier benutzt und wieder
+    // geschlossen; `code` ist ein gültiger Platz für das Ergebnis.
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            // Diesen Fehler meldet Windows, wenn es den Prozess nicht gibt.
+            return std::io::Error::last_os_error().raw_os_error()
+                != Some(ERROR_INVALID_PARAMETER as i32);
+        }
+        let mut code = 0;
+        let known = GetExitCodeProcess(process, &mut code) != 0;
+        CloseHandle(process);
+        !known || code == STILL_ACTIVE as u32
+    }
+}
+
 type Listener = Box<dyn Fn(StatusUpdate) + Send>;
 
 struct Registration {

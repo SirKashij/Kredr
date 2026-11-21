@@ -12,11 +12,11 @@ use tauri::ipc::Channel;
 use tauri::State;
 
 use crate::project_files::ProjectWatcher;
+use crate::project_files_commands::ProjectWatchers;
 use crate::version_control::{
     BackgroundFetch, Branch, ChangedFile, Committed, Diff, RepositoryState, StateResult,
     StateSubscription, StateWatch, VersionControl, VersionControlError,
 };
-use crate::ProjectWatchers;
 
 /// Was die Oberfläche über den Zustand eines Projekts erfährt.
 #[derive(Clone, Serialize)]
@@ -94,8 +94,9 @@ impl VersionControls {
 
 /// Abonniert den Zustand der Versionskontrolle des Projekts und liefert die
 /// Kennung des Abonnements. `on_state` erhält den aktuellen Zustand und
-/// danach jede Änderung.
-#[tauri::command]
+/// danach jede Änderung. Läuft abseits des Haupt-Threads, weil der erste
+/// Aufruf je Projekt Git nach der Lage des Repositorys fragt.
+#[tauri::command(async)]
 pub(crate) fn version_control_watch(
     window: tauri::Window,
     controls: State<'_, VersionControls>,

@@ -41,6 +41,7 @@ const Key = {
   Alt: 18,
   WindowsLeft: 91,
   WindowsRight: 92,
+  Tab: 9,
   PageUp: 33,
   PageDown: 34,
   Left: 37,
@@ -57,6 +58,7 @@ const Key = {
   G: 71,
   K: 75,
   P: 80,
+  W: 87,
   F4: 115,
   Comma: 188,
   Oem3: 192,
@@ -106,6 +108,7 @@ export function resolveKey(key: KeyStroke, chord: boolean): Command | "chord" | 
     if (keyCode === Key.E) return { kind: "showExplorer" };
     if (keyCode === Key.F) return { kind: "showSearch" };
     if (keyCode === Key.G) return { kind: "showVersionControl" };
+    if (keyCode === Key.Tab) return { kind: "previousTab" };
     return null;
   }
 
@@ -115,7 +118,8 @@ export function resolveKey(key: KeyStroke, chord: boolean): Command | "chord" | 
   if (keyCode === Key.Oem5) return { kind: "splitRight" };
   if (keyCode === Key.PageDown) return { kind: "nextTab" };
   if (keyCode === Key.PageUp) return { kind: "previousTab" };
-  if (keyCode === Key.F4) return { kind: "closeTab" };
+  if (keyCode === Key.Tab) return { kind: "nextTab" };
+  if (keyCode === Key.F4 || keyCode === Key.W) return { kind: "closeTab" };
   if (keyCode === Key.Comma) return { kind: "openSettings" };
   if (keyCode >= Key.Digit1 && keyCode <= Key.Digit8) {
     return { kind: "focusGroupAt", index: keyCode - Key.Digit1 };

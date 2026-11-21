@@ -1,3 +1,5 @@
+import { extensionOf } from "./filePath";
+
 /** Das Symbol eines Dateityps: ein kurzes Zeichen in der Farbe des Typs. */
 export interface FileIcon {
   glyph: string;
@@ -64,8 +66,6 @@ const byName: Record<string, FileIcon> = {
 export function fileIcon(name: string): FileIcon | null {
   const lower = name.toLowerCase();
   if (lower in byName) return byName[lower];
-  const dot = lower.lastIndexOf(".");
   // Ein führender Punkt (etwa `.env`) ist keine Endung.
-  if (dot <= 0) return null;
-  return byExtension[lower.slice(dot + 1)] ?? null;
+  return byExtension[extensionOf(name)] ?? null;
 }

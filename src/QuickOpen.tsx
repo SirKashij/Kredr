@@ -1,7 +1,7 @@
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { fileIcon } from "./fileIcons";
 import { fileName } from "./filePath";
-import { searchFiles } from "./fileSearch";
+import { searchFiles } from "./fileNameSearch";
 import { useT } from "./i18n/i18n";
 import type { ProjectFileList } from "./projectFileList";
 import { QuickPick } from "./QuickPick";

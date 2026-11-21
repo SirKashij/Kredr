@@ -1,16 +1,17 @@
 import { expect, test } from "vitest";
-import { absolutePath, errorMessage, relativePath, renameSelectionLength } from "./fileOperations";
+import { errorMessage, relativePath, renameSelectionLength } from "./fileOperations";
+import { fullPath } from "./filePath";
 import { translate } from "./i18n/i18n";
 
 test("der volle Pfad eines Eintrags ist ein Windows-Pfad unterhalb des Projektordners", () => {
-  expect(absolutePath("C:\\Projekte\\Kredr", "src/ui/App.tsx")).toBe(
+  expect(fullPath("C:\\Projekte\\Kredr", "src/ui/App.tsx")).toBe(
     "C:\\Projekte\\Kredr\\src\\ui\\App.tsx",
   );
-  expect(absolutePath("C:\\", "README.md")).toBe("C:\\README.md");
+  expect(fullPath("C:\\", "README.md")).toBe("C:\\README.md");
 });
 
 test("der leere Pfad ist der Projektordner selbst", () => {
-  expect(absolutePath("C:\\Projekte\\Kredr", "")).toBe("C:\\Projekte\\Kredr");
+  expect(fullPath("C:\\Projekte\\Kredr", "")).toBe("C:\\Projekte\\Kredr");
 });
 
 test("der relative Pfad wird in Windows-Schreibweise kopiert", () => {

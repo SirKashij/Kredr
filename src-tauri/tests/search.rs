@@ -146,7 +146,7 @@ fn ohne_regulaeren_ausdruck_gelten_sonderzeichen_woertlich() {
     write(
         &project,
         "a.txt",
-        "f(x) [a-z]+ $1.50 a.b\nfx abc 1x50 axb\nC:\\Users\\kevin\n",
+        "f(x) [a-z]+ $1.50 a.b\nfx abc 1x50 axb\nC:\\Users\\test\n",
     );
 
     for (text, line) in [

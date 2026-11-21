@@ -38,11 +38,11 @@ test("ein relativer Dateipfad wird erkannt", () => {
 });
 
 test("ein absoluter Windows-Pfad wird erkannt", () => {
-  expect(found(String.raw`Datei C:\Users\kevin\Kredr\README.md gelesen`)).toEqual([
+  expect(found(String.raw`Datei C:\Users\test\Kredr\README.md gelesen`)).toEqual([
     {
       kind: "file",
-      target: String.raw`C:\Users\kevin\Kredr\README.md`,
-      text: String.raw`C:\Users\kevin\Kredr\README.md`,
+      target: String.raw`C:\Users\test\Kredr\README.md`,
+      text: String.raw`C:\Users\test\Kredr\README.md`,
     },
   ]);
 });

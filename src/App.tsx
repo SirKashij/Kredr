@@ -28,9 +28,10 @@ import {
   type Arrangement,
 } from "./arrangement";
 import { ArrangementSaver, loadArrangement } from "./arrangementStore";
+import { mayCloseWindow } from "./closeWindow";
 import { contentFor } from "./fileKinds";
 import { fileName, fullPath, opensExternally, toProjectPath } from "./filePath";
-import { recordOpened } from "./fileSearch";
+import { recordOpened } from "./fileNameSearch";
 import { saveFile } from "./FileView";
 import { useT } from "./i18n/i18n";
 import { isModifierKey, resolveKey, type Command } from "./keybindings";
@@ -101,6 +102,8 @@ export function App() {
   const [fileList] = useState(() => new ProjectFileList());
   const [quickOpen, setQuickOpen] = useState(false);
   const [branchPicker, setBranchPicker] = useState(false);
+  /** Warum sich das Fenster zuletzt nicht schließen ließ. */
+  const [closeError, setCloseError] = useState<string | null>(null);
   /** Die in diesem Fenster zuletzt geöffneten Dateien, die jüngste zuerst. */
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [versionControl] = useState(() => new VersionControlStore());
@@ -192,25 +195,37 @@ export function App() {
     if (project) return versionControl.watch(project);
   }, [project, versionControl]);
 
-  // Das Fenster schließt mit ungespeicherten Änderungen erst nach Rückfrage.
+  // Das Fenster schließt mit ungespeicherten Änderungen oder einem laufenden
+  // Prozess in einem Terminal erst nach Rückfrage.
   useEffect(() => {
     const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
-      // Was an der Aufteilung noch nicht gespeichert ist, geht mit dem Fenster nicht verloren.
-      if (!files.anyDirty()) return saver.flush();
       const t = translate.current;
-      const discard = await confirm(t("file.closeWindowConfirm.message"), {
-        title: t("file.closeConfirm.title"),
-        kind: "warning",
-        okLabel: t("file.closeWindowConfirm.ok"),
-        cancelLabel: t("dialog.cancel"),
+      setCloseError(null);
+      const close = await mayCloseWindow({
+        hasUnsavedFiles: () => files.anyDirty(),
+        hasRunningProcess: () => terminals.anyHasChildProcess(),
+        confirm: (question) => {
+          const unsaved = question === "unsavedFiles";
+          const text = unsaved
+            ? "file.closeWindowConfirm.message"
+            : "terminal.closeWindowConfirm.message";
+          return confirm(t(text), {
+            title: t(unsaved ? "file.closeConfirm.title" : "terminal.closeWindowConfirm.title"),
+            kind: "warning",
+            okLabel: t("file.closeWindowConfirm.ok"),
+            cancelLabel: t("dialog.cancel"),
+          });
+        },
+        // Was an der Aufteilung noch nicht gespeichert ist, geht mit dem Fenster nicht verloren.
+        saveArrangement: () => saver.flush(),
+        showError: setCloseError,
       });
-      if (!discard) return event.preventDefault();
-      await saver.flush();
+      if (!close) event.preventDefault();
     });
     return () => {
       unlisten.then((stop) => stop());
     };
-  }, [files, saver]);
+  }, [files, saver, terminals]);
 
   useEffect(() => {
     terminals.setFont(settings.fontFamily, settings.fontSize);
@@ -221,10 +236,16 @@ export function App() {
     setFocusRequest((count) => count + 1);
   }
 
-  function update(change: (arrangement: Arrangement) => Arrangement) {
+  /** Ändert die Aufteilung und zeigt sie; die Tastatur bleibt, wo sie ist. */
+  function show(change: (arrangement: Arrangement) => Arrangement) {
     setArrangement((current) => settle(change(current)));
     // Wer die Aufteilung bedient, will sie sehen.
     setSettingsOpen(false);
+  }
+
+  /** Ändert die Aufteilung und gibt dem Hauptbereich die Tastatur. */
+  function update(change: (arrangement: Arrangement) => Arrangement) {
+    show(change);
     refocusTerminal();
   }
 
@@ -253,8 +274,7 @@ export function App() {
     const open = (current: Arrangement) => openContent(current, content, preview);
     if (preview) {
       // Die Vorschau zeigt die Datei nur; die Tastatur bleibt, wo sie ist.
-      setArrangement((current) => settle(open(current)));
-      setSettingsOpen(false);
+      show(open);
     } else {
       if (isFileView) files.get(project, file).wantFocus();
       update(open);
@@ -263,7 +283,7 @@ export function App() {
   }
 
   /** Schließt „Datei per Namen öffnen“ und die Branch-Liste; die Tastatur geht zurück in den Hauptbereich. */
-  const closeQuickOpen = useCallback(() => {
+  const closeQuickPick = useCallback(() => {
     setQuickOpen(false);
     setBranchPicker(false);
     setFocusRequest((count) => count + 1);
@@ -290,7 +310,8 @@ export function App() {
     return choice === discard;
   }
 
-  async function closeTerminal(tabId: string) {
+  /** Schließt den Tab, gleich was er zeigt; vorher fragt er nach, wenn dabei etwas verloren ginge. */
+  async function requestCloseTab(tabId: string) {
     const content = tabsOf(arrangement).find((tab) => tab.id === tabId)?.content;
     // Quelltext und Markdown-Vorschau zeigen denselben Text; gefragt wird erst,
     // wenn der letzte Tab schließt, der ihn hält.
@@ -329,8 +350,7 @@ export function App() {
   /** Zeigt den Diff einer Änderung im Tab „Versionskontrolle“; die Tastatur bleibt in der Liste. */
   function showChange(file: ChangedFile) {
     versionControl.select(file);
-    setArrangement((current) => settle(showVersionControl(current, false)));
-    setSettingsOpen(false);
+    show((current) => showVersionControl(current, false));
   }
 
   /** Zeigt eine Ansicht; ein Klick auf die bereits gezeigte blendet die Seitenleiste aus. */
@@ -388,7 +408,7 @@ export function App() {
       case "toggleSidebar":
         return setSidebarVisible((visible) => !visible);
       case "closeTab":
-        if (focused) closeTerminal(focused.activeTab);
+        if (focused) requestCloseTab(focused.activeTab);
     }
   }
   const runCommand = useRef(run);
@@ -488,10 +508,10 @@ export function App() {
               update={update}
               onRefocus={refocusTerminal}
               onOpenFile={(path) => openFile({ path })}
-              onCloseTab={closeTerminal}
+              onCloseTab={requestCloseTab}
             />
           ) : (
-            <div className="welcome">
+            <div className="empty-main">
               <p>{t("terminal.none")}</p>
               <button className="btn" onClick={() => update(newAgent)}>
                 {t("agent.new")}
@@ -509,15 +529,20 @@ export function App() {
           files={fileList}
           recent={recentFiles}
           onOpen={(path) => openFile({ path })}
-          onClose={closeQuickOpen}
+          onClose={closeQuickPick}
         />
       )}
-      {branchPicker && project && <BranchPicker project={project} onClose={closeQuickOpen} />}
+      {branchPicker && project && <BranchPicker project={project} onClose={closeQuickPick} />}
       <footer className="status">
-        <BranchStatus onSwitch={() => setBranchPicker(true)} />
+        <BranchStatus onToggle={() => setBranchPicker((open) => !open)} />
         <SyncStatus />
         <span>{project ? projectName(project) : t("status.noProject")}</span>
         <AgentCounters statuses={statuses} />
+        {closeError !== null && (
+          <span className="status-error" role="alert">
+            {t("window.closeFailed", { details: closeError })}
+          </span>
+        )}
         {activeTab && isTerminal(activeTab) && (
           <span className="right">{shellLabel(activeTab.shell, t)}</span>
         )}

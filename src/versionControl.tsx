@@ -1,6 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
-import type { ShownCommitFile } from "./commitHistory";
+import type { BranchRow } from "./branches";
+import type { Commit, CommitFile, ShownCommitFile } from "./commitHistory";
 import type { FileContent } from "./fileState";
 import {
   followSelection,
@@ -22,6 +23,21 @@ export interface Diff {
 /** Liest die beiden Fassungen für den Diff einer Änderung; scheitert mit einem `VersionControlError`. */
 export function loadDiff(project: string, file: ChangedFile): Promise<Diff> {
   return invoke<Diff>("version_control_diff", { project, file });
+}
+
+/** Liest Commits des aktuellen Branches, die neuesten zuerst; scheitert mit einem `VersionControlError`. */
+export function loadCommits(project: string, skip: number, limit: number): Promise<Commit[]> {
+  return invoke<Commit[]>("version_control_commits", { project, skip, limit });
+}
+
+/** Liest die Dateien, die ein Commit geändert hat. */
+export function loadCommitFiles(project: string, commit: string): Promise<CommitFile[]> {
+  return invoke<CommitFile[]>("version_control_commit_files", { project, commit });
+}
+
+/** Liest die beiden Fassungen für den Diff einer Datei eines Commits. */
+export function loadCommitDiff(project: string, commit: string, file: CommitFile): Promise<Diff> {
+  return invoke<Diff>("version_control_commit_diff", { project, commit, file });
 }
 
 /** Was die Versionskontrolle eines Fensters gerade weiß und zeigt. */
@@ -135,28 +151,28 @@ export class VersionControlStore {
   }
 
   /** Wählt die Änderungen zum Festschreiben aus; ohne Angabe alle. */
-  stage(files?: ChangedFile[]): Promise<void> {
+  stage(files?: ChangedFile[]): Promise<boolean> {
     return this.run("stage", "version_control_stage", { files: files ?? null });
   }
 
   /** Wählt die Änderungen wieder ab; ohne Angabe alle. */
-  unstage(files?: ChangedFile[]): Promise<void> {
+  unstage(files?: ChangedFile[]): Promise<boolean> {
     return this.run("unstage", "version_control_unstage", { files: files ?? null });
   }
 
   /** Verwirft die Änderung; die Rückfrage stellt der Aufrufer vorher. */
-  discard(file: ChangedFile): Promise<void> {
+  discard(file: ChangedFile): Promise<boolean> {
     return this.run("discard", "version_control_discard", { file });
   }
 
   /** Schreibt mit der eingegebenen Nachricht fest. */
-  commit(): Promise<void> {
+  commit(): Promise<boolean> {
     const { message } = this.current;
     return this.run("commit", "version_control_commit", { message }, () => this.setMessage(""));
   }
 
   /** „Commit & Push“: ein Schritt im Kern. Scheitert nur der Push, bleibt der Commit. */
-  commitAndPush(): Promise<void> {
+  commitAndPush(): Promise<boolean> {
     const { message } = this.current;
     return this.run("commitAndPush", "version_control_commit_and_push", { message }, (result) => {
       const { pushError } = result as { pushError: VersionControlError | null };
@@ -164,42 +180,76 @@ export class VersionControlStore {
     });
   }
 
-  push(): Promise<void> {
+  push(): Promise<boolean> {
     return this.run("push", "version_control_push", {});
   }
 
-  pull(): Promise<void> {
+  pull(): Promise<boolean> {
     return this.run("pull", "version_control_pull", {});
   }
 
   /** „Erst holen, dann pushen“: der Ausweg nach einem abgelehnten Push. */
-  pullAndPush(): Promise<void> {
+  pullAndPush(): Promise<boolean> {
     return this.run("pullAndPush", "version_control_pull_and_push", {});
   }
 
   /**
-   * Führt eine Operation im Kern aus. Läuft bereits eine, geschieht nichts:
-   * Das schützt vor Doppelklicks und davor, dass sich zwei Git-Aufrufe im
-   * selben Repository in die Quere kommen. Das Ergebnis im Repository kommt
-   * über den abonnierten Zustand.
+   * Führt die gewählte Zeile der Branch-Liste aus: wechselt zum Branch oder
+   * legt den neuen an und wechselt dorthin. Gesperrt wie jede Operation:
+   * `false` heißt, es lief bereits eine, und nichts ist geschehen. Scheitert
+   * mit einem `VersionControlError`, den die Branch-Liste zeigt.
+   */
+  async changeBranch(row: BranchRow): Promise<boolean> {
+    let failure: VersionControlError | null = null;
+    const fail = (error: VersionControlError) => {
+      failure = error;
+    };
+    const ran =
+      row.kind === "create"
+        ? await this.run(
+            "changeBranch",
+            "version_control_create_branch",
+            { name: row.name },
+            undefined,
+            fail,
+          )
+        : await this.run(
+            "changeBranch",
+            "version_control_switch_branch",
+            { branch: row.branch },
+            undefined,
+            fail,
+          );
+    if (failure) throw failure;
+    return ran;
+  }
+
+  /**
+   * Führt eine Operation im Kern aus. Läuft bereits eine, geschieht nichts
+   * (Ergebnis `false`): Das schützt vor Doppelklicks und davor, dass sich
+   * zwei Git-Aufrufe im selben Repository in die Quere kommen. Das Ergebnis
+   * im Repository kommt über den abonnierten Zustand. Ein Scheitern steht
+   * danach in `failure`, sofern `onFailed` es nicht anders haben will.
    */
   private async run(
     operation: Operation,
     command: string,
     args: Record<string, unknown>,
     onDone?: (result: unknown) => void,
-  ): Promise<void> {
+    onFailed = (failure: VersionControlError) => this.replace({ ...this.current, failure }),
+  ): Promise<boolean> {
     const { project, busy } = this.current;
-    if (project === null || busy !== null) return;
+    if (project === null || busy !== null) return false;
     this.replace({ ...this.current, busy: operation, failure: null });
     try {
       const result = await this.call(command, { project, ...args });
       onDone?.(result);
     } catch (reason) {
-      this.replace({ ...this.current, failure: asError(reason) });
+      onFailed(asError(reason));
     } finally {
       this.replace({ ...this.current, busy: null });
     }
+    return true;
   }
 
   private replace(next: VersionControlSnapshot) {

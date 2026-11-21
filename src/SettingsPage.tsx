@@ -6,17 +6,13 @@ import {
   effectiveLanguage,
   fontSizeRange,
   parseFontSize,
+  shellLabels,
   type Shell,
 } from "./settingsStore";
 
 const languageLabels: Record<Language, MessageKey> = {
   de: "settings.language.de",
   en: "settings.language.en",
-};
-
-const shellLabels: Record<Shell, MessageKey> = {
-  powershell: "terminal.powershell",
-  gitBash: "terminal.gitBash",
 };
 
 /**

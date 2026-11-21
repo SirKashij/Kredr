@@ -11,8 +11,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-// Welche Shells es gibt und welche gefunden werden, weiß der Terminal-Dienst.
-pub use crate::terminal::{available_shells, Shell};
+// Welche Shells es gibt, weiß der Terminal-Dienst.
+pub use crate::terminal::Shell;
 
 const FILE_NAME: &str = "settings.json";
 /// Version des gespeicherten Formats.
@@ -41,8 +41,9 @@ pub struct Settings {
     pub default_shell: Shell,
     /// Der Befehl, mit dem „Neuer Agent“ Claude Code startet.
     pub agent_command: String,
-    /// Ob Kredr sich meldet, wenn ein Agent auf Eingabe wartet und sein
-    /// Fenster nicht im Vordergrund ist.
+    /// Ob Kredr eine Windows-Benachrichtigung zeigt, wenn ein Agent auf
+    /// Eingabe wartet und sein Fenster nicht im Vordergrund ist. Das
+    /// Taskleisten-Symbol meldet sich unabhängig davon.
     pub notifications: bool,
 }
 
@@ -157,18 +158,11 @@ impl SettingsStore {
         self.current.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Schreibt erst daneben und benennt dann um, damit ein Absturz beim
-    /// Schreiben keine halbe Datei hinterlässt.
     fn save(&self, settings: &Settings) -> io::Result<()> {
-        if let Some(dir) = self.file.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
         let content = serde_json::to_string_pretty(&SettingsFile {
             version: VERSION,
             settings,
         })?;
-        let draft = self.file.with_extension("json.tmp");
-        std::fs::write(&draft, content)?;
-        std::fs::rename(&draft, &self.file)
+        crate::paths::write_whole(&self.file, content)
     }
 }

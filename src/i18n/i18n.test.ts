@@ -7,6 +7,19 @@ test("Deutsch und Englisch haben dieselben Schlüssel", () => {
   expect(Object.keys(en).sort()).toEqual(Object.keys(de).sort());
 });
 
+test("jeder Schlüssel wird in der Oberfläche benutzt", () => {
+  const sources = Object.entries(
+    import.meta.glob<string>("../**/*.{ts,tsx}", { query: "?raw", import: "default", eager: true }),
+  )
+    .filter(([path]) => !path.includes(".test."))
+    .map(([, text]) => text)
+    .join("\n");
+
+  const unused = Object.keys(de).filter((key) => !sources.includes(`"${key}"`));
+
+  expect(unused).toEqual([]);
+});
+
 test("kein Text ist leer", () => {
   for (const [language, messages] of Object.entries({ de, en })) {
     for (const [key, text] of Object.entries(messages)) {
