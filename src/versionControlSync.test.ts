@@ -67,7 +67,7 @@ test("ohne Auswahl schreibt der Commit alles fest, mit Auswahl nur die Auswahl",
   );
 });
 
-test("ein Branch ohne Gegenstück lässt sich pushen, aber nicht pullen", () => {
+test("ein Branch, den es auf dem Remote nicht gibt, lässt sich pushen, aber nicht pullen", () => {
   const unpublished = repository({ upstream: null });
 
   expect(canPush(unpublished, null)).toBe(true);
@@ -80,7 +80,7 @@ test("ohne ausgecheckten Branch gibt es nichts zu pushen", () => {
   expect(canPush(noRepository, null)).toBe(false);
 });
 
-test("die Statusleiste nennt Vorsprung und Rückstand nur mit Gegenstück", () => {
+test("die Statusleiste nennt Vorsprung und Rückstand nur für einen Branch, den es auf dem Remote gibt", () => {
   expect(syncCounts(repository({ ahead: 2, behind: 1 }))).toEqual({ ahead: 2, behind: 1 });
   expect(syncCounts(repository({ upstream: null }))).toBeNull();
   expect(syncCounts(noRepository)).toBeNull();

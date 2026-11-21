@@ -71,11 +71,11 @@ pub enum ErrorReason {
     /// (Zugangsdaten, Passwort des Schlüssels, unbekannter Server). Kredr
     /// fragt nicht selbst nach; ein Abgleich im Terminal holt das nach.
     AuthenticationRequired,
-    /// Der Push wurde abgelehnt, weil das Gegenstück neuere Commits hat.
+    /// Der Push wurde abgelehnt, weil das Remote neuere Commits hat.
     PushRejected,
-    /// Das Gegenstück ist nicht erreichbar (kein Netz, falsche Adresse).
+    /// Das Remote ist nicht erreichbar (kein Netz, falsche Adresse).
     Unreachable,
-    /// Das Repository kennt kein Gegenstück, mit dem es abgleichen könnte.
+    /// Das Repository kennt kein Remote, mit dem es abgleichen könnte.
     NoRemote,
     /// Beim Zusammenführen sind Konflikte entstanden; die betroffenen
     /// Dateien stehen als `Conflicted` im Zustand.
@@ -136,7 +136,7 @@ pub struct ChangedFile {
     /// Der frühere Pfad einer umbenannten Datei.
     pub original_path: Option<String>,
     pub status: FileStatus,
-    /// Ob die Änderung zum Festschreiben ausgewählt (gestagt) ist.
+    /// Ob die Änderung zum Festschreiben ausgewählt ist.
     pub staged: bool,
 }
 
@@ -151,12 +151,12 @@ pub struct RepositoryState {
     /// Alle Änderungen im Projektordner, in der Reihenfolge von Git: erst die
     /// Git bekannten Dateien nach Pfad, dann die unbekannten.
     pub files: Vec<ChangedFile>,
-    /// Das Gegenstück des Branches, etwa `origin/main`; fehlt, solange der
-    /// Branch noch nie gepusht wurde.
+    /// Der Branch des Remotes, dem der aktuelle folgt, etwa `origin/main`;
+    /// fehlt, solange der Branch noch nie gepusht wurde.
     pub upstream: Option<String>,
     /// Wie viele Commits noch nicht gepusht sind.
     pub ahead: u32,
-    /// Wie viele Commits das Gegenstück voraus ist, nach dem Stand des
+    /// Wie viele Commits das Remote voraus ist, nach dem Stand des
     /// letzten Fetch.
     pub behind: u32,
     /// Was Git ignoriert, nach Pfad sortiert: Pfade ab dem Projektordner mit
@@ -756,7 +756,7 @@ pub struct Committed {
 /// Festschreiben und Abgleichen. Jede Operation verändert das Repository;
 /// wer den Zustand abonniert hat, erfährt das Ergebnis von selbst.
 impl VersionControl {
-    /// Wählt die Änderungen zum Festschreiben aus (stagen).
+    /// Wählt die Änderungen zum Festschreiben aus.
     pub fn stage(&self, files: &[ChangedFile]) -> Result<(), VersionControlError> {
         let paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
         self.with_paths(&["add", "--all"], &paths)
@@ -820,8 +820,8 @@ impl VersionControl {
         })
     }
 
-    /// Pusht den aktuellen Branch. Hat er noch kein Gegenstück, wird es
-    /// angelegt und fortan verfolgt. Hat das Gegenstück neuere Commits,
+    /// Pusht den aktuellen Branch. Gibt es ihn auf dem Remote noch nicht,
+    /// wird er dort angelegt und fortan verfolgt. Hat das Remote neuere Commits,
     /// scheitert der Push mit `PushRejected`.
     pub fn push(&self) -> Result<(), VersionControlError> {
         let state = self.state()?;
@@ -835,7 +835,7 @@ impl VersionControl {
         self.sync(&["push", "--set-upstream", &remote, &branch])
     }
 
-    /// Holt die neueren Commits des Gegenstücks und führt sie mit dem
+    /// Holt die neueren Commits des Remotes und führt sie mit dem
     /// aktuellen Branch zusammen. Entstehen dabei Konflikte, scheitert der
     /// Aufruf mit `Conflict`.
     pub fn pull(&self) -> Result<(), VersionControlError> {
@@ -866,16 +866,16 @@ impl VersionControl {
         self.push()
     }
 
-    /// Fragt den Stand des Gegenstücks ab, ohne den Branch oder die Dateien
+    /// Fragt den Stand des Remotes ab, ohne den Branch oder die Dateien
     /// zu verändern. Danach nennt der Zustand den aktuellen Rückstand.
     pub fn fetch(&self) -> Result<(), VersionControlError> {
         self.remote()?;
         self.sync(&["fetch"])
     }
 
-    /// Fragt den Stand des Gegenstücks sofort und danach in diesem Abstand
+    /// Fragt den Stand des Remotes sofort und danach in diesem Abstand
     /// im Hintergrund ab, bis der Rückgabewert verworfen wird. Was dabei
-    /// scheitert (kein Netz, keine Anmeldung, kein Gegenstück), bleibt
+    /// scheitert (kein Netz, keine Anmeldung, kein Remote), bleibt
     /// still: Der Zustand behält dann den zuletzt bekannten Stand.
     pub fn fetch_regularly(self, interval: Duration) -> BackgroundFetch {
         let (stop, stopped) = mpsc::channel::<()>();
@@ -889,7 +889,7 @@ impl VersionControl {
         BackgroundFetch { _stop: stop }
     }
 
-    /// Das Gegenstück, mit dem abgeglichen wird: `origin`, sonst das erste.
+    /// Das Remote, mit dem abgeglichen wird: `origin`, sonst das erste.
     fn remote(&self) -> Result<String, VersionControlError> {
         let output = self.git(&["remote"], None)?;
         let output = String::from_utf8_lossy(&output);
@@ -907,7 +907,7 @@ impl VersionControl {
         self.run(args, input, self.options.long_timeout)
     }
 
-    /// Ein Aufruf, der mit dem Gegenstück abgleicht; sein Scheitern wird
+    /// Ein Aufruf, der mit dem Remote abgleicht; sein Scheitern wird
     /// eingeordnet, damit die Oberfläche den passenden Ausweg anbieten kann.
     fn sync(&self, args: &[&str]) -> Result<(), VersionControlError> {
         match self.slow(args, None) {
@@ -934,7 +934,7 @@ impl VersionControl {
     }
 }
 
-/// Das regelmäßige Abfragen des Gegenstücks; es endet, wenn der Wert
+/// Das regelmäßige Abfragen des Remotes; es endet, wenn der Wert
 /// verworfen wird.
 pub struct BackgroundFetch {
     _stop: mpsc::Sender<()>,
