@@ -17,6 +17,10 @@ Mehrere Agenten in Terminals steuern, die Dateien des Projekts durchsehen und Ä
 
 </div>
 
+<br>
+
+![Kredr mit drei Agenten: einer arbeitet mit zwei Subagenten, einer wartet auf eine Freigabe, einer ist fertig. Daneben eine Datei mit Syntaxfarben.](docs/screenshot.png)
+
 ---
 
 ## Warum Kredr?
