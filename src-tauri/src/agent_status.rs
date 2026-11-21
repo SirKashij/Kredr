@@ -41,9 +41,15 @@ const EVENTS: [&str; 10] = [
     "SubagentStart",
     "SubagentStop",
 ];
-/// Womit der Prompt beginnt, mit dem Claude Code den Agenten über das Ende
-/// eines Subagenten unterrichtet. Er stammt nicht von der Person.
-const TASK_NOTIFICATION: &str = "<task-notification>";
+/// Womit die Prompts beginnen, mit denen Claude Code den Agenten unterrichtet,
+/// etwa über das Ende eines Subagenten. Sie stammen nicht von der Person.
+/// Ruft ein Subagent zum Schluss `SubagentHandback` auf, kommt sein Bericht
+/// als `<agent-message>`, sonst als `<task-notification>` (Claude Code 2.1.330).
+const PROMPTS_OF_CLAUDE_CODE: [&str; 3] = [
+    "<task-notification>",
+    "<agent-message",
+    "<cross-session-message",
+];
 /// Meldungen, mit denen Claude Code den Nutzer um eine Eingabe bittet.
 const WAITING_NOTIFICATIONS: [&str; 4] = [
     "permission_prompt",
@@ -517,9 +523,12 @@ fn next_known(known: &Known, event: &Value) -> Known {
 /// unterrichtet Claude Code den Agenten mit einem Prompt; der zählt nicht.
 fn is_prompt_of_person(event: &Value) -> bool {
     event["hook_event_name"] == "UserPromptSubmit"
-        && !event["prompt"]
-            .as_str()
-            .is_some_and(|prompt| prompt.trim_start().starts_with(TASK_NOTIFICATION))
+        && !event["prompt"].as_str().is_some_and(|prompt| {
+            let prompt = prompt.trim_start();
+            PROMPTS_OF_CLAUDE_CODE
+                .iter()
+                .any(|start| prompt.starts_with(start))
+        })
 }
 
 /// Führt die Subagenten und die offenen Aufrufe des `Agent`-Werkzeugs nach

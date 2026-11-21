@@ -961,6 +961,37 @@ fn ein_fertiger_subagent_bleibt_bis_zum_naechsten_prompt_stehen() {
 }
 
 #[test]
+fn die_uebergabe_eines_subagenten_ist_kein_prompt_der_person() {
+    let status = AgentStatus::start(runtime_folder("subagent-uebergabe")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Untersuche" }));
+    launch(&agent, "a1", "Explore", "Datei a lesen", "t1");
+    launch(&agent, "b2", "Explore", "Datei b lesen", "t2");
+    agent.report("SubagentStop", from_subagent("a1", json!({})));
+    // Claude Code 2.1.330 meldet so, wenn der Subagent `SubagentHandback`
+    // aufruft; sein `SubagentStop` folgt erst danach.
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "prompt": "<agent-message from=\"b2\">\n[Subagent hand-back] The text below is \
+                            the final report of a subagent.\n</agent-message>" }),
+    );
+    agent.report("SubagentStop", from_subagent("b2", json!({})));
+
+    let update = settle(&agent);
+    assert_eq!(update.assignment.as_deref(), Some("Untersuche"));
+    let states: Vec<_> = update
+        .subagents
+        .iter()
+        .map(|s| (s.id.as_str(), s.state))
+        .collect();
+    assert_eq!(
+        states,
+        [("a1", SubagentState::Done), ("b2", SubagentState::Done)]
+    );
+}
+
+#[test]
 fn beendet_sich_der_agent_sind_seine_subagenten_fort() {
     let status = AgentStatus::start(runtime_folder("subagenten-ende")).unwrap();
     let agent = TestAgent::start(&status, 1);
