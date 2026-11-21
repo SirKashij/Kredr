@@ -11,6 +11,8 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use kredr_lib::version_control::{GitOptions, VersionControl};
 use tempfile::TempDir;
@@ -37,6 +39,8 @@ const GIT_CONFIG: &str = "\
 pub struct TestProject {
     root: TempDir,
     project: PathBuf,
+    /// Der Zeitpunkt des nächsten Commits von `commit_all`, in Sekunden seit 1970.
+    next_commit_time: AtomicU64,
 }
 
 impl TestProject {
@@ -49,7 +53,14 @@ impl TestProject {
         fs::write(root.path().join("gitconfig"), GIT_CONFIG).unwrap();
         let project = root.path().join("project");
         fs::create_dir(&project).unwrap();
-        TestProject { root, project }
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        TestProject {
+            root,
+            project,
+            // Die Commits der Tests liegen einen Tag zurück, also vor allem,
+            // was das Modul im Test selbst festschreibt.
+            next_commit_time: AtomicU64::new(now.as_secs() - 24 * 60 * 60),
+        }
     }
 
     /// Ein Projektordner mit frischem Git-Repository auf dem Branch `main`,
@@ -118,10 +129,20 @@ impl TestProject {
     }
 
     fn run_git(&self, folder: &Path, args: &[&str]) -> std::process::Output {
+        self.run_git_with(folder, args, &[])
+    }
+
+    fn run_git_with(
+        &self,
+        folder: &Path,
+        args: &[&str],
+        env: &[(&str, String)],
+    ) -> std::process::Output {
         Command::new("git")
             .current_dir(folder)
             .args(args)
             .envs(self.git_env())
+            .envs(env.iter().map(|(name, value)| (name, value)))
             .output()
             .expect("Git sollte installiert sein")
     }
@@ -147,10 +168,26 @@ impl TestProject {
         fs::remove_file(self.project.join(path)).unwrap();
     }
 
-    /// Schreibt alle Änderungen fest.
+    /// Schreibt alle Änderungen fest. Jeder Commit liegt eine Sekunde nach
+    /// dem vorigen, damit die Reihenfolge nach Datum nicht davon abhängt, wie
+    /// schnell der Test läuft.
     pub fn commit_all(&self, message: &str) {
         self.git(&["add", "--all"]);
-        self.git(&["commit", "--message", message]);
+        let time = self.next_commit_time.fetch_add(1, Ordering::Relaxed);
+        let date = format!("@{time} +0000");
+        let output = self.run_git_with(
+            &self.project,
+            &["commit", "--message", message],
+            &[
+                ("GIT_AUTHOR_DATE", date.clone()),
+                ("GIT_COMMITTER_DATE", date),
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "git commit ist gescheitert: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     /// Legt neben dem Projekt ein leeres „Remote“-Repository an, trägt es als
