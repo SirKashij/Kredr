@@ -35,6 +35,10 @@ pub struct GitOptions {
     /// Länger darf kein Aufruf dauern; danach wird er samt seinen
     /// Kindprozessen beendet.
     pub timeout: Duration,
+    /// Die Zeitgrenze der Aufrufe, die von sich aus dauern dürfen: der
+    /// Abgleich übers Netz (Push, Pull, Fetch) und der Commit, dessen Hooks
+    /// etwa Prüfungen des Projekts ausführen.
+    pub long_timeout: Duration,
     /// Zusätzliche Umgebungsvariablen für jeden Aufruf.
     pub env: Vec<(OsString, OsString)>,
 }
@@ -44,6 +48,7 @@ impl Default for GitOptions {
         GitOptions {
             program: "git".into(),
             timeout: Duration::from_secs(30),
+            long_timeout: Duration::from_secs(300),
             env: Vec::new(),
         }
     }
@@ -62,6 +67,19 @@ pub enum ErrorReason {
     TimedOut,
     /// Git hat einen Fehler gemeldet.
     Failed,
+    /// Der Abgleich bräuchte eine Anmeldung oder Bestätigung des Nutzers
+    /// (Zugangsdaten, Passwort des Schlüssels, unbekannter Server). Kredr
+    /// fragt nicht selbst nach; ein Abgleich im Terminal holt das nach.
+    AuthenticationRequired,
+    /// Der Push wurde abgelehnt, weil das Gegenstück neuere Commits hat.
+    PushRejected,
+    /// Das Gegenstück ist nicht erreichbar (kein Netz, falsche Adresse).
+    Unreachable,
+    /// Das Repository kennt kein Gegenstück, mit dem es abgleichen könnte.
+    NoRemote,
+    /// Beim Zusammenführen sind Konflikte entstanden; die betroffenen
+    /// Dateien stehen als `Conflicted` im Zustand.
+    Conflict,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -126,6 +144,14 @@ pub struct RepositoryState {
     /// Alle Änderungen im Projektordner, in der Reihenfolge von Git: erst die
     /// Git bekannten Dateien nach Pfad, dann die unbekannten.
     pub files: Vec<ChangedFile>,
+    /// Das Gegenstück des Branches, etwa `origin/main`; fehlt, solange der
+    /// Branch noch nie gepusht wurde.
+    pub upstream: Option<String>,
+    /// Wie viele Commits noch nicht gepusht sind.
+    pub ahead: u32,
+    /// Wie viele Commits das Gegenstück voraus ist, nach dem Stand des
+    /// letzten Fetch.
+    pub behind: u32,
 }
 
 /// Der Zustand oder der Grund, warum es keinen gibt (kein Git, kein
@@ -317,6 +343,16 @@ impl VersionControl {
     /// keine Möglichkeit nachzufragen: Es hat weder Terminal noch Eingabe, und
     /// wer länger als die Zeitgrenze braucht, wird beendet.
     fn git(&self, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, VersionControlError> {
+        self.run(args, input, self.options.timeout)
+    }
+
+    /// Wie `git`, mit frei gewählter Zeitgrenze.
+    fn run(
+        &self,
+        args: &[&str],
+        input: Option<&[u8]>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, VersionControlError> {
         /// Kein Konsolenfenster für den Kindprozess.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -327,6 +363,17 @@ impl VersionControl {
             // Keine Rückfrage nach Zugangsdaten, weder im Terminal noch als Fenster.
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GCM_INTERACTIVE", "never")
+            // Ein leerer Wert schaltet jedes Abfrageprogramm ab, auch ein
+            // konfiguriertes (`core.askPass`, `SSH_ASKPASS`). Der
+            // Anmeldemanager ist kein solches Programm und liefert die
+            // gespeicherte Anmeldung weiterhin.
+            .env("GIT_ASKPASS", "")
+            // SSH fragt weder nach dem Passwort eines Schlüssels noch nach
+            // der Bestätigung eines unbekannten Servers; ein laufender
+            // Schlüssel-Agent wird weiter benutzt.
+            .env("SSH_ASKPASS_REQUIRE", "never")
+            // Ein Zusammenführen öffnet keinen Editor für seine Nachricht.
+            .env("GIT_MERGE_AUTOEDIT", "no")
             // Lesende Aufrufe schreiben nichts ins Repository; sonst würde
             // jede Abfrage des Zustands die nächste auslösen.
             .env("GIT_OPTIONAL_LOCKS", "0")
@@ -357,7 +404,7 @@ impl VersionControl {
         }
         let stdout = read_in_background(child.stdout.take());
         let stderr = read_in_background(child.stderr.take());
-        let deadline = Instant::now() + self.options.timeout;
+        let deadline = Instant::now() + timeout;
         let Some((status, stdout, stderr)) = finish(&mut child, &stdout, &stderr, deadline) else {
             if let Some(job) = &job {
                 job.terminate();
@@ -369,7 +416,7 @@ impl VersionControl {
                 details: format!(
                     "git {} did not finish within {} s",
                     args.join(" "),
-                    self.options.timeout.as_secs_f32()
+                    timeout.as_secs_f32()
                 ),
             });
         };
@@ -377,7 +424,16 @@ impl VersionControl {
         if status.success() {
             return Ok(stdout);
         }
-        let message = String::from_utf8_lossy(&stderr).trim().to_owned();
+        let mut message = String::from_utf8_lossy(&stderr).trim().to_owned();
+        // Manches erklärt Git nur in der gewöhnlichen Ausgabe, etwa die
+        // Konflikte eines Zusammenführens oder die Meldungen eines Hooks.
+        let output = String::from_utf8_lossy(&stdout);
+        if !output.trim().is_empty() {
+            if !message.is_empty() {
+                message.push('\n');
+            }
+            message.push_str(output.trim());
+        }
         Err(VersionControlError {
             reason: if message.contains("not a git repository") {
                 ErrorReason::NotARepository
@@ -535,6 +591,9 @@ fn parse_status(output: &[u8], prefix: &str) -> RepositoryState {
         branch: None,
         commit: None,
         files: Vec::new(),
+        upstream: None,
+        ahead: 0,
+        behind: 0,
     };
     let mut untracked = Vec::new();
     let mut records = text.split('\0');
@@ -550,6 +609,16 @@ fn parse_status(output: &[u8], prefix: &str) -> RepositoryState {
                     state.commit = (commit != "(initial)").then(|| commit.to_owned());
                 } else if let Some(branch) = rest.strip_prefix("branch.head ") {
                     state.branch = (branch != "(detached)").then(|| branch.to_owned());
+                } else if let Some(upstream) = rest.strip_prefix("branch.upstream ") {
+                    state.upstream = Some(upstream.to_owned());
+                } else if let Some(counts) = rest.strip_prefix("branch.ab ") {
+                    // „+2 -1“: zwei voraus, einer zurück.
+                    let count = |sign| {
+                        let number = counts.split(' ').find_map(|part| part.strip_prefix(sign));
+                        number.and_then(|number| number.parse().ok()).unwrap_or(0)
+                    };
+                    state.ahead = count('+');
+                    state.behind = count('-');
                 }
             }
             "1" => {
@@ -619,5 +688,235 @@ fn project_path(prefix: &str, path: &str) -> String {
         Some(inside) => inside.to_owned(),
         // Außerhalb des Projektordners (der frühere Pfad einer Umbenennung).
         None => format!("{}{path}", "../".repeat(prefix.matches('/').count())),
+    }
+}
+
+/// Das Ergebnis von „Commit & Push“, sobald der Commit geschrieben ist.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Committed {
+    /// Warum der anschließende Push scheiterte; fehlt, wenn er gelang. Der
+    /// Commit besteht in beiden Fällen.
+    pub push_error: Option<VersionControlError>,
+}
+
+/// Festschreiben und Abgleichen. Jede Operation verändert das Repository;
+/// wer den Zustand abonniert hat, erfährt das Ergebnis von selbst.
+impl VersionControl {
+    /// Wählt die Änderungen zum Festschreiben aus (stagen).
+    pub fn stage(&self, files: &[ChangedFile]) -> Result<(), VersionControlError> {
+        let paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
+        self.with_paths(&["add", "--all"], &paths)
+    }
+
+    /// Wählt alle Änderungen im Projektordner aus.
+    pub fn stage_all(&self) -> Result<(), VersionControlError> {
+        self.git(&["add", "--all", "--", "."], None).map(drop)
+    }
+
+    /// Nimmt Änderungen aus der Auswahl; die Dateien selbst bleiben, wie sie sind.
+    pub fn unstage(&self, files: &[ChangedFile]) -> Result<(), VersionControlError> {
+        // Eine Umbenennung besteht in der Auswahl aus beiden Pfaden.
+        let paths: Vec<&str> = files
+            .iter()
+            .flat_map(|file| [Some(file.path.as_str()), file.original_path.as_deref()])
+            .flatten()
+            .collect();
+        self.with_paths(&["reset", "--quiet"], &paths)
+    }
+
+    /// Nimmt alle Änderungen im Projektordner aus der Auswahl.
+    pub fn unstage_all(&self) -> Result<(), VersionControlError> {
+        self.git(&["reset", "--quiet", "--", "."], None).map(drop)
+    }
+
+    /// Verwirft eine nicht ausgewählte Änderung: Die Datei erhält wieder den
+    /// Stand der Auswahl bzw. des letzten Commits. Eine Datei, die Git noch
+    /// nicht kennt, wandert in den Windows-Papierkorb. Die Rückfrage stellt
+    /// die Oberfläche.
+    pub fn discard(&self, file: &ChangedFile) -> Result<(), VersionControlError> {
+        if file.staged {
+            return Err(failed("a staged change has to be unstaged first"));
+        }
+        match file.status {
+            FileStatus::Untracked => {
+                project_files::move_to_trash(&self.project.join(&file.path)).map_err(failed)
+            }
+            FileStatus::Conflicted => Err(failed("a conflict cannot be discarded")),
+            _ => self.with_paths(&["checkout"], &[&file.path]),
+        }
+    }
+
+    /// Schreibt fest: die ausgewählten Änderungen, oder, wenn im
+    /// Projektordner nichts ausgewählt ist, alle (wie VS Code).
+    pub fn commit(&self, message: &str) -> Result<(), VersionControlError> {
+        if !self.state()?.files.iter().any(|file| file.staged) {
+            self.stage_all()?;
+        }
+        self.slow(&["commit", "--quiet", "--file=-"], Some(message.as_bytes()))
+            .map(drop)
+    }
+
+    /// „Commit & Push“: schreibt fest wie [`VersionControl::commit`] und
+    /// pusht danach. Scheitert der Commit, wird nicht gepusht. Scheitert nur
+    /// der Push, bleibt der Commit bestehen und das Ergebnis nennt den Grund.
+    pub fn commit_and_push(&self, message: &str) -> Result<Committed, VersionControlError> {
+        self.commit(message)?;
+        Ok(Committed {
+            push_error: self.push().err(),
+        })
+    }
+
+    /// Pusht den aktuellen Branch. Hat er noch kein Gegenstück, wird es
+    /// angelegt und fortan verfolgt. Hat das Gegenstück neuere Commits,
+    /// scheitert der Push mit `PushRejected`.
+    pub fn push(&self) -> Result<(), VersionControlError> {
+        let state = self.state()?;
+        if state.upstream.is_some() {
+            return self.sync(&["push"]);
+        }
+        let branch = state
+            .branch
+            .ok_or_else(|| failed("no branch is checked out, so there is nothing to push"))?;
+        let remote = self.remote()?;
+        self.sync(&["push", "--set-upstream", &remote, &branch])
+    }
+
+    /// Holt die neueren Commits des Gegenstücks und führt sie mit dem
+    /// aktuellen Branch zusammen. Entstehen dabei Konflikte, scheitert der
+    /// Aufruf mit `Conflict`.
+    pub fn pull(&self) -> Result<(), VersionControlError> {
+        // Hat der Nutzer festgelegt, wie auseinandergelaufene Branches
+        // zusammenkommen, gilt das. Ohne Festlegung verweigert Git den Pull;
+        // dann wird zusammengeführt.
+        let configured = self
+            .git(
+                &[
+                    "config",
+                    "--get-regexp",
+                    r"^(pull\.(rebase|ff)|branch\..*\.rebase)$",
+                ],
+                None,
+            )
+            .is_ok();
+        if configured {
+            self.sync(&["pull"])
+        } else {
+            self.sync(&["pull", "--no-rebase"])
+        }
+    }
+
+    /// „Erst holen, dann pushen“: der Ausweg nach einem abgelehnten Push.
+    /// Gepusht wird nur, wenn das Holen ohne Konflikte gelang.
+    pub fn pull_and_push(&self) -> Result<(), VersionControlError> {
+        self.pull()?;
+        self.push()
+    }
+
+    /// Fragt den Stand des Gegenstücks ab, ohne den Branch oder die Dateien
+    /// zu verändern. Danach nennt der Zustand den aktuellen Rückstand.
+    pub fn fetch(&self) -> Result<(), VersionControlError> {
+        self.remote()?;
+        self.sync(&["fetch"])
+    }
+
+    /// Fragt den Stand des Gegenstücks sofort und danach in diesem Abstand
+    /// im Hintergrund ab, bis der Rückgabewert verworfen wird. Was dabei
+    /// scheitert (kein Netz, keine Anmeldung, kein Gegenstück), bleibt
+    /// still: Der Zustand behält dann den zuletzt bekannten Stand.
+    pub fn fetch_regularly(self, interval: Duration) -> BackgroundFetch {
+        let (stop, stopped) = mpsc::channel::<()>();
+        thread::spawn(move || loop {
+            let _ = self.fetch();
+            // Endet, sobald der Rückgabewert verworfen ist.
+            if stopped.recv_timeout(interval) != Err(mpsc::RecvTimeoutError::Timeout) {
+                break;
+            }
+        });
+        BackgroundFetch { _stop: stop }
+    }
+
+    /// Das Gegenstück, mit dem abgeglichen wird: `origin`, sonst das erste.
+    fn remote(&self) -> Result<String, VersionControlError> {
+        let output = self.git(&["remote"], None)?;
+        let output = String::from_utf8_lossy(&output);
+        let mut remotes = output.lines();
+        let first = remotes.next();
+        let remote = remotes.find(|remote| *remote == "origin").or(first);
+        remote.map(str::to_owned).ok_or(VersionControlError {
+            reason: ErrorReason::NoRemote,
+            details: "no remote is configured".to_owned(),
+        })
+    }
+
+    /// Ruft Git mit der langen Zeitgrenze auf.
+    fn slow(&self, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, VersionControlError> {
+        self.run(args, input, self.options.long_timeout)
+    }
+
+    /// Ein Aufruf, der mit dem Gegenstück abgleicht; sein Scheitern wird
+    /// eingeordnet, damit die Oberfläche den passenden Ausweg anbieten kann.
+    fn sync(&self, args: &[&str]) -> Result<(), VersionControlError> {
+        match self.slow(args, None) {
+            Ok(_) => Ok(()),
+            Err(error) if error.reason == ErrorReason::Failed => Err(VersionControlError {
+                reason: sync_failure(&error.details),
+                details: error.details,
+            }),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Ruft einen Git-Befehl für genau diese Pfade auf (ab dem Projektordner,
+    /// wörtlich genommen). Ohne Pfade geschieht nichts.
+    fn with_paths(&self, command: &[&str], paths: &[&str]) -> Result<(), VersionControlError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        // Über die Eingabe, weil die Befehlszeile für viele Dateien zu kurz ist.
+        let mut args = vec!["--literal-pathspecs"];
+        args.extend(command);
+        args.extend(["--pathspec-from-file=-", "--pathspec-file-nul"]);
+        self.git(&args, Some(paths.join("\0").as_bytes())).map(drop)
+    }
+}
+
+/// Das regelmäßige Abfragen des Gegenstücks; es endet, wenn der Wert
+/// verworfen wird.
+pub struct BackgroundFetch {
+    _stop: mpsc::Sender<()>,
+}
+
+/// Ordnet die Meldung eines gescheiterten Abgleichs ein.
+fn sync_failure(details: &str) -> ErrorReason {
+    let mentions = |texts: &[&str]| texts.iter().any(|text| details.contains(text));
+    if mentions(&["(fetch first)", "(non-fast-forward)"]) {
+        ErrorReason::PushRejected
+    } else if mentions(&["CONFLICT", "Automatic merge failed", "could not apply"]) {
+        ErrorReason::Conflict
+    } else if mentions(&[
+        "terminal prompts disabled",
+        "could not read Username",
+        "could not read Password",
+        "Authentication failed",
+        "user interactivity has been disabled",
+        "Permission denied",
+        "Host key verification failed",
+    ]) {
+        ErrorReason::AuthenticationRequired
+    } else if mentions(&[
+        "Could not resolve host",
+        "Could not resolve hostname",
+        "Failed to connect",
+        "Couldn't connect",
+        "Connection timed out",
+        "Connection refused",
+        "Network is unreachable",
+        "does not appear to be a git repository",
+        "Could not read from remote repository",
+    ]) {
+        ErrorReason::Unreachable
+    } else {
+        ErrorReason::Failed
     }
 }
