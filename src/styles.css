@@ -610,6 +610,10 @@ button {
 }
 
 .card .toggle svg {
+  display: block;
+  width: 10px;
+  height: 10px;
+  flex: none;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.4;
