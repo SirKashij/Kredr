@@ -664,6 +664,19 @@ button {
   color: var(--dim);
 }
 
+/* Ein Subagent, der um Genehmigung oder Eingabe bittet, fällt in der Karte auf. */
+.card .subagent.waiting {
+  background: color-mix(in srgb, var(--wait) 10%, transparent);
+}
+
+.card .subagent.waiting .description {
+  color: var(--wait);
+}
+
+.card .subagent .dot.small.waiting {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--wait) 30%, transparent);
+}
+
 .card .subagent small {
   margin-left: auto;
   padding-left: 6px;

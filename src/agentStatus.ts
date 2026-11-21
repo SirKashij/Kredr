@@ -17,7 +17,7 @@ export interface AgentStatus {
 }
 
 /** Die Zustände eines Subagenten. */
-export type SubagentState = "working" | "done";
+export type SubagentState = "working" | "waiting" | "done";
 
 /** Ein Subagent, wie der Kern ihn meldet. */
 export interface SubagentUpdate {
@@ -36,7 +36,7 @@ export interface SubagentUpdate {
 export interface SubagentStatus extends SubagentUpdate {
   /** Seit wann er bekannt ist (Millisekunden wie `Date.now()`). */
   started: number;
-  /** Wann er fertig wurde; `null`, solange er arbeitet. */
+  /** Wann er fertig wurde; `null`, solange er arbeitet oder wartet. */
   ended: number | null;
 }
 
@@ -72,7 +72,7 @@ function nextSubagents(
   return update.map((subagent) => {
     const before = known.get(subagent.id);
     const started = before?.started ?? now;
-    const ended = subagent.state === "working" ? null : (before?.ended ?? now);
+    const ended = subagent.state === "done" ? (before?.ended ?? now) : null;
     return { ...subagent, started, ended };
   });
 }
