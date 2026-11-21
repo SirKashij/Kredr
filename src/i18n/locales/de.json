@@ -2,6 +2,7 @@
   "activity.agents": "Agenten",
   "activity.explorer": "Explorer",
   "activity.explorerTooltip": "Explorer (Strg+Umschalt+E)",
+  "explorer.containsChanges": "Enthält geänderte Dateien",
   "explorer.empty": "Dieser Ordner ist leer.",
   "explorer.newFile": "Neue Datei",
   "explorer.newFolder": "Neuer Ordner",

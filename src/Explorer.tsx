@@ -9,6 +9,7 @@ import {
   type MouseEvent,
 } from "react";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { gitMarks, markOf, type GitMark } from "./explorerGit";
 import {
   childPath,
   emptyTree,
@@ -41,6 +42,8 @@ import {
 } from "./fileOperations";
 import { useT } from "./i18n/i18n";
 import { listFolder, watchProjectFiles, type Entry } from "./projectFiles";
+import { useVersionControl } from "./versionControl";
+import { statusLabels } from "./versionControlState";
 
 /** Höhe einer Zeile in Pixeln; muss zu `.tree-row` passen. */
 const ROW_HEIGHT = 22;
@@ -132,6 +135,9 @@ export function Explorer({
   }, []);
 
   const rows = useMemo(() => rowsWithEdit(rowsOf(tree), edit), [tree, edit]);
+  // Die Git-Markierungen folgen dem Zustand der Versionskontrolle des Fensters.
+  const { state: versionControl } = useVersionControl();
+  const marks = useMemo(() => gitMarks(versionControl), [versionControl]);
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
   const last = Math.min(rows.length, Math.ceil((scrollTop + height) / ROW_HEIGHT) + OVERSCAN);
 
@@ -375,7 +381,7 @@ export function Explorer({
                 onContextMenu={(event) => openMenu(event, row)}
               >
                 <RowIcon row={row} />
-                <span className="tree-name">{row.name}</span>
+                <RowName row={row} mark={markOf(marks, row)} />
               </div>
             ),
           )}
@@ -440,6 +446,36 @@ function NameInput({
         <div className="tree-error" role="alert">
           {error}
         </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * Der Name einer Zeile in der Farbe ihres Git-Status, dahinter das Kürzel der
+ * Datei bzw. der Punkt eines Ordners, der Änderungen enthält.
+ */
+function RowName({ row, mark }: { row: Row; mark: GitMark | null }) {
+  const t = useT();
+  if (!mark) return <span className="tree-name">{row.name}</span>;
+  const label =
+    mark.status === "ignored"
+      ? null
+      : row.kind === "folder"
+        ? t("explorer.containsChanges")
+        : t(statusLabels[mark.status]);
+  return (
+    <>
+      <span className={`tree-name git-${mark.status}`}>{row.name}</span>
+      {label && (
+        <span
+          className={`tree-badge git-${mark.status}`}
+          role="img"
+          title={label}
+          aria-label={label}
+        >
+          {mark.badge ?? "\u25cf"}
+        </span>
       )}
     </>
   );
