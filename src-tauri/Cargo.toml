@@ -21,13 +21,14 @@ tiny_http = "0.12"
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
   "Win32_System_JobObjects",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Threading",
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
-notify = "8"
 ignore = "0.4"
 tauri-plugin-single-instance = "2"
 grep-searcher = "0.1.17"
