@@ -94,8 +94,9 @@ impl VersionControls {
 
 /// Abonniert den Zustand der Versionskontrolle des Projekts und liefert die
 /// Kennung des Abonnements. `on_state` erhält den aktuellen Zustand und
-/// danach jede Änderung.
-#[tauri::command]
+/// danach jede Änderung. Läuft abseits des Haupt-Threads, weil der erste
+/// Aufruf je Projekt Git nach der Lage des Repositorys fragt.
+#[tauri::command(async)]
 pub(crate) fn version_control_watch(
     window: tauri::Window,
     controls: State<'_, VersionControls>,

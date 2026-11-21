@@ -302,11 +302,19 @@ impl VersionControl {
     }
 
     /// Folgt dem Zustand des Projekts: Nach jeder Änderung im Projektordner
-    /// (auch in `.git`, also nach Commits und Branch-Wechseln im Terminal)
+    /// und in Git (also auch nach Commits und Branch-Wechseln im Terminal)
     /// wird er neu gelesen. `watcher` muss der Beobachter desselben
-    /// Projektordners sein. Das Folgen endet, wenn der Rückgabewert oder der
-    /// Beobachter verworfen wird.
+    /// Projektordners sein. Liegt das Git-Verzeichnis außerhalb des
+    /// Projektordners (das Projekt ist ein Unterordner des Repositorys oder
+    /// ein weiterer Arbeitsordner), meldet der Ereignisstrom von `watcher`
+    /// fortan auch dessen Änderungen, und zwar unter `.git/`. Der Aufruf
+    /// fragt dafür einmal Git. Das Folgen endet, wenn der Rückgabewert oder
+    /// der Beobachter verworfen wird.
     pub fn watch(self, watcher: &ProjectWatcher) -> StateWatch {
+        for folder in self.git_folders_outside() {
+            // Scheitert das, folgt der Zustand nur den Dateien des Projekts.
+            let _ = watcher.include(&folder, ".git");
+        }
         let (wake, signals) = mpsc::channel();
         // Der erste Stand wird sofort gelesen.
         let _ = wake.send(());
@@ -340,6 +348,34 @@ impl VersionControl {
             shared,
             _changes: changes,
         }
+    }
+
+    /// Die Ordner, in denen Git den Stand dieses Projekts hält, soweit sie
+    /// nicht im Projektordner liegen: das Git-Verzeichnis und, bei einem
+    /// weiteren Arbeitsordner, das gemeinsame des Repositorys.
+    fn git_folders_outside(&self) -> Vec<PathBuf> {
+        // Der Regelfall kommt ohne Git-Aufruf aus.
+        if self.project.join(".git").is_dir() {
+            return Vec::new();
+        }
+        let args = [
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+            "--git-dir",
+        ];
+        let Ok(output) = self.git(&args, None) else {
+            return Vec::new();
+        };
+        let mut folders: Vec<PathBuf> = Vec::new();
+        for line in String::from_utf8_lossy(&output).lines() {
+            let folder = PathBuf::from(line);
+            let covered = |known: &PathBuf| folder.starts_with(known);
+            if !covered(&self.project) && !folders.iter().any(covered) {
+                folders.push(folder);
+            }
+        }
+        folders
     }
 
     /// Der Pfad des Projektordners innerhalb seines Repositorys, mit `/` am
