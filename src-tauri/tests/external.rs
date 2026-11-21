@@ -54,6 +54,13 @@ fn skripte_und_programme_wuerden_beim_oeffnen_laufen() {
 }
 
 #[test]
+fn verknuepfungen_und_hilfedateien_wuerden_beim_oeffnen_etwas_starten() {
+    for name in ["seite.url", "hilfe.chm", "programm.appref-ms", "LINK.URL"] {
+        assert!(runs_when_opened(Path::new(name)), "{name}");
+    }
+}
+
+#[test]
 fn nur_web_adressen_werden_als_link_geoeffnet() {
     assert!(open_url("file:///C:/Windows/System32/calc.exe").is_err());
     assert!(open_url("calc.exe").is_err());
