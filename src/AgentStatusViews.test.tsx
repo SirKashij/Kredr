@@ -39,6 +39,20 @@ describe("Zusammenfassung eingeklappter Subagenten", () => {
     expect(text([sub("a", "done")])).toBe("1 Subagent · alle fertig");
   });
 
+  it("nennt wartende vor arbeitenden", () => {
+    expect(text([sub("a", "waiting"), sub("b", "done")])).toBe("2 Subagenten · 1 wartet");
+    expect(text([sub("a", "working"), sub("b", "waiting"), sub("c", "waiting")])).toBe(
+      "3 Subagenten · 2 warten · 1 arbeitet",
+    );
+  });
+
+  it("färbt den Teil der wartenden wie ihren Zustand", () => {
+    expect(subagentSummary(t, [sub("a", "waiting")])[1]).toEqual({
+      text: "1 wartet",
+      state: "waiting",
+    });
+  });
+
   it("färbt den Teil der arbeitenden wie ihren Zustand", () => {
     expect(subagentSummary(t, [sub("a", "working")])).toEqual([
       { text: "1 Subagent", state: null },
@@ -111,6 +125,14 @@ describe("Abschnitt Subagenten auf der Karte", () => {
 
     expect(rows()).toEqual(["review: standards", "review: rust", "review: sidebar"]);
     expect(button("+ 3 weitere")).toBeDefined();
+  });
+
+  it("zeigt einen wartenden Subagenten in der ersten Zeile, hervorgehoben", () => {
+    show([...workflow, sub("check", "waiting")]);
+
+    expect(rows()).toEqual(["review: check", "review: standards", "review: rust"]);
+    expect(host.querySelector(".subagent")!.classList).toContain("waiting");
+    expect(button("+ 4 weitere")).toBeDefined();
   });
 
   it("zeigt mit „+ 3 weitere“ alle und mit „Weniger zeigen“ wieder drei", () => {

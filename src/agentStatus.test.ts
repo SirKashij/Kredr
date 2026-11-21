@@ -7,6 +7,7 @@ import {
   subagentLabel,
   subagentsInOrder,
   subagentTooltip,
+  type SubagentState,
 } from "./agentStatus";
 
 const working = {
@@ -311,7 +312,7 @@ describe("Zeile eines Subagenten", () => {
 });
 
 describe("Viele Subagenten", () => {
-  const sub = (id: string, state: "working" | "done") =>
+  const sub = (id: string, state: SubagentState) =>
     ({
       id,
       kind: "general-purpose",
@@ -331,6 +332,16 @@ describe("Viele Subagenten", () => {
     ]);
 
     expect(ordered.map(({ id }) => id)).toEqual(["standards", "rust", "bugs", "spec"]);
+  });
+
+  it("stellt wartende vor arbeitende", () => {
+    const ordered = subagentsInOrder([
+      sub("bugs", "done"),
+      sub("standards", "working"),
+      sub("check", "waiting"),
+    ]);
+
+    expect(ordered.map(({ id }) => id)).toEqual(["check", "standards", "bugs"]);
   });
 });
 
