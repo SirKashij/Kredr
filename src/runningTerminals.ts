@@ -322,7 +322,32 @@ export class RunningTerminal {
 
   /** Passt Spalten und Zeilen an den Platz an; unsichtbar gibt es nichts zu messen. */
   private fit() {
-    if (this.screen.clientWidth > 0 && this.screen.clientHeight > 0) this.fitAddon.fit();
+    if (this.screen.clientWidth > 0 && this.screen.clientHeight > 0) {
+      this.fitAddon.fit();
+      this.renderNow();
+    }
+  }
+
+  /**
+   * Zeichnet ausstehende Zeilen sofort statt im nächsten Frame. Ändert `fit` die Größe,
+   * leert das Setzen von `canvas.width` die WebGL-Fläche; xterm.js zeichnet erst einen
+   * Frame später neu, und dazwischen malt der Browser ein leeres Terminal (Flackern beim
+   * Auf- und Zuklappen der Seitenleiste). xterm.js bietet dafür keine öffentliche
+   * Schnittstelle; fehlt der interne Weg nach einem Update, bleibt es beim Flackern.
+   */
+  private renderNow() {
+    const debouncer = (
+      this.xterm as unknown as {
+        _core?: {
+          _renderService?: {
+            _renderDebouncer?: { _animationFrame?: number; _innerRefresh?: () => void };
+          };
+        };
+      }
+    )._core?._renderService?._renderDebouncer;
+    if (!debouncer?._animationFrame || typeof debouncer._innerRefresh !== "function") return;
+    cancelAnimationFrame(debouncer._animationFrame);
+    debouncer._innerRefresh();
   }
 
   // Eingaben und Größenänderungen an eine bereits beendete Shell scheitern;
