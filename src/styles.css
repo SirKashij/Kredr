@@ -480,6 +480,28 @@ button {
   display: grid;
   gap: 3px;
   background: #1c1c1c;
+  cursor: pointer;
+}
+
+/* Der obere Teil der Karte ist ein Knopf; den Fokus zeigt die ganze Karte. */
+.card .card-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.card .card-main:focus-visible {
+  outline: none;
+}
+
+.card:has(.card-main:focus-visible),
+.card .toggle:focus-visible,
+.card .more:focus-visible,
+.card .subagent:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .card .top {
@@ -547,6 +569,141 @@ button {
 .card.sel {
   border-color: var(--accent);
   background: var(--sel);
+}
+
+/* Die Subagenten eines Agenten: ein Abschnitt unter einer Trennlinie. */
+.card .subagents {
+  border-top: 1px solid var(--border);
+  margin: 5px -10px 0;
+  padding: 6px 10px 0;
+  display: grid;
+  gap: 4px;
+}
+
+.card .subagents-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--dim);
+}
+
+/* Eingeklappt steht an Stelle der Überschrift die Zusammenfassung. */
+.card .subagents-head:has(.toggle[aria-expanded="false"]) {
+  font-size: 11.5px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.card .subagents-head .working {
+  color: var(--work);
+}
+
+.card .subagents-head .waiting {
+  color: var(--wait);
+}
+
+/* Der Pfeil zum Ein- und Ausklappen der Subagenten. */
+.card .toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: -2px;
+  flex: none;
+  border-radius: 3px;
+  color: var(--dim);
+}
+
+.card .toggle:hover {
+  background: #ffffff14;
+  color: #fff;
+}
+
+.card .toggle svg {
+  display: block;
+  width: 10px;
+  height: 10px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.12s;
+}
+
+.card .toggle[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+
+/* „+ N weitere“ und „Weniger zeigen“ unter den Subagenten. */
+.card .more {
+  font-size: 11.5px;
+  color: var(--dim);
+  text-align: left;
+  padding: 1px 0;
+}
+
+.card .more:hover {
+  color: #fff;
+}
+
+.card .subagent {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+  padding: 2px 6px;
+  margin: 0 -6px;
+  border-radius: 3px;
+  text-align: left;
+}
+
+.card .subagent:hover {
+  background: #ffffff0a;
+}
+
+.card .subagent .description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.card .subagent.done .description {
+  color: var(--dim);
+}
+
+/* Ein Subagent, der um Genehmigung oder Eingabe bittet, fällt in der Karte auf. */
+.card .subagent.waiting {
+  background: color-mix(in srgb, var(--wait) 10%, transparent);
+}
+
+.card .subagent.waiting .description {
+  color: var(--wait);
+}
+
+.card .subagent .dot.small.waiting {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--wait) 30%, transparent);
+}
+
+.card .subagent small {
+  margin-left: auto;
+  padding-left: 6px;
+  color: var(--dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dot.small {
+  width: 6px;
+  height: 6px;
 }
 
 .dot {

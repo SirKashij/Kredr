@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use kredr_lib::agent::with_status_settings;
 use kredr_lib::agent_status::{
     remove_orphaned_runtime_folders, runtime_folder_of, AgentState, AgentStatus, Resumed,
-    StatusUpdate,
+    StatusUpdate, SubagentState,
 };
 use kredr_lib::terminal::{available_shells, Shell, Terminal, TerminalEvent, TerminalOptions};
 use serde_json::{json, Value};
@@ -80,6 +80,16 @@ impl TestAgent {
 
     fn next_state(&self) -> AgentState {
         self.next().state
+    }
+
+    /// Erwartet nur noch Meldungen, in denen sich allein die Subagenten
+    /// ändern: Zustand und letzte Aktion des Agenten bleiben `state` und `last_action`.
+    fn expect_only_subagents(&self, state: AgentState, last_action: Option<&str>) {
+        while let Ok(update) = self.updates.recv_timeout(Duration::from_millis(300)) {
+            assert_eq!(update.state, state, "{update:?}");
+            assert_eq!(update.last_action.as_deref(), last_action, "{update:?}");
+            assert!(!update.state_changed, "{update:?}");
+        }
     }
 
     fn expect_silence(&self) {
@@ -267,6 +277,732 @@ fn die_letzte_aktion_nennt_werkzeug_und_ziel() {
     let action = agent.next().last_action.unwrap();
     assert!(action.chars().count() <= 120, "{action}");
     assert!(action.ends_with("…)"), "{action}");
+}
+
+/// Die Felder, mit denen Claude Code ein Ereignis eines Subagenten kennzeichnet.
+fn from_subagent(agent_id: &str, fields: Value) -> Value {
+    let mut fields = fields;
+    fields["agent_id"] = json!(agent_id);
+    fields["agent_type"] = json!("Explore");
+    fields
+}
+
+#[test]
+fn werkzeugaufrufe_von_subagenten_aendern_den_agenten_nicht() {
+    let status = AgentStatus::start(runtime_folder("subagent-werkzeuge")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let read = |file: &str| json!({ "tool_name": "Read", "tool_input": { "file_path": file } });
+
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "prompt": "Untersuche das Projekt" }),
+    );
+    agent.next();
+    agent.report(
+        "PreToolUse",
+        json!({ "tool_name": "Agent", "tool_input": { "description": "Datei a lesen", "subagent_type": "Explore" } }),
+    );
+    assert_eq!(
+        agent.next().last_action.as_deref(),
+        Some("Agent(Datei a lesen)")
+    );
+
+    // Zwei Subagenten lesen gleichzeitig.
+    for (id, file) in [("a1", "a.txt"), ("b2", "b.txt")] {
+        agent.report("SubagentStart", from_subagent(id, json!({})));
+        agent.report("PreToolUse", from_subagent(id, read(file)));
+        agent.report("PostToolUse", from_subagent(id, read(file)));
+        agent.report("PostToolUseFailure", from_subagent(id, read(file)));
+    }
+
+    // Es ändern sich nur die Subagenten.
+    agent.expect_only_subagents(AgentState::Working, Some("Agent(Datei a lesen)"));
+}
+
+#[test]
+fn ein_hintergrund_subagent_laesst_den_fertigen_agenten_fertig() {
+    let status = AgentStatus::start(runtime_folder("subagent-hintergrund")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "cargo test" } });
+
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "prompt": "Teste im Hintergrund" }),
+    );
+    agent.report("SubagentStart", from_subagent("a1", json!({})));
+    agent.report(
+        "Stop",
+        json!({ "last_assistant_message": "Läuft im Hintergrund." }),
+    );
+    assert_eq!(settle(&agent).state, AgentState::Done);
+
+    agent.report("PreToolUse", from_subagent("a1", bash.clone()));
+    agent.report("PostToolUse", from_subagent("a1", bash));
+    agent.report(
+        "SubagentStop",
+        from_subagent(
+            "a1",
+            json!({ "last_assistant_message": "Alle Tests grün." }),
+        ),
+    );
+
+    agent.expect_only_subagents(AgentState::Done, Some("Läuft im Hintergrund."));
+}
+
+#[test]
+fn das_ende_eines_subagenten_beendet_weder_arbeit_noch_auftrag_noch_gespraech() {
+    let status = AgentStatus::start(runtime_folder("subagent-ende")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 43" }));
+    let started = agent.next();
+    agent.report(
+        "SubagentStop",
+        from_subagent(
+            "a1",
+            json!({ "last_assistant_message": "Fertig.", "agent_transcript_path": "C:\\t\\agent-a1.jsonl" }),
+        ),
+    );
+    // Auch die Nebenläufe von Claude Code ohne Typ melden ihr Ende.
+    agent.report(
+        "SubagentStop",
+        json!({ "agent_id": "x9", "agent_type": "", "last_assistant_message": "Stay silent." }),
+    );
+
+    agent.expect_silence();
+    assert_eq!(started.state, AgentState::Working);
+    assert_eq!(started.assignment.as_deref(), Some("Baue Ticket 43"));
+    assert_eq!(started.conversation.as_deref(), Some("abc123"));
+}
+
+#[test]
+fn eine_rueckfrage_aus_einem_subagenten_laesst_den_agenten_warten() {
+    let status = AgentStatus::start(runtime_folder("subagent-rueckfrage")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "echo hallo > c.txt" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Schreibe c.txt" }));
+    agent.report(
+        "Stop",
+        json!({ "last_assistant_message": "Der Subagent schreibt." }),
+    );
+    agent.next();
+    assert_eq!(agent.next_state(), AgentState::Done);
+
+    agent.report("PreToolUse", from_subagent("a1", bash.clone()));
+    agent.report("PermissionRequest", from_subagent("a1", bash.clone()));
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Waiting);
+    assert!(update.state_changed);
+    // Wonach der Subagent fragt, steht in seiner Zeile, nicht beim Agenten.
+    assert_eq!(
+        update.last_action.as_deref(),
+        Some("Der Subagent schreibt.")
+    );
+
+    // Genehmigt: Der Subagent macht weiter, der Agent ist wieder fertig.
+    agent.report("PostToolUse", from_subagent("a1", bash));
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Done);
+    assert_eq!(
+        update.last_action.as_deref(),
+        Some("Der Subagent schreibt.")
+    );
+}
+
+/// Die Meldung, mit der Claude Code etwa sechs Sekunden nach einer
+/// Genehmigungsabfrage noch einmal auf sie aufmerksam macht, ohne `agent_id`.
+fn permission_notification() -> Value {
+    json!({ "message": "Claude needs your permission", "notification_type": "permission_prompt" })
+}
+
+#[test]
+fn die_spaete_meldung_einer_beantworteten_rueckfrage_laesst_den_agenten_fertig() {
+    let status = AgentStatus::start(runtime_folder("subagent-spaet")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "echo x > d.txt" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Schreibe d.txt" }));
+    launch(&agent, "a1", "general-purpose", "Spät schreiben", "t1");
+    agent.report("Stop", json!({ "last_assistant_message": "Läuft." }));
+    assert_eq!(settle(&agent).state, AgentState::Done);
+
+    agent.report("PermissionRequest", from_subagent("a1", bash.clone()));
+    assert_eq!(settle(&agent).state, AgentState::Waiting);
+    // Schnell genehmigt, die Meldung von Claude Code kommt erst danach.
+    agent.report("PostToolUse", from_subagent("a1", bash));
+    assert_eq!(settle(&agent).state, AgentState::Done);
+    agent.report("Notification", permission_notification());
+
+    agent.expect_silence();
+}
+
+#[test]
+fn die_spaete_meldung_einer_eigenen_beantworteten_rueckfrage_laesst_den_agenten_arbeiten() {
+    let status = AgentStatus::start(runtime_folder("rueckfrage-spaet")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Veröffentliche" }));
+    agent.report("PermissionRequest", bash.clone());
+    agent.report("PostToolUse", bash);
+    assert_eq!(settle(&agent).state, AgentState::Working);
+    agent.report("Notification", permission_notification());
+
+    agent.expect_silence();
+}
+
+#[test]
+fn eine_eigene_rueckfrage_des_agenten_geht_neben_der_eines_subagenten_nicht_verloren() {
+    let status = AgentStatus::start(runtime_folder("subagent-und-eigene-rueckfrage")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    launch(&agent, "a1", "general-purpose", "Veröffentlichen", "t1");
+    agent.report("PermissionRequest", from_subagent("a1", bash.clone()));
+    assert_eq!(settle(&agent).state, AgentState::Waiting);
+
+    // Ein MCP-Server fragt den Agenten selbst; das meldet nur die Notification.
+    agent.report(
+        "Notification",
+        json!({ "message": "Der Server braucht ein Token", "notification_type": "elicitation_dialog" }),
+    );
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(
+        update.last_action.as_deref(),
+        Some("Der Server braucht ein Token")
+    );
+
+    // Die Rückfrage des Subagenten ist beantwortet, die des Agenten noch offen.
+    agent.report("PostToolUse", from_subagent("a1", bash));
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(
+        update.last_action.as_deref(),
+        Some("Der Server braucht ein Token")
+    );
+}
+
+#[test]
+fn eine_eigene_genehmigung_des_agenten_geht_neben_der_eines_subagenten_nicht_verloren() {
+    let status = AgentStatus::start(runtime_folder("subagent-und-eigene-genehmigung")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let push = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
+    let test = json!({ "tool_name": "Bash", "tool_input": { "command": "cargo test" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    launch(&agent, "a1", "general-purpose", "Veröffentlichen", "t1");
+    agent.report("PermissionRequest", from_subagent("a1", push.clone()));
+    agent.report("PermissionRequest", test);
+    agent.report("Notification", permission_notification());
+    agent.report("PostToolUse", from_subagent("a1", push));
+    agent.report("Notification", permission_notification());
+
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(update.last_action.as_deref(), Some("Bash(cargo test)"));
+}
+
+#[test]
+fn ein_prompt_der_person_beendet_offene_rueckfragen_von_subagenten() {
+    let status = AgentStatus::start(runtime_folder("subagent-prompt-beantwortet")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    launch(&agent, "a1", "general-purpose", "Veröffentlichen", "t1");
+    agent.report("Stop", json!({ "last_assistant_message": "Läuft." }));
+    agent.report("PermissionRequest", from_subagent("a1", bash));
+    assert_eq!(settle(&agent).state, AgentState::Waiting);
+
+    // Abgelehnt, ohne dass Claude Code noch etwas vom Subagenten meldet.
+    agent.report("UserPromptSubmit", json!({ "prompt": "Lass das" }));
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Working);
+    assert_eq!(subagent_states(&update), [SubagentState::Working]);
+}
+
+/// Ein Aufruf des `Agent`-Werkzeugs, wie ihn Claude Code vor dem Start meldet.
+fn agent_call(description: &str, kind: &str, tool_use: &str) -> Value {
+    json!({
+        "tool_name": "Agent",
+        "tool_use_id": tool_use,
+        "tool_input": { "description": description, "subagent_type": kind },
+    })
+}
+
+/// Die Beschreibungen der Subagenten in der Reihenfolge ihres Starts.
+fn descriptions(update: &StatusUpdate) -> Vec<Option<String>> {
+    update
+        .subagents
+        .iter()
+        .map(|s| s.description.clone())
+        .collect()
+}
+
+#[test]
+fn ein_abgelehnter_aufruf_verschiebt_die_beschreibungen_nach_dem_naechsten_prompt_nicht() {
+    let status = AgentStatus::start(runtime_folder("subagent-aufruf-abgelehnt")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    // Abgelehnt: Es kommen weder Start noch `PostToolUse`.
+    agent.report("PreToolUse", agent_call("Abgelehnt", "Explore", "t1"));
+    agent.report("UserPromptSubmit", json!({ "prompt": "Dann anders" }));
+    agent.report("PreToolUse", agent_call("Datei a lesen", "Explore", "t2"));
+    agent.report(
+        "SubagentStart",
+        json!({ "agent_id": "a1", "agent_type": "Explore" }),
+    );
+
+    assert_eq!(
+        descriptions(&settle(&agent)),
+        [Some("Datei a lesen".to_owned())]
+    );
+}
+
+#[test]
+fn ein_abgelehnter_aufruf_verfaellt_mit_dem_ende_der_antwort() {
+    let status = AgentStatus::start(runtime_folder("subagent-aufruf-verfaellt")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.report("PreToolUse", agent_call("Abgelehnt", "Explore", "t1"));
+    agent.report("Stop", json!({ "last_assistant_message": "Gut." }));
+    // Das Ende eines anderen Subagenten weckt den Agenten, er startet einen neuen.
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "prompt": "<task-notification>\n<task-id>x</task-id>\n</task-notification>" }),
+    );
+    agent.report("PreToolUse", agent_call("Datei b lesen", "Explore", "t2"));
+    agent.report(
+        "SubagentStart",
+        json!({ "agent_id": "b2", "agent_type": "Explore" }),
+    );
+
+    assert_eq!(
+        descriptions(&settle(&agent)),
+        [Some("Datei b lesen".to_owned())]
+    );
+}
+
+#[test]
+fn eine_frage_eines_subagenten_steht_in_seiner_zeile() {
+    let status = AgentStatus::start(runtime_folder("subagent-frage-zeile")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    launch(&agent, "a1", "general-purpose", "Planen", "t1");
+    agent.report(
+        "PreToolUse",
+        from_subagent(
+            "a1",
+            json!({
+                "tool_name": "AskUserQuestion",
+                "tool_input": { "questions": [{ "question": "Welche Datenbank?" }] },
+            }),
+        ),
+    );
+
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(update.last_action.as_deref(), Some("Agent(Planen)"));
+    assert_eq!(subagent_states(&update), [SubagentState::Waiting]);
+    assert_eq!(
+        update.subagents[0].last_action.as_deref(),
+        Some("Welche Datenbank?")
+    );
+}
+
+#[test]
+fn eine_abgelehnte_rueckfrage_eines_subagenten_endet_mit_seinem_ende() {
+    let status = AgentStatus::start(runtime_folder("subagent-abgelehnt")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Veröffentliche" }));
+    assert_eq!(agent.next_state(), AgentState::Working);
+    agent.report("PermissionRequest", from_subagent("a1", bash));
+    assert_eq!(agent.next_state(), AgentState::Waiting);
+    // Ein anderer Subagent beendet das Warten nicht.
+    agent.report("SubagentStop", from_subagent("b2", json!({})));
+    agent.expect_silence();
+
+    // Nach einer Ablehnung meldet Claude Code nur noch das Ende des Subagenten.
+    agent.report("SubagentStop", from_subagent("a1", json!({})));
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Working);
+    assert_eq!(update.last_action, None);
+}
+
+#[test]
+fn solange_ein_subagent_fragt_wartet_der_agent_auch_nach_seiner_antwort() {
+    let status = AgentStatus::start(runtime_folder("subagent-fragt-weiter")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.report("PermissionRequest", from_subagent("a1", bash.clone()));
+    assert_eq!(agent.next_state(), AgentState::Working);
+    assert_eq!(agent.next_state(), AgentState::Waiting);
+
+    // Die Rückfrage steht weiter im Terminal, auch wenn der Agent antwortet
+    // und Claude Code sie ohne Kennung des Subagenten noch einmal meldet.
+    agent.report("Stop", json!({ "last_assistant_message": "Erledigt." }));
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(update.last_action.as_deref(), Some("Erledigt."));
+    agent.report("Notification", permission_notification());
+    agent.expect_silence();
+
+    // Beantwortet: Es gilt, was der Agent inzwischen gemeldet hat.
+    agent.report("PostToolUse", from_subagent("a1", bash));
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Done);
+    assert_eq!(update.last_action.as_deref(), Some("Erledigt."));
+}
+
+#[test]
+fn das_ende_eines_hintergrund_subagenten_weckt_den_agenten_ohne_neuen_auftrag() {
+    let status = AgentStatus::start(runtime_folder("subagent-weckt")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let notification = "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n\
+                        <summary>Agent \"Datei a lesen\" finished</summary>\n</task-notification>";
+
+    // Nach `/clear` kann die Meldung eines Subagenten vor dem nächsten Prompt kommen.
+    agent.report("UserPromptSubmit", json!({ "prompt": notification }));
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Working);
+    assert_eq!(update.assignment, None);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 43" }));
+    assert_eq!(agent.next().assignment.as_deref(), Some("Baue Ticket 43"));
+}
+
+/// Was die Person von einem Subagenten sieht: Kennung, Typ, Beschreibung, Zustand.
+fn shown_subagents(update: &StatusUpdate) -> Vec<(String, String, Option<String>, SubagentState)> {
+    update
+        .subagents
+        .iter()
+        .map(|s| (s.id.clone(), s.kind.clone(), s.description.clone(), s.state))
+        .collect()
+}
+
+/// Die letzte Meldung, bis eine Weile keine mehr kommt.
+fn settle(agent: &TestAgent) -> StatusUpdate {
+    let mut last = agent.next();
+    while let Ok(update) = agent.updates.recv_timeout(Duration::from_millis(300)) {
+        last = update;
+    }
+    last
+}
+
+/// Startet einen Subagenten so, wie Claude Code 2.1.330 es meldet.
+fn launch(agent: &TestAgent, id: &str, kind: &str, description: &str, tool_use: &str) {
+    let input = json!({ "description": description, "subagent_type": kind, "prompt": "…" });
+    agent.report(
+        "PreToolUse",
+        json!({ "tool_name": "Agent", "tool_use_id": tool_use, "tool_input": input }),
+    );
+    agent.report(
+        "SubagentStart",
+        json!({ "agent_id": id, "agent_type": kind }),
+    );
+    agent.report(
+        "PostToolUse",
+        json!({
+            "tool_name": "Agent",
+            "tool_use_id": tool_use,
+            "tool_input": input,
+            "tool_response": { "status": "async_launched", "agentId": id, "description": description },
+        }),
+    );
+}
+
+#[test]
+fn gestartete_subagenten_erscheinen_mit_beschreibung_beim_agenten() {
+    let status = AgentStatus::start(runtime_folder("subagenten-start")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "prompt": "Untersuche das Projekt" }),
+    );
+    launch(&agent, "a1", "Explore", "Datei a lesen", "t1");
+    launch(&agent, "b2", "Explore", "Datei b lesen", "t2");
+
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Working);
+    assert_eq!(
+        shown_subagents(&update),
+        [
+            (
+                "a1".into(),
+                "Explore".into(),
+                Some("Datei a lesen".into()),
+                SubagentState::Working
+            ),
+            (
+                "b2".into(),
+                "Explore".into(),
+                Some("Datei b lesen".into()),
+                SubagentState::Working
+            ),
+        ]
+    );
+}
+
+#[test]
+fn ein_ereignis_eines_fremden_ablaufs_legt_keinen_subagenten_an() {
+    let status = AgentStatus::start(runtime_folder("subagenten-fremd")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.next();
+    // Die Nebenläufe von Claude Code melden nur ihr Ende, ohne Typ.
+    agent.report(
+        "SubagentStop",
+        json!({ "agent_id": "x9", "agent_type": "", "last_assistant_message": "Stay silent." }),
+    );
+    agent.report(
+        "SubagentStart",
+        json!({ "agent_id": "x8", "agent_type": "" }),
+    );
+
+    agent.expect_silence();
+}
+
+#[test]
+fn ein_ereignis_eines_subagenten_wird_seine_letzte_aktion() {
+    let status = AgentStatus::start(runtime_folder("subagenten-aktion")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let grep = json!({ "tool_name": "Grep", "tool_input": { "pattern": "agent_id" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Suche" }));
+    launch(&agent, "a1", "Explore", "Felder finden", "t1");
+    agent.report("PreToolUse", from_subagent("a1", grep.clone()));
+    agent.report("PostToolUse", from_subagent("a1", grep));
+
+    let update = settle(&agent);
+    assert_eq!(
+        update.subagents[0].last_action.as_deref(),
+        Some("Grep(agent_id)")
+    );
+    // Die Aktion des Subagenten wird nicht die des Agenten.
+    assert_eq!(update.last_action.as_deref(), Some("Agent(Felder finden)"));
+}
+
+/// Die Zustände der Subagenten in der Reihenfolge ihres Starts.
+fn subagent_states(update: &StatusUpdate) -> Vec<SubagentState> {
+    update.subagents.iter().map(|s| s.state).collect()
+}
+
+#[test]
+fn nur_der_fragende_subagent_wartet_bis_zur_antwort() {
+    let status = AgentStatus::start(runtime_folder("subagenten-fragt")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "npm.cmd run check" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Prüfe alles" }));
+    launch(
+        &agent,
+        "a1",
+        "general-purpose",
+        "Prüfung laufen lassen",
+        "t1",
+    );
+    launch(&agent, "b2", "Explore", "Changelog lesen", "t2");
+    settle(&agent);
+
+    agent.report("PermissionRequest", from_subagent("a1", bash.clone()));
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(
+        subagent_states(&update),
+        [SubagentState::Waiting, SubagentState::Working]
+    );
+    assert_eq!(
+        update.subagents[0].last_action.as_deref(),
+        Some("Bash(npm.cmd run check)")
+    );
+
+    // Genehmigt: Der Subagent arbeitet wieder.
+    agent.report("PostToolUse", from_subagent("a1", bash));
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Working);
+    assert_eq!(
+        subagent_states(&update),
+        [SubagentState::Working, SubagentState::Working]
+    );
+}
+
+#[test]
+fn ein_abgelehnter_subagent_ist_fertig() {
+    let status = AgentStatus::start(runtime_folder("subagenten-abgelehnt")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Veröffentliche" }));
+    launch(&agent, "a1", "Explore", "Veröffentlichen", "t1");
+    agent.report("PermissionRequest", from_subagent("a1", bash));
+    assert_eq!(subagent_states(&settle(&agent)), [SubagentState::Waiting]);
+
+    agent.report("SubagentStop", from_subagent("a1", json!({})));
+    assert_eq!(subagent_states(&settle(&agent)), [SubagentState::Done]);
+}
+
+#[test]
+fn ohne_bekannte_beschreibung_bleibt_der_typ() {
+    let status = AgentStatus::start(runtime_folder("subagenten-typ")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.report(
+        "SubagentStart",
+        json!({ "agent_id": "a1", "agent_type": "Explore" }),
+    );
+
+    let update = settle(&agent);
+    assert_eq!(
+        shown_subagents(&update),
+        [("a1".into(), "Explore".into(), None, SubagentState::Working)]
+    );
+}
+
+#[test]
+fn startet_ein_subagent_ohne_spaetere_meldung_gilt_die_beschreibung_seines_aufrufs() {
+    // Falls eine Fassung von Claude Code Subagenten wieder synchron startet,
+    // kommt `PostToolUse(Agent)` erst an ihrem Ende.
+    let status = AgentStatus::start(runtime_folder("subagenten-synchron")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+    let call = |description: &str, kind: &str, id: &str| {
+        json!({
+            "tool_name": "Agent",
+            "tool_use_id": id,
+            "tool_input": { "description": description, "subagent_type": kind },
+        })
+    };
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.report("PreToolUse", call("Datei a lesen", "Explore", "t1"));
+    agent.report("PreToolUse", call("Plan machen", "Plan", "t2"));
+    agent.report("PreToolUse", call("Datei b lesen", "Explore", "t3"));
+    for (id, kind) in [("p1", "Plan"), ("a1", "Explore"), ("b2", "Explore")] {
+        agent.report(
+            "SubagentStart",
+            json!({ "agent_id": id, "agent_type": kind }),
+        );
+    }
+
+    let update = settle(&agent);
+    let descriptions: Vec<_> = update
+        .subagents
+        .iter()
+        .map(|s| (s.id.as_str(), s.description.as_deref()))
+        .collect();
+    assert_eq!(
+        descriptions,
+        [
+            ("p1", Some("Plan machen")),
+            ("a1", Some("Datei a lesen")),
+            ("b2", Some("Datei b lesen")),
+        ]
+    );
+}
+
+#[test]
+fn ein_fertiger_subagent_bleibt_bis_zum_naechsten_prompt_stehen() {
+    let status = AgentStatus::start(runtime_folder("subagenten-fertig")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Untersuche" }));
+    launch(&agent, "a1", "Explore", "Datei a lesen", "t1");
+    launch(&agent, "b2", "Explore", "Im Hintergrund testen", "t2");
+    agent.report(
+        "SubagentStop",
+        from_subagent(
+            "a1",
+            json!({ "last_assistant_message": "a enthält 3 Zeilen." }),
+        ),
+    );
+    // Claude Code unterrichtet den Agenten; das ist kein Prompt der Person.
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "prompt": "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>" }),
+    );
+    agent.report(
+        "Stop",
+        json!({ "last_assistant_message": "a hat 3 Zeilen." }),
+    );
+
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Done);
+    let states: Vec<_> = update
+        .subagents
+        .iter()
+        .map(|s| (s.id.as_str(), s.state))
+        .collect();
+    assert_eq!(
+        states,
+        [("a1", SubagentState::Done), ("b2", SubagentState::Working)]
+    );
+    assert_eq!(
+        update.subagents[0].last_action.as_deref(),
+        Some("a enthält 3 Zeilen.")
+    );
+
+    // Der nächste Prompt räumt die fertigen ab, der laufende bleibt.
+    agent.report("UserPromptSubmit", json!({ "prompt": "Und jetzt?" }));
+    let update = settle(&agent);
+    let ids: Vec<_> = update.subagents.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(ids, ["b2"]);
+}
+
+#[test]
+fn die_uebergabe_eines_subagenten_ist_kein_prompt_der_person() {
+    let status = AgentStatus::start(runtime_folder("subagent-uebergabe")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Untersuche" }));
+    launch(&agent, "a1", "Explore", "Datei a lesen", "t1");
+    launch(&agent, "b2", "Explore", "Datei b lesen", "t2");
+    agent.report("SubagentStop", from_subagent("a1", json!({})));
+    // Claude Code 2.1.330 meldet so, wenn der Subagent `SubagentHandback`
+    // aufruft; sein `SubagentStop` folgt erst danach.
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "prompt": "<agent-message from=\"b2\">\n[Subagent hand-back] The text below is \
+                            the final report of a subagent.\n</agent-message>" }),
+    );
+    agent.report("SubagentStop", from_subagent("b2", json!({})));
+
+    let update = settle(&agent);
+    assert_eq!(update.assignment.as_deref(), Some("Untersuche"));
+    let states: Vec<_> = update
+        .subagents
+        .iter()
+        .map(|s| (s.id.as_str(), s.state))
+        .collect();
+    assert_eq!(
+        states,
+        [("a1", SubagentState::Done), ("b2", SubagentState::Done)]
+    );
+}
+
+#[test]
+fn beendet_sich_der_agent_sind_seine_subagenten_fort() {
+    let status = AgentStatus::start(runtime_folder("subagenten-ende")).unwrap();
+    let agent = TestAgent::start(&status, 1);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    launch(&agent, "a1", "Explore", "Datei a lesen", "t1");
+    agent.report("SessionEnd", json!({ "reason": "clear" }));
+
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Unknown);
+    assert!(update.subagents.is_empty());
 }
 
 #[test]

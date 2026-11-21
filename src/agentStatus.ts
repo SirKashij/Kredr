@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { Conversation } from "./arrangement";
-import type { MessageKey } from "./i18n/i18n";
+import { plural, type MessageKey, type Translate } from "./i18n/i18n";
 
 /** Die Zustände eines erkannten Agenten; ohne Eintrag ist der Status „unbekannt“. */
 export type AgentState = "working" | "done" | "waiting";
@@ -12,6 +12,65 @@ export interface AgentStatus {
   lastAction: string | null;
   /** Seit wann der Zustand gilt (Millisekunden wie `Date.now()`). */
   since: number;
+  /** Die Subagenten des Agenten in der Reihenfolge ihres Starts. */
+  subagents: readonly SubagentStatus[];
+}
+
+/** Die Zustände eines Subagenten: dieselben wie die eines Agenten. */
+export type SubagentState = AgentState;
+
+/** Ein Subagent, wie der Kern ihn meldet. */
+export interface SubagentUpdate {
+  /** Die Kennung, mit der Claude Code ihn meldet; eindeutig je Agent. */
+  id: string;
+  /** Sein Typ, etwa `Explore`. */
+  kind: string;
+  /** Die Beschreibung, die der Agent ihm mitgegeben hat, falls bekannt. */
+  description: string | null;
+  state: SubagentState;
+  /** Was der Subagent zuletzt getan oder am Ende gesagt hat. */
+  lastAction: string | null;
+}
+
+/** Ein Subagent in der Agenten-Ansicht. */
+export interface SubagentStatus extends SubagentUpdate {
+  /** Seit wann er bekannt ist (Millisekunden wie `Date.now()`). */
+  started: number;
+  /** Wann er fertig wurde; `null`, solange er arbeitet oder wartet. */
+  ended: number | null;
+}
+
+/** Was eine Zeile eines Subagenten nennt: die Beschreibung, ohne sie den Typ. */
+export function subagentLabel(subagent: SubagentUpdate): string {
+  return subagent.description ?? subagent.kind;
+}
+
+/** Der Tooltip einer Zeile eines Subagenten: Typ und letzte Aktion. */
+export function subagentTooltip(subagent: SubagentUpdate): string {
+  return [subagent.kind, subagent.lastAction].filter(Boolean).join(" · ");
+}
+
+/** Der Rang eines Zustands in der Liste der Subagenten: wartende vor arbeitenden vor fertigen. */
+const subagentRank: Record<SubagentState, number> = { waiting: 0, working: 1, done: 2 };
+
+/** Die Subagenten, wie ihre Zeilen stehen: nach Zustand, sonst in Startreihenfolge. */
+export function subagentsInOrder<T extends SubagentUpdate>(subagents: readonly T[]): T[] {
+  return [...subagents].sort((a, b) => subagentRank[a.state] - subagentRank[b.state]);
+}
+
+/** Die Subagenten nach `update`; Zeitpunkte bekannter Subagenten bleiben. */
+function nextSubagents(
+  previous: readonly SubagentStatus[],
+  update: readonly SubagentUpdate[],
+  now: number,
+): SubagentStatus[] {
+  const known = new Map(previous.map((subagent) => [subagent.id, subagent]));
+  return update.map((subagent) => {
+    const before = known.get(subagent.id);
+    const started = before?.started ?? now;
+    const ended = subagent.state === "done" ? (before?.ended ?? now) : null;
+    return { ...subagent, started, ended };
+  });
 }
 
 /** Was der Kern bei jeder Änderung des Agentenstatus eines Terminals meldet. */
@@ -26,6 +85,8 @@ export interface StatusUpdate {
   conversation: string | null;
   /** Ob sich das Gespräch, mit dem der Agent startete, nicht fortsetzen ließ. */
   resumeFailed: boolean;
+  /** Die laufenden und die seit dem letzten Prompt der Person fertigen Subagenten. */
+  subagents: readonly SubagentUpdate[];
 }
 
 /**
@@ -68,7 +129,8 @@ export class AgentStatuses {
     } else {
       const previous = this.statuses.get(tabId);
       const since = previous?.state === update.state ? previous.since : now;
-      next.set(tabId, { state: update.state, lastAction: update.lastAction, since });
+      const subagents = nextSubagents(previous?.subagents ?? [], update.subagents, now);
+      next.set(tabId, { state: update.state, lastAction: update.lastAction, since, subagents });
     }
     this.replace(next);
   }
@@ -90,11 +152,45 @@ export function useAgentStatuses(statuses: AgentStatuses): Statuses {
   return useSyncExternalStore(statuses.subscribe, statuses.snapshot);
 }
 
-/** Wie viele Agenten arbeiten, auf Eingabe warten und fertig sind. */
-export function countStates(statuses: Statuses): Record<AgentState, number> {
+/** Wie viele (Sub-)Agenten arbeiten, auf Eingabe warten und fertig sind. */
+export function countStates(agents: Iterable<{ state: AgentState }>): Record<AgentState, number> {
   const counts = { working: 0, waiting: 0, done: 0 };
-  for (const { state } of statuses.values()) counts[state]++;
+  for (const { state } of agents) counts[state]++;
   return counts;
+}
+
+/** Die Texte der Zähler, je für genau einen und für mehrere (Sub-)Agenten. */
+export const stateCounters: Record<AgentState, [one: MessageKey, other: MessageKey]> = {
+  working: ["agentStatus.count.working.one", "agentStatus.count.working.other"],
+  waiting: ["agentStatus.count.waiting.one", "agentStatus.count.waiting.other"],
+  done: ["agentStatus.count.done.one", "agentStatus.count.done.other"],
+};
+
+/** Ein Teil der Zusammenfassung; mit `state` in der Farbe dieses Zustands. */
+export interface SummaryPart {
+  text: string;
+  state: AgentState | null;
+}
+
+/**
+ * Die Zusammenfassung eingeklappter Subagenten, etwa „6 Subagenten · 3
+ * arbeiten“: die Anzahl, dann die wartenden und die arbeitenden, ohne beide
+ * „alle fertig“.
+ */
+export function subagentSummary(t: Translate, subagents: readonly SubagentStatus[]): SummaryPart[] {
+  const counts = countStates(subagents);
+  const parts: SummaryPart[] = [
+    {
+      text: plural(t, subagents.length, "agent.subagents.count.one", "agent.subagents.count.other"),
+      state: null,
+    },
+  ];
+  for (const state of ["waiting", "working"] as const) {
+    if (counts[state] > 0)
+      parts.push({ text: plural(t, counts[state], ...stateCounters[state]), state });
+  }
+  if (parts.length === 1) parts.push({ text: t("agent.subagents.allDone"), state: null });
+  return parts;
 }
 
 /** Eine Laufzeit von `milliseconds` als Text der Sprachdatei samt Werten. */

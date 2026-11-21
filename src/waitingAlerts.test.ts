@@ -8,7 +8,7 @@ function statuses(tabs: Record<string, [AgentState, number]>): Statuses {
   return new Map(
     Object.entries(tabs).map(([tabId, [state, since]]) => [
       tabId,
-      { state, lastAction: null, since },
+      { state, lastAction: null, since, subagents: [] },
     ]),
   );
 }
