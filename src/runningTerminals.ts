@@ -11,6 +11,7 @@ import type { Shell } from "./settingsStore";
 import { shellLabel } from "./tabLabel";
 import { clipboardCommand } from "./terminalClipboard";
 import { linkProvider, type LinkActions } from "./terminalLinkProvider";
+import { ResizeHold, type TerminalSize } from "./terminalResizeHold";
 
 /** Was ein Terminal von seinem Fenster braucht. */
 export interface TerminalHost extends LinkActions {
@@ -65,6 +66,14 @@ const theme = {
   brightWhite: "#e5e5e5",
 };
 
+/**
+ * Eine OSC-Nummer, die kein bekanntes Terminal belegt. Kredr stellt sie der zurückgehaltenen
+ * Ausgabe nach einer Größenänderung voran (`applySize`); schickt ein Programm sie selbst,
+ * passiert nichts.
+ */
+const SIZE_OSC = 7347;
+const sizeMarker = new TextEncoder().encode(`\x1b]${SIZE_OSC};\x07`);
+
 /** Was der Kern nach dem Öffnen eines Terminals meldet. */
 interface OpenedTerminal {
   id: number;
@@ -95,11 +104,14 @@ export class RunningTerminal {
     linkHandler: { activate: (_event, url) => this.host.openUrl(url) },
   });
   private readonly fitAddon = new FitAddon();
-  private readonly observer = new ResizeObserver(() => {
-    cancelAnimationFrame(this.frame);
-    this.frame = requestAnimationFrame(() => this.fit());
-  });
-  private frame = 0;
+  // Sofort und nicht erst im nächsten Frame: Sonst malt der Browser ein Bild, in dem das
+  // Terminal noch die alte Breite hat und abgeschnitten ist.
+  private readonly observer = new ResizeObserver(() => this.fit());
+  private readonly hold = new ResizeHold((_size, held) => this.applySize(held));
+  /** Die Größe, die die Shell zuletzt erfahren hat. */
+  private sentSize = "";
+  /** `applySize` hat eine neue Größe angekündigt, die noch nicht gilt. */
+  private sizePending = false;
   private started = false;
   private closed = false;
   /** Kennung des Terminals im Kern, sobald die Shell läuft. */
@@ -137,6 +149,10 @@ export class RunningTerminal {
     });
     this.xterm.onResize(() => {
       if (this.id !== null) this.resize();
+    });
+    this.xterm.parser.registerOscHandler(SIZE_OSC, () => {
+      this.takeSize();
+      return true;
     });
   }
 
@@ -221,7 +237,7 @@ export class RunningTerminal {
   dispose() {
     this.closed = true;
     this.observer.disconnect();
-    cancelAnimationFrame(this.frame);
+    this.hold.dispose();
     this.element.remove();
     this.xterm.dispose();
     if (this.id !== null) invoke("terminal_close", { id: this.id });
@@ -229,7 +245,9 @@ export class RunningTerminal {
 
   private start() {
     const onOutput = new Channel<ArrayBuffer>((bytes) => {
-      if (!this.closed) this.xterm.write(new Uint8Array(bytes));
+      if (this.closed) return;
+      const output = new Uint8Array(bytes);
+      if (!this.hold.output(output)) this.xterm.write(output);
     });
     const onExit = new Channel<null>(() => {
       if (this.closed) return;
@@ -241,6 +259,7 @@ export class RunningTerminal {
       else this.agentEvents.onStatus(update);
     });
     const { cols, rows } = this.xterm;
+    this.sentSize = `${cols}x${rows}`;
     const { cwd, shell, agent, resume: conversation } = this.options;
     const channels = { onOutput, onExit, onAgentStatus };
     const resume = conversation
@@ -289,12 +308,56 @@ export class RunningTerminal {
     this.screen.before(notice);
   }
 
-  /** Passt Spalten und Zeilen an den Platz an; unsichtbar gibt es nichts zu messen. */
+  /**
+   * Passt Spalten und Zeilen an den Platz an; unsichtbar gibt es nichts zu messen.
+   * Läuft die Shell schon, erfährt sie die neue Größe sofort, das Terminal aber erst,
+   * wenn ihr Neuzeichnen da ist (`ResizeHold`). Bis dahin bleibt das alte Bild stehen.
+   */
   private fit() {
-    if (this.screen.clientWidth > 0 && this.screen.clientHeight > 0) {
+    if (this.screen.clientWidth === 0 || this.screen.clientHeight === 0) return;
+    if (this.id === null) {
       this.fitAddon.fit();
       this.renderNow();
+      return;
     }
+    const size = this.fitAddon.proposeDimensions();
+    if (!size || !(size.cols > 0) || !(size.rows > 0)) return;
+    const changed = size.cols !== this.xterm.cols || size.rows !== this.xterm.rows;
+    if (!changed && !this.hold.holding) return;
+    this.resize(size);
+    this.hold.start(size);
+  }
+
+  /**
+   * Übernimmt die neue Größe und die zurückgehaltene Ausgabe so, dass dazwischen kein Bild
+   * gemalt wird. Alles geht als ein einziger Schub in die Schreibschlange von xterm.js, denn
+   * zwischen zwei Schüben darf sie die Arbeit unterbrechen, und der Browser malt dann. Den
+   * Anfang macht eine eigene OSC-Sequenz, die die neue Größe mitten im Schub setzt
+   * (`sizeMarker`); verschluckt sie eine angefangene Sequenz der Shell, setzt sie der Rückruf.
+   * `fit` misst dabei neu; hat sich der Platz inzwischen wieder geändert, erfährt es die Shell.
+   */
+  private applySize(held: Uint8Array[]) {
+    if (this.closed) return;
+    const chunks = [sizeMarker, ...held];
+    const output = new Uint8Array(chunks.reduce((sum, bytes) => sum + bytes.length, 0));
+    let offset = 0;
+    for (const bytes of chunks) {
+      output.set(bytes, offset);
+      offset += bytes.length;
+    }
+    this.sizePending = true;
+    this.xterm.write(output, () => {
+      this.takeSize();
+      this.renderNow();
+    });
+  }
+
+  /** Setzt die gemessene Größe, wenn `applySize` sie angekündigt hat. */
+  private takeSize() {
+    if (!this.sizePending) return;
+    this.sizePending = false;
+    this.fitAddon.fit();
+    this.resize();
   }
 
   /**
@@ -325,8 +388,11 @@ export class RunningTerminal {
     invoke("terminal_write", { id: this.id, data }).catch(() => {});
   }
 
-  private resize() {
-    const { cols, rows } = this.xterm;
+  /** Teilt der Shell eine Größe mit; dieselbe zweimal hintereinander nur einmal. */
+  private resize({ cols, rows }: TerminalSize = this.xterm) {
+    const size = `${cols}x${rows}`;
+    if (size === this.sentSize) return;
+    this.sentSize = size;
     invoke("terminal_resize", { id: this.id, cols, rows }).catch(() => {});
   }
 }

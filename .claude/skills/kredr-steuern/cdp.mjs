@@ -72,8 +72,11 @@ export async function verbinden({ port = laufenderPort() } = {}) {
   const offen = new Map();
   /** Ausnahmen und console.error seit dem Verbinden oder dem letzten Neuladen. */
   const fehler = [];
+  /** Zuhörer für CDP-Ereignisse nach Methode, siehe `beiEreignis`. */
+  const zuhoerer = new Map();
   ws.addEventListener("message", (ereignis) => {
     const m = JSON.parse(ereignis.data);
+    if (m.method) for (const f of zuhoerer.get(m.method) ?? []) f(m.params);
     if (m.id && offen.has(m.id)) {
       offen.get(m.id)(m);
       offen.delete(m.id);
@@ -137,6 +140,12 @@ export async function verbinden({ port = laufenderPort() } = {}) {
     warten,
     klicken,
     fehler,
+    /** Schickt einen rohen CDP-Befehl, etwa `Page.startScreencast`, und liefert sein Ergebnis. */
+    senden,
+    /** Ruft `f(params)` bei jedem CDP-Ereignis `methode` auf, etwa `Page.screencastFrame`. */
+    beiEreignis(methode, f) {
+      zuhoerer.set(methode, [...(zuhoerer.get(methode) ?? []), f]);
+    },
     /** Lädt die Oberfläche neu; laufende Terminals im Kern bleiben bestehen. */
     async neuLaden() {
       fehler.length = 0;
