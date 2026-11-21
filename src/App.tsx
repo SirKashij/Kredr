@@ -31,7 +31,7 @@ import { ArrangementSaver, loadArrangement } from "./arrangementStore";
 import { mayCloseWindow } from "./closeWindow";
 import { contentFor } from "./fileKinds";
 import { fileName, fullPath, opensExternally, toProjectPath } from "./filePath";
-import { recordOpened } from "./fileSearch";
+import { recordOpened } from "./fileNameSearch";
 import { saveFile } from "./FileView";
 import { useT } from "./i18n/i18n";
 import { isModifierKey, resolveKey, type Command } from "./keybindings";
@@ -236,10 +236,16 @@ export function App() {
     setFocusRequest((count) => count + 1);
   }
 
-  function update(change: (arrangement: Arrangement) => Arrangement) {
+  /** Ändert die Aufteilung und zeigt sie; die Tastatur bleibt, wo sie ist. */
+  function show(change: (arrangement: Arrangement) => Arrangement) {
     setArrangement((current) => settle(change(current)));
     // Wer die Aufteilung bedient, will sie sehen.
     setSettingsOpen(false);
+  }
+
+  /** Ändert die Aufteilung und gibt dem Hauptbereich die Tastatur. */
+  function update(change: (arrangement: Arrangement) => Arrangement) {
+    show(change);
     refocusTerminal();
   }
 
@@ -268,8 +274,7 @@ export function App() {
     const open = (current: Arrangement) => openContent(current, content, preview);
     if (preview) {
       // Die Vorschau zeigt die Datei nur; die Tastatur bleibt, wo sie ist.
-      setArrangement((current) => settle(open(current)));
-      setSettingsOpen(false);
+      show(open);
     } else {
       if (isFileView) files.get(project, file).wantFocus();
       update(open);
@@ -278,7 +283,7 @@ export function App() {
   }
 
   /** Schließt „Datei per Namen öffnen“ und die Branch-Liste; die Tastatur geht zurück in den Hauptbereich. */
-  const closeQuickOpen = useCallback(() => {
+  const closeQuickPick = useCallback(() => {
     setQuickOpen(false);
     setBranchPicker(false);
     setFocusRequest((count) => count + 1);
@@ -305,7 +310,8 @@ export function App() {
     return choice === discard;
   }
 
-  async function closeTerminal(tabId: string) {
+  /** Schließt den Tab, gleich was er zeigt; vorher fragt er nach, wenn dabei etwas verloren ginge. */
+  async function requestCloseTab(tabId: string) {
     const content = tabsOf(arrangement).find((tab) => tab.id === tabId)?.content;
     // Quelltext und Markdown-Vorschau zeigen denselben Text; gefragt wird erst,
     // wenn der letzte Tab schließt, der ihn hält.
@@ -344,8 +350,7 @@ export function App() {
   /** Zeigt den Diff einer Änderung im Tab „Versionskontrolle“; die Tastatur bleibt in der Liste. */
   function showChange(file: ChangedFile) {
     versionControl.select(file);
-    setArrangement((current) => settle(showVersionControl(current, false)));
-    setSettingsOpen(false);
+    show((current) => showVersionControl(current, false));
   }
 
   /** Zeigt eine Ansicht; ein Klick auf die bereits gezeigte blendet die Seitenleiste aus. */
@@ -403,7 +408,7 @@ export function App() {
       case "toggleSidebar":
         return setSidebarVisible((visible) => !visible);
       case "closeTab":
-        if (focused) closeTerminal(focused.activeTab);
+        if (focused) requestCloseTab(focused.activeTab);
     }
   }
   const runCommand = useRef(run);
@@ -503,10 +508,10 @@ export function App() {
               update={update}
               onRefocus={refocusTerminal}
               onOpenFile={(path) => openFile({ path })}
-              onCloseTab={closeTerminal}
+              onCloseTab={requestCloseTab}
             />
           ) : (
-            <div className="welcome">
+            <div className="empty-main">
               <p>{t("terminal.none")}</p>
               <button className="btn" onClick={() => update(newAgent)}>
                 {t("agent.new")}
@@ -524,10 +529,10 @@ export function App() {
           files={fileList}
           recent={recentFiles}
           onOpen={(path) => openFile({ path })}
-          onClose={closeQuickOpen}
+          onClose={closeQuickPick}
         />
       )}
-      {branchPicker && project && <BranchPicker project={project} onClose={closeQuickOpen} />}
+      {branchPicker && project && <BranchPicker project={project} onClose={closeQuickPick} />}
       <footer className="status">
         <BranchStatus onToggle={() => setBranchPicker((open) => !open)} />
         <SyncStatus />

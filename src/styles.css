@@ -663,6 +663,7 @@ button {
   padding: 3px;
   border-radius: 4px;
   color: var(--dim);
+  visibility: hidden;
 }
 
 .tab-actions button:hover,
@@ -718,10 +719,6 @@ button {
   pointer-events: none;
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   border: 1px solid var(--accent);
-}
-
-.tab-close {
-  visibility: hidden;
 }
 
 .tab.on .tab-close,
@@ -822,7 +819,7 @@ button {
   background: #454545;
 }
 
-.welcome {
+.empty-main {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -832,7 +829,7 @@ button {
   color: var(--dim);
 }
 
-.welcome p {
+.empty-main p {
   margin: 0;
 }
 
@@ -1505,8 +1502,7 @@ button {
   text-overflow: ellipsis;
 }
 
-.commit-scope,
-.commit-busy {
+.commit-scope {
   color: var(--dim);
   font-size: 11.5px;
 }
@@ -1516,6 +1512,7 @@ button {
   align-items: center;
   gap: 6px;
   color: var(--text);
+  font-size: 11.5px;
 }
 
 /* Die Meldung zur gescheiterten Operation, mit dem Ausweg darunter. */

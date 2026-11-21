@@ -1,15 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useT } from "./i18n/i18n";
-import { projectName } from "./project";
-
-/** Ein Eintrag der Liste zuletzt geöffneter Projekte, wie der Kern ihn liefert. */
-interface RecentProject {
-  /** Der Ordner des Projekts. */
-  path: string;
-  /** Ob der Ordner noch vorhanden ist. */
-  exists: boolean;
-}
+import { forgetProject, loadRecentProjects, projectName, type RecentProject } from "./project";
 
 interface StartPageProps {
   /** Öffnet den Ordner als Projekt; scheitert, wenn es ihn nicht mehr gibt. */
@@ -24,7 +15,7 @@ export function StartPage({ onOpen, onOpenFolder }: StartPageProps) {
 
   // Andere Fenster ändern die Liste; beim Zurückkehren zeigt sie den aktuellen Stand.
   useEffect(() => {
-    const load = () => invoke<RecentProject[]>("recent_projects").then(setProjects);
+    const load = () => loadRecentProjects().then(setProjects);
     load();
     window.addEventListener("focus", load);
     return () => window.removeEventListener("focus", load);
@@ -32,18 +23,18 @@ export function StartPage({ onOpen, onOpenFolder }: StartPageProps) {
 
   function open(folder: string) {
     // Der Ordner ist seit dem Laden verschwunden: die Liste zeigt es danach an.
-    onOpen(folder).catch(() => invoke<RecentProject[]>("recent_projects").then(setProjects));
+    onOpen(folder).catch(() => loadRecentProjects().then(setProjects));
   }
 
   function forget(folder: string) {
-    invoke<RecentProject[]>("forget_project", { path: folder }).then(setProjects);
+    forgetProject(folder).then(setProjects);
   }
 
   return (
     <div className="start">
       <div className="start-column">
         {projects.length === 0 ? (
-          <p className="start-hint">{t("welcome.text")}</p>
+          <p className="start-hint">{t("start.text")}</p>
         ) : (
           <>
             <div className="sect">{t("start.recent")}</div>
@@ -71,7 +62,7 @@ export function StartPage({ onOpen, onOpenFolder }: StartPageProps) {
           </>
         )}
         <button className="btn" onClick={onOpenFolder}>
-          {t("welcome.openFolder")}
+          {t("start.openFolder")}
         </button>
       </div>
     </div>

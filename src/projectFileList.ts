@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { emptyIndex, indexFiles, type FileIndex } from "./fileSearch";
+import { emptyIndex, indexFiles, type FileIndex } from "./fileNameSearch";
 import { watchProjectFiles, type ProjectChanges } from "./projectFiles";
 
 /** Woher die Dateiliste kommt; in Tests ein Projektordner im Speicher. */
