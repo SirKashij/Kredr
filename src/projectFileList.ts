@@ -10,7 +10,7 @@ export interface FileListSource {
 }
 
 const core: FileListSource = {
-  list: (project) => invoke<string[]>("project_file_list", { project }),
+  list: (project) => invoke<string[]>("project_files_list_all", { project }),
   watch: watchProjectFiles,
 };
 

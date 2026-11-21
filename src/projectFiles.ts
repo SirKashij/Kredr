@@ -24,7 +24,7 @@ type Listener = (changes: ProjectChanges) => void;
  * `folder` ist relativ zum Projektordner und für diesen selbst leer.
  */
 export function listFolder(project: string, folder: string): Promise<Entry[]> {
-  return invoke<Entry[]>("project_files_list", { project, folder });
+  return invoke<Entry[]>("project_files_list_folder", { project, folder });
 }
 
 /** Je Projekt ein Abonnement im Kern, das sich alle Zuhörer des Fensters teilen. */

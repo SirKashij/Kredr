@@ -6,6 +6,7 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
+use crate::paths;
 use crate::terminal::Shell;
 
 /// Startet Claude Code, solange die Einstellungen nichts anderes sagen.
@@ -31,12 +32,9 @@ pub fn missing_program(command: &str, search_path: &OsStr) -> Option<String> {
     if !plain {
         return None;
     }
-    let found = std::env::split_paths(search_path).any(|dir| {
-        dir.join(program).is_file()
-            || EXTENSIONS
-                .iter()
-                .any(|extension| dir.join(format!("{program}.{extension}")).is_file())
-    });
+    let mut names = vec![program.to_owned()];
+    names.extend(EXTENSIONS.map(|extension| format!("{program}.{extension}")));
+    let found = paths::find_programs(search_path, &names).next().is_some();
     (!found).then(|| program.to_owned())
 }
 

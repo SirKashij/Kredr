@@ -4,6 +4,7 @@ pub mod arrangement_store;
 pub mod external;
 pub mod file_list;
 pub mod notifications;
+mod paths;
 pub mod project_files;
 pub mod project_windows;
 mod projects;
@@ -70,12 +71,6 @@ impl Terminals {
     }
 }
 
-/// Der Agent-Startbefehl aus den Einstellungen des Kerns. Er wird bei jedem
-/// Start frisch gelesen, damit eine Änderung sofort gilt.
-fn agent_start_command(settings: &SettingsStore) -> String {
-    settings.get().agent_command
-}
-
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenedTerminal {
@@ -118,8 +113,10 @@ fn terminal_open(
     let wanted = shell.unwrap_or_else(|| settings.get().default_shell);
     let shell = terminal::startable_shell(wanted, &terminal::available_shells());
     let missing_shell = (shell != wanted).then_some(wanted);
-    let mut start_command = agent.then(|| agent_start_command(&settings));
-    let search_path = std::env::var_os("PATH").unwrap_or_default();
+    // Der Agent-Startbefehl wird bei jedem Start frisch gelesen, damit eine
+    // Änderung in den Einstellungen sofort gilt.
+    let mut start_command = agent.then(|| settings.get().agent_command);
+    let search_path = paths::search_path();
     let missing_agent_program = start_command
         .as_deref()
         .and_then(|command| agent::missing_program(command, &search_path));
@@ -277,14 +274,14 @@ impl ProjectWatchers {
 /// Projektordner und für diesen selbst leer. Läuft abseits des
 /// Haupt-Threads, damit auch ein sehr großer Ordner das Fenster nicht anhält.
 #[tauri::command(async)]
-fn project_files_list(project: PathBuf, folder: String) -> Result<Vec<Entry>, String> {
+fn project_files_list_folder(project: PathBuf, folder: String) -> Result<Vec<Entry>, String> {
     project_files::list_folder(&project.join(folder)).map_err(|e| e.to_string())
 }
 
 /// Die Dateiliste des Projekts für „Datei per Namen öffnen“: alle nicht
 /// ignorierten Dateien, relativ zum Projektordner.
 #[tauri::command(async)]
-fn project_file_list(project: PathBuf) -> Vec<String> {
+fn project_files_list_all(project: PathBuf) -> Vec<String> {
     file_list::list_files(&project)
 }
 
@@ -508,7 +505,7 @@ fn settings_set(settings: State<'_, SettingsStore>, value: Settings) -> Result<S
 /// Die Shells, die die Einstellungsseite zur Wahl stellt.
 #[tauri::command]
 fn available_shells() -> Vec<Shell> {
-    settings::available_shells()
+    terminal::available_shells()
 }
 
 pub fn run() {
@@ -573,8 +570,8 @@ pub fn run() {
             settings_get,
             settings_set,
             available_shells,
-            project_files_list,
-            project_file_list,
+            project_files_list_folder,
+            project_files_list_all,
             project_files_read,
             project_files_read_image,
             project_files_write,

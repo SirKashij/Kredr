@@ -5,7 +5,7 @@
 
 use std::fmt;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
+
+use crate::paths;
 
 /// So lange wird Ausgabe gesammelt, bevor sie als ein Ereignis weitergeht.
 /// Kurz genug, dass das Echo eines Tastendrucks nicht spürbar verzögert wird.
@@ -289,12 +291,11 @@ fn shell_command(
 /// dem Suchpfad wäre nicht verlässlich: Dort liegt oft der Starter von WSL.
 fn git_bash() -> Option<PathBuf> {
     // Git für Windows trägt `<Git>\cmd` in den Suchpfad ein.
-    let beside_git = std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|dir| dir.join("git.exe").is_file())
-        .filter_map(|dir| dir.parent().map(Path::to_path_buf));
+    let search_path = paths::search_path();
+    let git = ["git.exe".to_owned()];
+    let beside_git: Vec<PathBuf> = paths::find_programs(&search_path, &git)
+        .filter_map(|git| Some(git.parent()?.parent()?.to_path_buf()))
+        .collect();
     // Die üblichen Installationsorte, falls Git nicht im Suchpfad steht.
     let installed = [
         ("ProgramFiles", "Git"),
@@ -304,6 +305,7 @@ fn git_bash() -> Option<PathBuf> {
     .into_iter()
     .filter_map(|(variable, folder)| Some(PathBuf::from(std::env::var_os(variable)?).join(folder)));
     beside_git
+        .into_iter()
         .chain(installed)
         .map(|git| git.join("bin").join("bash.exe"))
         .find(|bash| bash.is_file())
@@ -312,8 +314,10 @@ fn git_bash() -> Option<PathBuf> {
 /// PowerShell 7, wenn installiert, sonst das mit Windows gelieferte
 /// Windows PowerShell; dieselbe Reihenfolge wie in VS Code.
 fn powershell() -> &'static str {
-    let has_pwsh = std::env::var_os("PATH")
-        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join("pwsh.exe").is_file()));
+    let pwsh = ["pwsh.exe".to_owned()];
+    let has_pwsh = paths::find_programs(&paths::search_path(), &pwsh)
+        .next()
+        .is_some();
     if has_pwsh {
         "pwsh.exe"
     } else {

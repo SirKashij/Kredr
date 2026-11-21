@@ -12,6 +12,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::paths;
 use crate::window_geometry::WindowGeometry;
 
 /// Die Version des Dateiformats. Eine Datei anderer Version gilt als nicht lesbar.
@@ -94,9 +95,9 @@ impl ArrangementStore {
     /// Setzt das Projekt an den Anfang der Liste.
     pub fn remember_project(&self, folder: &Path) -> io::Result<()> {
         let _guard = self.lock.lock();
-        let path = normalize(folder);
+        let path = paths::normalized(folder);
         let mut projects = self.load();
-        projects.retain(|project| !same_project(&project.path, &path));
+        projects.retain(|project| !paths::same(&project.path, &path));
         projects.insert(0, StoredProject { path });
         projects.truncate(MAX_PROJECTS);
         self.save(projects)
@@ -107,7 +108,7 @@ impl ArrangementStore {
         let _guard = self.lock.lock();
         let mut projects = self.load();
         let before = projects.len();
-        projects.retain(|project| !same_project(&project.path, folder));
+        projects.retain(|project| !paths::same(&project.path, folder));
         // Mit dem Eintrag geht auch die Aufteilung des Projekts.
         let _ = std::fs::remove_file(self.state_file(folder));
         if projects.len() == before {
@@ -125,7 +126,7 @@ impl ArrangementStore {
             return ProjectState::default();
         };
         match serde_json::from_slice::<StoredState>(&bytes) {
-            Ok(stored) if stored.version == VERSION && same_project(&stored.project, folder) => {
+            Ok(stored) if stored.version == VERSION && paths::same(&stored.project, folder) => {
                 ProjectState {
                     arrangement: stored.arrangement,
                     window: stored.window,
@@ -140,19 +141,19 @@ impl ArrangementStore {
         let _guard = self.lock.lock();
         let stored = StoredState {
             version: VERSION,
-            project: normalize(folder),
+            project: paths::normalized(folder),
             arrangement: state.arrangement.clone(),
             window: state.window,
         };
         let json = serde_json::to_vec_pretty(&stored).map_err(io::Error::other)?;
-        write_whole(&self.state_file(folder), json)
+        paths::write_whole(&self.state_file(folder), json)
     }
 
     /// Die Datei des Projekts. Ihr Name folgt aus dem Projektpfad, gleich in
     /// welcher Schreibweise.
     fn state_file(&self, folder: &Path) -> PathBuf {
         // FNV-1a: über Versionen von Rust und Kredr hinweg derselbe Name.
-        let hash = key(folder)
+        let hash = paths::key(folder)
             .bytes()
             .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
                 (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
@@ -182,34 +183,6 @@ impl ArrangementStore {
             projects,
         };
         let json = serde_json::to_vec_pretty(&stored).map_err(io::Error::other)?;
-        write_whole(&self.file(), json)
+        paths::write_whole(&self.file(), json)
     }
-}
-
-/// Schreibt erst daneben und benennt dann um: ein Absturz mitten im
-/// Schreiben hinterlässt die alte Datei, keine halbe.
-fn write_whole(file: &Path, content: Vec<u8>) -> io::Result<()> {
-    if let Some(dir) = file.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut temporary = file.as_os_str().to_owned();
-    temporary.push(".tmp");
-    std::fs::write(&temporary, content)?;
-    std::fs::rename(temporary, file)
-}
-
-/// Ob beide Pfade denselben Ordner als Projekt meinen. Windows unterscheidet
-/// weder Groß- und Kleinschreibung noch einen abschließenden Trenner.
-pub fn same_project(a: &Path, b: &Path) -> bool {
-    key(a) == key(b)
-}
-
-fn key(folder: &Path) -> String {
-    normalize(folder).to_string_lossy().to_lowercase()
-}
-
-/// Der vollständige Pfad des Ordners ohne `.`, `..` und abschließenden Trenner.
-fn normalize(folder: &Path) -> PathBuf {
-    let absolute = std::path::absolute(folder).unwrap_or_else(|_| folder.to_path_buf());
-    absolute.components().collect()
 }

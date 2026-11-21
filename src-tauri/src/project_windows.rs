@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
-use crate::arrangement_store::same_project;
+use crate::paths;
 
 /// Die offenen Fenster nach Kennung, jeweils mit ihrem Projekt.
 #[derive(Default)]
@@ -42,7 +42,7 @@ impl ProjectWindows {
     pub fn window_of(&self, folder: &Path) -> Option<String> {
         self.lock()
             .iter()
-            .find(|(_, project)| matches!(project, Some(open) if same_project(open, folder)))
+            .find(|(_, project)| matches!(project, Some(open) if paths::same(open, folder)))
             .map(|(label, _)| label.clone())
     }
 
@@ -80,6 +80,5 @@ pub fn project_folder(folder: &Path) -> Option<PathBuf> {
     if !folder.is_dir() {
         return None;
     }
-    let absolute = std::path::absolute(folder).ok()?;
-    Some(absolute.components().collect())
+    Some(paths::normalized(folder))
 }
