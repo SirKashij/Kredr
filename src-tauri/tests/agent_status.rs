@@ -1,8 +1,13 @@
-//! Tests des Agentenstatus über seine öffentliche Schnittstelle. Die Tests
-//! spielen die Rolle von Claude Code: Sie lesen die Konfiguration, die ein
-//! Agent beim Start mitbekommt, und senden dessen Meldungen im dokumentierten
-//! Format an die dort genannte Adresse. Ein echtes Claude Code startet nicht.
+//! Tests des Agentenstatus über seine öffentliche Schnittstelle.
+//!
+//! Die meisten Fälle prüfen den `TrackedAgent` direkt: Die Tests spielen die
+//! Rolle von Claude Code und übergeben ihm die Ereignisse im dokumentierten
+//! Format. Am Ende stehen die Tests des Empfangs, die dieselben Ereignisse
+//! per HTTP an die Adresse aus der Konfiguration schicken. Ein echtes Claude
+//! Code startet nicht.
 
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -12,7 +17,7 @@ use std::time::{Duration, Instant};
 use kredr_lib::agent::with_status_settings;
 use kredr_lib::agent_status::{
     remove_orphaned_runtime_folders, runtime_folder_of, AgentState, AgentStatus, Resumed,
-    StatusUpdate, SubagentState,
+    StatusUpdate, SubagentState, TrackedAgent,
 };
 use kredr_lib::terminal::{available_shells, Shell, Terminal, TerminalEvent, TerminalOptions};
 use serde_json::{json, Value};
@@ -26,114 +31,104 @@ fn runtime_folder(name: &str) -> PathBuf {
     dir
 }
 
-/// Ein Agent aus Sicht des Tests: die Konfiguration, die er beim Start
-/// mitbekommt, und die Statusmeldungen, die für sein Terminal ankommen.
+/// Ein Ereignis `event`, wie Claude Code es einem Hook übergibt, mit den
+/// Feldern, die jede Meldung trägt, und zusätzlich `fields`.
+fn hook_event(event: &str, fields: Value) -> Value {
+    let mut body = json!({
+        "session_id": "abc123",
+        "transcript_path": "C:\\Users\\test\\.claude\\projects\\p\\abc123.jsonl",
+        "cwd": "C:\\Projekte\\kredr",
+        "hook_event_name": event,
+    });
+    for (key, value) in fields.as_object().expect("Felder als Objekt") {
+        body[key] = value.clone();
+    }
+    body
+}
+
+/// Ein Agent aus Sicht des Tests: sein `TrackedAgent` und die Meldungen, die
+/// dieser geliefert und der Test noch nicht abgeholt hat.
 struct TestAgent {
-    settings: PathBuf,
-    updates: Receiver<StatusUpdate>,
+    tracked: RefCell<TrackedAgent>,
+    updates: RefCell<VecDeque<StatusUpdate>>,
 }
 
 impl TestAgent {
-    fn start(status: &AgentStatus, terminal: u32) -> TestAgent {
-        TestAgent::register(status, terminal, None)
+    fn start() -> TestAgent {
+        TestAgent::register(None)
     }
 
     /// Ein Agent, der ein gespeichertes Gespräch fortsetzt.
-    fn resume(status: &AgentStatus, terminal: u32, resumed: Resumed) -> TestAgent {
-        TestAgent::register(status, terminal, Some(resumed))
+    fn resume(resumed: Resumed) -> TestAgent {
+        TestAgent::register(Some(resumed))
     }
 
-    /// Meldet das Terminal an, mit oder ohne fortgesetztes Gespräch.
-    fn register(status: &AgentStatus, terminal: u32, resumed: Option<Resumed>) -> TestAgent {
-        let (sender, updates) = channel();
-        let settings = status
-            .register(terminal, resumed, move |update| {
-                let _ = sender.send(update);
-            })
-            .expect("Die Konfiguration sollte sich anlegen lassen");
-        TestAgent { settings, updates }
-    }
-
-    /// Meldet ein Ereignis so, wie Claude Code es täte: per POST an die
-    /// Adresse, die in der Konfiguration für dieses Ereignis steht.
-    fn report(&self, event: &str, fields: Value) {
-        let url = hook_url(&self.settings, event)
-            .unwrap_or_else(|| panic!("Für {event} sollte ein Hook eingetragen sein"));
-        let mut body = json!({
-            "session_id": "abc123",
-            "transcript_path": "C:\\Users\\test\\.claude\\projects\\p\\abc123.jsonl",
-            "cwd": "C:\\Projekte\\kredr",
-            "hook_event_name": event,
-        });
-        for (key, value) in fields.as_object().expect("Felder als Objekt") {
-            body[key] = value.clone();
+    fn register(resumed: Option<Resumed>) -> TestAgent {
+        TestAgent {
+            tracked: RefCell::new(TrackedAgent::new(resumed)),
+            updates: RefCell::default(),
         }
-        let status = post(&url, &body.to_string());
-        assert_eq!(status, 200, "Der Kern sollte {event} annehmen");
     }
 
+    /// Meldet ein Ereignis so, wie Claude Code es täte, und merkt sich die
+    /// Meldung, falls eine kommt.
+    fn report(&self, event: &str, fields: Value) {
+        let update = self
+            .tracked
+            .borrow_mut()
+            .on_event(&hook_event(event, fields));
+        self.updates.borrow_mut().extend(update);
+    }
+
+    /// Das Terminal endet.
+    fn forget(&self) -> Option<StatusUpdate> {
+        self.tracked.borrow_mut().forget()
+    }
+
+    /// Die älteste Meldung, die der Test noch nicht abgeholt hat.
     fn next(&self) -> StatusUpdate {
         self.updates
-            .recv_timeout(TIMEOUT)
-            .expect("Eine Statusmeldung sollte ankommen")
+            .borrow_mut()
+            .pop_front()
+            .expect("Eine Statusmeldung sollte gekommen sein")
     }
 
     fn next_state(&self) -> AgentState {
         self.next().state
     }
 
-    /// Erwartet nur noch Meldungen, in denen sich allein die Subagenten
-    /// ändern: Zustand und letzte Aktion des Agenten bleiben `state` und `last_action`.
+    /// Erwartet, dass sich in allen noch nicht abgeholten Meldungen allein
+    /// die Subagenten ändern: Zustand und letzte Aktion des Agenten bleiben
+    /// `state` und `last_action`.
     fn expect_only_subagents(&self, state: AgentState, last_action: Option<&str>) {
-        while let Ok(update) = self.updates.recv_timeout(Duration::from_millis(300)) {
+        for update in self.updates.borrow_mut().drain(..) {
             assert_eq!(update.state, state, "{update:?}");
             assert_eq!(update.last_action.as_deref(), last_action, "{update:?}");
             assert!(!update.state_changed, "{update:?}");
         }
     }
 
+    /// Erwartet, dass jedes Ereignis seit der zuletzt abgeholten Meldung
+    /// keine Meldung ergeben hat.
     fn expect_silence(&self) {
-        if let Ok(update) = self.updates.recv_timeout(Duration::from_millis(300)) {
-            panic!("Unerwartete Statusmeldung: {update:?}");
-        }
+        let updates = self.updates.borrow();
+        assert!(updates.is_empty(), "Unerwartete Statusmeldung: {updates:?}");
     }
 }
 
-/// Die Adresse des ersten Hooks, der in der Konfiguration für `event` steht.
-fn hook_url(settings: &Path, event: &str) -> Option<String> {
-    let text = std::fs::read_to_string(settings).ok()?;
-    let settings: Value = serde_json::from_str(&text).expect("Die Konfiguration ist JSON");
-    let hook = &settings["hooks"][event][0]["hooks"][0];
-    assert_eq!(hook["type"], "http");
-    hook["url"].as_str().map(str::to_owned)
-}
-
-/// Sendet `body` per POST und liefert den Statuscode der Antwort.
-fn post(url: &str, body: &str) -> u16 {
-    let rest = url.strip_prefix("http://").expect("eine http-Adresse");
-    let (host, path) = rest.split_once('/').expect("Adresse mit Pfad");
-    let mut stream = TcpStream::connect(host).expect("Der Kern sollte Verbindungen annehmen");
-    stream.set_read_timeout(Some(TIMEOUT)).unwrap();
-    write!(
-        stream,
-        "POST /{path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )
-    .unwrap();
-    let mut response = String::new();
-    let _ = stream.read_to_string(&mut response);
-    response
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse().ok())
-        .unwrap_or_else(|| panic!("Keine HTTP-Antwort: {response:?}"))
+/// Die letzte der noch nicht abgeholten Meldungen; es muss eine geben.
+fn settle(agent: &TestAgent) -> StatusUpdate {
+    let mut updates = agent.updates.borrow_mut();
+    let last = updates
+        .pop_back()
+        .expect("Eine Statusmeldung sollte gekommen sein");
+    updates.clear();
+    last
 }
 
 #[test]
 fn eine_abgeschickte_eingabe_laesst_den_agenten_arbeiten() {
-    let status = AgentStatus::start(runtime_folder("arbeitet")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Baue das Ticket" }));
 
@@ -144,8 +139,7 @@ fn eine_abgeschickte_eingabe_laesst_den_agenten_arbeiten() {
 
 #[test]
 fn ein_arbeitsgang_durchlaeuft_arbeitet_wartet_arbeitet_fertig() {
-    let status = AgentStatus::start(runtime_folder("arbeitsgang")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let cargo_test = json!({ "tool_name": "Bash", "tool_input": { "command": "cargo test" } });
 
     agent.report(
@@ -183,8 +177,7 @@ fn ein_arbeitsgang_durchlaeuft_arbeitet_wartet_arbeitet_fertig() {
 
 #[test]
 fn rueckfragen_an_den_nutzer_lassen_den_agenten_warten() {
-    let status = AgentStatus::start(runtime_folder("rueckfragen")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let prompt = json!({ "prompt": "Weiter" });
 
     // Eine Frage mit Antwortmöglichkeiten.
@@ -219,8 +212,7 @@ fn rueckfragen_an_den_nutzer_lassen_den_agenten_warten() {
 
 #[test]
 fn die_meldung_zur_erlaubnis_ersetzt_die_genauere_letzte_aktion_nicht() {
-    let status = AgentStatus::start(runtime_folder("erlaubnis")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report(
         "PermissionRequest",
@@ -238,8 +230,7 @@ fn die_meldung_zur_erlaubnis_ersetzt_die_genauere_letzte_aktion_nicht() {
 
 #[test]
 fn die_letzte_aktion_nennt_werkzeug_und_ziel() {
-    let status = AgentStatus::start(runtime_folder("letzte-aktion")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let cases = [
         (
             json!({ "tool_name": "Edit", "tool_input": { "file_path": "C:\\Projekte\\kredr\\src\\git\\log.rs", "old_string": "a", "new_string": "b" } }),
@@ -289,8 +280,7 @@ fn from_subagent(agent_id: &str, fields: Value) -> Value {
 
 #[test]
 fn werkzeugaufrufe_von_subagenten_aendern_den_agenten_nicht() {
-    let status = AgentStatus::start(runtime_folder("subagent-werkzeuge")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let read = |file: &str| json!({ "tool_name": "Read", "tool_input": { "file_path": file } });
 
     agent.report(
@@ -321,8 +311,7 @@ fn werkzeugaufrufe_von_subagenten_aendern_den_agenten_nicht() {
 
 #[test]
 fn ein_hintergrund_subagent_laesst_den_fertigen_agenten_fertig() {
-    let status = AgentStatus::start(runtime_folder("subagent-hintergrund")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "cargo test" } });
 
     agent.report(
@@ -351,8 +340,7 @@ fn ein_hintergrund_subagent_laesst_den_fertigen_agenten_fertig() {
 
 #[test]
 fn das_ende_eines_subagenten_beendet_weder_arbeit_noch_auftrag_noch_gespraech() {
-    let status = AgentStatus::start(runtime_folder("subagent-ende")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 43" }));
     let started = agent.next();
@@ -377,8 +365,7 @@ fn das_ende_eines_subagenten_beendet_weder_arbeit_noch_auftrag_noch_gespraech() 
 
 #[test]
 fn eine_rueckfrage_aus_einem_subagenten_laesst_den_agenten_warten() {
-    let status = AgentStatus::start(runtime_folder("subagent-rueckfrage")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "echo hallo > c.txt" } });
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Schreibe c.txt" }));
@@ -418,8 +405,7 @@ fn permission_notification() -> Value {
 
 #[test]
 fn die_spaete_meldung_einer_beantworteten_rueckfrage_laesst_den_agenten_fertig() {
-    let status = AgentStatus::start(runtime_folder("subagent-spaet")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "echo x > d.txt" } });
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Schreibe d.txt" }));
@@ -439,8 +425,7 @@ fn die_spaete_meldung_einer_beantworteten_rueckfrage_laesst_den_agenten_fertig()
 
 #[test]
 fn die_spaete_meldung_einer_eigenen_beantworteten_rueckfrage_laesst_den_agenten_arbeiten() {
-    let status = AgentStatus::start(runtime_folder("rueckfrage-spaet")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Veröffentliche" }));
@@ -454,8 +439,7 @@ fn die_spaete_meldung_einer_eigenen_beantworteten_rueckfrage_laesst_den_agenten_
 
 #[test]
 fn eine_eigene_rueckfrage_des_agenten_geht_neben_der_eines_subagenten_nicht_verloren() {
-    let status = AgentStatus::start(runtime_folder("subagent-und-eigene-rueckfrage")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
@@ -487,8 +471,7 @@ fn eine_eigene_rueckfrage_des_agenten_geht_neben_der_eines_subagenten_nicht_verl
 
 #[test]
 fn eine_eigene_genehmigung_des_agenten_geht_neben_der_eines_subagenten_nicht_verloren() {
-    let status = AgentStatus::start(runtime_folder("subagent-und-eigene-genehmigung")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let push = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
     let test = json!({ "tool_name": "Bash", "tool_input": { "command": "cargo test" } });
 
@@ -507,8 +490,7 @@ fn eine_eigene_genehmigung_des_agenten_geht_neben_der_eines_subagenten_nicht_ver
 
 #[test]
 fn ein_prompt_der_person_beendet_offene_rueckfragen_von_subagenten() {
-    let status = AgentStatus::start(runtime_folder("subagent-prompt-beantwortet")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
@@ -544,8 +526,7 @@ fn descriptions(update: &StatusUpdate) -> Vec<Option<String>> {
 
 #[test]
 fn ein_abgelehnter_aufruf_verschiebt_die_beschreibungen_nach_dem_naechsten_prompt_nicht() {
-    let status = AgentStatus::start(runtime_folder("subagent-aufruf-abgelehnt")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
     // Abgelehnt: Es kommen weder Start noch `PostToolUse`.
@@ -565,8 +546,7 @@ fn ein_abgelehnter_aufruf_verschiebt_die_beschreibungen_nach_dem_naechsten_promp
 
 #[test]
 fn ein_abgelehnter_aufruf_verfaellt_mit_dem_ende_der_antwort() {
-    let status = AgentStatus::start(runtime_folder("subagent-aufruf-verfaellt")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
     agent.report("PreToolUse", agent_call("Abgelehnt", "Explore", "t1"));
@@ -590,8 +570,7 @@ fn ein_abgelehnter_aufruf_verfaellt_mit_dem_ende_der_antwort() {
 
 #[test]
 fn eine_frage_eines_subagenten_steht_in_seiner_zeile() {
-    let status = AgentStatus::start(runtime_folder("subagent-frage-zeile")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
     launch(&agent, "a1", "general-purpose", "Planen", "t1");
@@ -618,8 +597,7 @@ fn eine_frage_eines_subagenten_steht_in_seiner_zeile() {
 
 #[test]
 fn eine_abgelehnte_rueckfrage_eines_subagenten_endet_mit_seinem_ende() {
-    let status = AgentStatus::start(runtime_folder("subagent-abgelehnt")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Veröffentliche" }));
@@ -639,8 +617,7 @@ fn eine_abgelehnte_rueckfrage_eines_subagenten_endet_mit_seinem_ende() {
 
 #[test]
 fn solange_ein_subagent_fragt_wartet_der_agent_auch_nach_seiner_antwort() {
-    let status = AgentStatus::start(runtime_folder("subagent-fragt-weiter")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
@@ -666,8 +643,7 @@ fn solange_ein_subagent_fragt_wartet_der_agent_auch_nach_seiner_antwort() {
 
 #[test]
 fn das_ende_eines_hintergrund_subagenten_weckt_den_agenten_ohne_neuen_auftrag() {
-    let status = AgentStatus::start(runtime_folder("subagent-weckt")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let notification = "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n\
                         <summary>Agent \"Datei a lesen\" finished</summary>\n</task-notification>";
 
@@ -688,15 +664,6 @@ fn shown_subagents(update: &StatusUpdate) -> Vec<(String, String, Option<String>
         .iter()
         .map(|s| (s.id.clone(), s.kind.clone(), s.description.clone(), s.state))
         .collect()
-}
-
-/// Die letzte Meldung, bis eine Weile keine mehr kommt.
-fn settle(agent: &TestAgent) -> StatusUpdate {
-    let mut last = agent.next();
-    while let Ok(update) = agent.updates.recv_timeout(Duration::from_millis(300)) {
-        last = update;
-    }
-    last
 }
 
 /// Startet einen Subagenten so, wie Claude Code 2.1.330 es meldet.
@@ -723,8 +690,7 @@ fn launch(agent: &TestAgent, id: &str, kind: &str, description: &str, tool_use: 
 
 #[test]
 fn gestartete_subagenten_erscheinen_mit_beschreibung_beim_agenten() {
-    let status = AgentStatus::start(runtime_folder("subagenten-start")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report(
         "UserPromptSubmit",
@@ -756,8 +722,7 @@ fn gestartete_subagenten_erscheinen_mit_beschreibung_beim_agenten() {
 
 #[test]
 fn ein_ereignis_eines_fremden_ablaufs_legt_keinen_subagenten_an() {
-    let status = AgentStatus::start(runtime_folder("subagenten-fremd")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
     agent.next();
@@ -776,8 +741,7 @@ fn ein_ereignis_eines_fremden_ablaufs_legt_keinen_subagenten_an() {
 
 #[test]
 fn ein_ereignis_eines_subagenten_wird_seine_letzte_aktion() {
-    let status = AgentStatus::start(runtime_folder("subagenten-aktion")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let grep = json!({ "tool_name": "Grep", "tool_input": { "pattern": "agent_id" } });
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Suche" }));
@@ -801,8 +765,7 @@ fn subagent_states(update: &StatusUpdate) -> Vec<SubagentState> {
 
 #[test]
 fn nur_der_fragende_subagent_wartet_bis_zur_antwort() {
-    let status = AgentStatus::start(runtime_folder("subagenten-fragt")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "npm.cmd run check" } });
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Prüfe alles" }));
@@ -840,8 +803,7 @@ fn nur_der_fragende_subagent_wartet_bis_zur_antwort() {
 
 #[test]
 fn ein_abgelehnter_subagent_ist_fertig() {
-    let status = AgentStatus::start(runtime_folder("subagenten-abgelehnt")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let bash = json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } });
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Veröffentliche" }));
@@ -855,8 +817,7 @@ fn ein_abgelehnter_subagent_ist_fertig() {
 
 #[test]
 fn ohne_bekannte_beschreibung_bleibt_der_typ() {
-    let status = AgentStatus::start(runtime_folder("subagenten-typ")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
     agent.report(
@@ -875,8 +836,7 @@ fn ohne_bekannte_beschreibung_bleibt_der_typ() {
 fn startet_ein_subagent_ohne_spaetere_meldung_gilt_die_beschreibung_seines_aufrufs() {
     // Falls eine Fassung von Claude Code Subagenten wieder synchron startet,
     // kommt `PostToolUse(Agent)` erst an ihrem Ende.
-    let status = AgentStatus::start(runtime_folder("subagenten-synchron")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let call = |description: &str, kind: &str, id: &str| {
         json!({
             "tool_name": "Agent",
@@ -914,8 +874,7 @@ fn startet_ein_subagent_ohne_spaetere_meldung_gilt_die_beschreibung_seines_aufru
 
 #[test]
 fn ein_fertiger_subagent_bleibt_bis_zum_naechsten_prompt_stehen() {
-    let status = AgentStatus::start(runtime_folder("subagenten-fertig")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Untersuche" }));
     launch(&agent, "a1", "Explore", "Datei a lesen", "t1");
@@ -962,8 +921,7 @@ fn ein_fertiger_subagent_bleibt_bis_zum_naechsten_prompt_stehen() {
 
 #[test]
 fn die_uebergabe_eines_subagenten_ist_kein_prompt_der_person() {
-    let status = AgentStatus::start(runtime_folder("subagent-uebergabe")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Untersuche" }));
     launch(&agent, "a1", "Explore", "Datei a lesen", "t1");
@@ -993,8 +951,7 @@ fn die_uebergabe_eines_subagenten_ist_kein_prompt_der_person() {
 
 #[test]
 fn beendet_sich_der_agent_sind_seine_subagenten_fort() {
-    let status = AgentStatus::start(runtime_folder("subagenten-ende")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
     launch(&agent, "a1", "Explore", "Datei a lesen", "t1");
@@ -1007,8 +964,7 @@ fn beendet_sich_der_agent_sind_seine_subagenten_fort() {
 
 #[test]
 fn ein_fehler_der_schnittstelle_beendet_die_arbeit() {
-    let status = AgentStatus::start(runtime_folder("fehler")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
     assert_eq!(agent.next_state(), AgentState::Working);
@@ -1027,8 +983,7 @@ fn ein_fehler_der_schnittstelle_beendet_die_arbeit() {
 
 #[test]
 fn nach_einer_unterbrechung_gilt_der_agent_als_fertig_sobald_er_unbeschaeftigt_meldet() {
-    let status = AgentStatus::start(runtime_folder("unterbrechung")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
     let idle = json!({ "message": "Claude is waiting for your input", "notification_type": "idle_prompt" });
 
     // Bricht der Nutzer mit Esc ab, meldet Claude Code kein Ende der Antwort.
@@ -1044,8 +999,7 @@ fn nach_einer_unterbrechung_gilt_der_agent_als_fertig_sobald_er_unbeschaeftigt_m
 
 #[test]
 fn beendet_sich_der_agent_ist_der_status_unbekannt() {
-    let status = AgentStatus::start(runtime_folder("beendet")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
     assert_eq!(agent.next_state(), AgentState::Working);
@@ -1058,8 +1012,7 @@ fn beendet_sich_der_agent_ist_der_status_unbekannt() {
 
 #[test]
 fn der_erste_prompt_wird_zum_auftrag() {
-    let status = AgentStatus::start(runtime_folder("auftrag")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report(
         "UserPromptSubmit",
@@ -1076,8 +1029,7 @@ fn der_erste_prompt_wird_zum_auftrag() {
 
 #[test]
 fn weitere_prompts_derselben_sitzung_aendern_den_auftrag_nicht() {
-    let status = AgentStatus::start(runtime_folder("auftrag-bleibt")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 24" }));
     agent.report("Stop", json!({ "last_assistant_message": "Fertig." }));
@@ -1092,8 +1044,7 @@ fn weitere_prompts_derselben_sitzung_aendern_den_auftrag_nicht() {
 
 #[test]
 fn nach_dem_leeren_des_gespraechs_wird_der_naechste_prompt_der_neue_auftrag() {
-    let status = AgentStatus::start(runtime_folder("auftrag-clear")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 24" }));
     agent.report("Stop", json!({ "last_assistant_message": "Fertig." }));
@@ -1111,8 +1062,7 @@ fn nach_dem_leeren_des_gespraechs_wird_der_naechste_prompt_der_neue_auftrag() {
 
 #[test]
 fn ein_leerer_prompt_wird_nicht_zum_auftrag() {
-    let status = AgentStatus::start(runtime_folder("auftrag-leer")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "  \n " }));
     agent.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 24" }));
@@ -1123,9 +1073,8 @@ fn ein_leerer_prompt_wird_nicht_zum_auftrag() {
 
 #[test]
 fn jeder_agent_hat_seinen_eigenen_auftrag() {
-    let status = AgentStatus::start(runtime_folder("auftrag-mehrere")).unwrap();
-    let first = TestAgent::start(&status, 1);
-    let second = TestAgent::start(&status, 2);
+    let first = TestAgent::start();
+    let second = TestAgent::start();
 
     first.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 24" }));
     second.report("UserPromptSubmit", json!({ "prompt": "Baue Ticket 25" }));
@@ -1139,8 +1088,7 @@ fn jeder_agent_hat_seinen_eigenen_auftrag() {
 // Erst dann hat Claude Code es auch gespeichert.
 #[test]
 fn das_gespraech_ist_mit_dem_ersten_prompt_bekannt() {
-    let status = AgentStatus::start(runtime_folder("gespraech-start")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report(
         "UserPromptSubmit",
@@ -1152,8 +1100,7 @@ fn das_gespraech_ist_mit_dem_ersten_prompt_bekannt() {
 
 #[test]
 fn nach_dem_leeren_gilt_das_neue_gespraech() {
-    let status = AgentStatus::start(runtime_folder("gespraech-clear")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report(
         "UserPromptSubmit",
@@ -1177,8 +1124,7 @@ fn nach_dem_leeren_gilt_das_neue_gespraech() {
 
 #[test]
 fn beendet_sich_der_agent_gibt_es_kein_gespraech_mehr() {
-    let status = AgentStatus::start(runtime_folder("gespraech-ende")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report(
         "UserPromptSubmit",
@@ -1191,21 +1137,16 @@ fn beendet_sich_der_agent_gibt_es_kein_gespraech_mehr() {
 }
 
 /// Ein Agent, der das Gespräch `abc123` mit dem Auftrag „Baue Ticket 24“ fortsetzt.
-fn resumed(status: &AgentStatus) -> TestAgent {
-    TestAgent::resume(
-        status,
-        1,
-        Resumed {
-            conversation: "abc123".into(),
-            assignment: Some("Baue Ticket 24".into()),
-        },
-    )
+fn resumed() -> TestAgent {
+    TestAgent::resume(Resumed {
+        conversation: "abc123".into(),
+        assignment: Some("Baue Ticket 24".into()),
+    })
 }
 
 #[test]
 fn ein_fortgesetzter_agent_behaelt_gespraech_und_auftrag() {
-    let status = AgentStatus::start(runtime_folder("gespraech-fortsetzen")).unwrap();
-    let agent = resumed(&status);
+    let agent = resumed();
 
     // Claude Code meldet beim Fortsetzen dieselbe Kennung.
     agent.report("UserPromptSubmit", json!({ "prompt": "Mach weiter" }));
@@ -1218,8 +1159,7 @@ fn ein_fortgesetzter_agent_behaelt_gespraech_und_auftrag() {
 
 #[test]
 fn endet_ein_fortgesetzter_agent_ohne_sich_zu_melden_ist_das_fortsetzen_gescheitert() {
-    let status = AgentStatus::start(runtime_folder("fortsetzen-gescheitert")).unwrap();
-    let agent = resumed(&status);
+    let agent = resumed();
 
     // So meldet Claude Code ein Gespräch, das es nicht mehr gibt.
     agent.report("SessionEnd", json!({ "reason": "other" }));
@@ -1232,8 +1172,7 @@ fn endet_ein_fortgesetzter_agent_ohne_sich_zu_melden_ist_das_fortsetzen_gescheit
 
 #[test]
 fn endet_ein_fortgesetzter_agent_nach_einer_meldung_ist_das_fortsetzen_gelungen() {
-    let status = AgentStatus::start(runtime_folder("fortsetzen-gelungen")).unwrap();
-    let agent = resumed(&status);
+    let agent = resumed();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Mach weiter" }));
     agent.next();
@@ -1246,8 +1185,7 @@ fn endet_ein_fortgesetzter_agent_nach_einer_meldung_ist_das_fortsetzen_gelungen(
 
 #[test]
 fn ein_neuer_agent_scheitert_nie_am_fortsetzen() {
-    let status = AgentStatus::start(runtime_folder("fortsetzen-neu")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let agent = TestAgent::start();
 
     agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
     agent.next();
@@ -1257,33 +1195,10 @@ fn ein_neuer_agent_scheitert_nie_am_fortsetzen() {
 }
 
 #[test]
-fn endet_das_terminal_ist_der_status_unbekannt_und_die_konfiguration_fort() {
-    let status = AgentStatus::start(runtime_folder("terminal-endet")).unwrap();
-    let agent = TestAgent::start(&status, 1);
-    let url = hook_url(&agent.settings, "UserPromptSubmit").unwrap();
+fn zwei_agenten_haben_jeder_ihren_eigenen_status() {
+    let first = TestAgent::start();
+    let second = TestAgent::start();
 
-    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
-    assert_eq!(agent.next_state(), AgentState::Working);
-    status.forget(1);
-
-    assert_eq!(agent.next_state(), AgentState::Unknown);
-    assert!(!agent.settings.exists());
-    // Ein Nachzügler des beendeten Agenten findet kein Terminal mehr.
-    assert_eq!(post(&url, "{\"hook_event_name\":\"Stop\"}"), 404);
-    agent.expect_silence();
-}
-
-#[test]
-fn mehrere_agenten_melden_an_ihr_eigenes_terminal() {
-    let status = AgentStatus::start(runtime_folder("mehrere")).unwrap();
-    let first = TestAgent::start(&status, 1);
-    let second = TestAgent::start(&status, 2);
-    assert_ne!(first.settings, second.settings);
-
-    // Ob im selben Projekt oder in verschiedenen Fenstern: Die Meldungen
-    // zweier Agenten gleichen sich bis auf die Adresse, an die sie gehen.
-    // Alle Fenster teilen sich einen Empfänger, jedes Terminal hat darin
-    // seine eigene Kennung.
     first.report("UserPromptSubmit", json!({ "prompt": "Los" }));
     second.report("UserPromptSubmit", json!({ "prompt": "Los" }));
     second.report("Stop", json!({ "last_assistant_message": "Erledigt." }));
@@ -1295,45 +1210,215 @@ fn mehrere_agenten_melden_an_ihr_eigenes_terminal() {
 }
 
 #[test]
-fn agenten_verschiedener_kredr_prozesse_bleiben_getrennt() {
-    // Zwei Kredr-Prozesse, etwa die Entwicklungsfassung neben der
-    // installierten, haben je einen eigenen Empfänger; ihre
-    // Terminal-Kennungen können sich gleichen.
-    let process_a = AgentStatus::start(runtime_folder("prozess-a")).unwrap();
-    let process_b = AgentStatus::start(runtime_folder("prozess-b")).unwrap();
-    let agent_a = TestAgent::start(&process_a, 1);
-    let agent_b = TestAgent::start(&process_b, 1);
+fn unbekannte_meldungen_aendern_nichts() {
+    let mut agent = TrackedAgent::new(None);
 
-    agent_b.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    let update = agent.on_event(&json!({ "hook_event_name": "PostCompact" }));
 
-    assert_eq!(agent_b.next_state(), AgentState::Working);
-    agent_a.expect_silence();
+    assert_eq!(update, None);
 }
 
 #[test]
-fn meldungen_ohne_gueltiges_kennwort_werden_abgewiesen() {
+fn endet_das_terminal_ist_der_status_unbekannt() {
+    let agent = TestAgent::start();
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    assert_eq!(agent.next_state(), AgentState::Working);
+
+    let update = agent.forget().expect("Eine Statusmeldung sollte kommen");
+
+    assert_eq!(update.state, AgentState::Unknown);
+    assert!(update.state_changed);
+    assert_eq!(update.assignment, None);
+    assert_eq!(update.conversation, None);
+    // Weiß Kredr noch nichts, ändert sich für die Person nichts.
+    assert_eq!(TestAgent::start().forget(), None);
+}
+
+// Der Empfang: Die folgenden Tests schicken die Meldungen per HTTP. Der
+// Empfänger ruft den Listener auf, bevor er antwortet; nach `post` ist also
+// jede Meldung schon da, und `try_recv` prüft genau.
+
+/// Ein angemeldetes Terminal aus Sicht des Tests: die Konfiguration, die sein
+/// Agent beim Start mitbekommt, und die Meldungen an seinen Listener.
+struct Registered {
+    settings: PathBuf,
+    updates: Receiver<StatusUpdate>,
+}
+
+impl Registered {
+    fn new(status: &AgentStatus, terminal: u32) -> Registered {
+        let (sender, updates) = channel();
+        let settings = status
+            .register(terminal, None, move |update| {
+                let _ = sender.send(update);
+            })
+            .expect("Die Konfiguration sollte sich anlegen lassen");
+        Registered { settings, updates }
+    }
+
+    /// Schickt `body` an die Adresse, die in der Konfiguration für `event`
+    /// steht, und liefert den Statuscode der Antwort.
+    fn post(&self, event: &str, body: &str) -> u16 {
+        let url = hook_url(&self.settings, event)
+            .unwrap_or_else(|| panic!("Für {event} sollte ein Hook eingetragen sein"));
+        post(&url, body)
+    }
+
+    /// Erwartet, dass keine Meldung angekommen ist. Nach `forget` ist der
+    /// Listener fort; auch dann kommt nichts mehr.
+    fn expect_silence(&self) {
+        if let Ok(update) = self.updates.try_recv() {
+            panic!("Unerwartete Statusmeldung: {update:?}");
+        }
+    }
+}
+
+/// Die Adresse des ersten Hooks, der in der Konfiguration für `event` steht.
+fn hook_url(settings: &Path, event: &str) -> Option<String> {
+    let text = std::fs::read_to_string(settings).ok()?;
+    let settings: Value = serde_json::from_str(&text).expect("Die Konfiguration ist JSON");
+    let hook = &settings["hooks"][event][0]["hooks"][0];
+    assert_eq!(hook["type"], "http");
+    hook["url"].as_str().map(str::to_owned)
+}
+
+/// Sendet `body` per POST und liefert den Statuscode der Antwort.
+fn post(url: &str, body: &str) -> u16 {
+    let rest = url.strip_prefix("http://").expect("eine http-Adresse");
+    let (host, path) = rest.split_once('/').expect("Adresse mit Pfad");
+    let mut stream = TcpStream::connect(host).expect("Der Kern sollte Verbindungen annehmen");
+    stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+    write!(
+        stream,
+        "POST /{path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut response = String::new();
+    let _ = stream.read_to_string(&mut response);
+    response
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .unwrap_or_else(|| panic!("Keine HTTP-Antwort: {response:?}"))
+}
+
+/// Ein Prompt der Person als Inhalt einer Meldung.
+fn prompt_body() -> String {
+    hook_event("UserPromptSubmit", json!({ "prompt": "Los" })).to_string()
+}
+
+#[test]
+fn der_empfang_weist_meldungen_ohne_gueltiges_kennwort_ab() {
     let status = AgentStatus::start(runtime_folder("kennwort")).unwrap();
-    let agent = TestAgent::start(&status, 1);
-    let url = hook_url(&agent.settings, "Stop").unwrap();
+    let terminal = Registered::new(&status, 1);
+    let url = hook_url(&terminal.settings, "UserPromptSubmit").unwrap();
     let (base, _token) = url.rsplit_once('/').unwrap();
 
-    let code = post(&format!("{base}/geraten"), "{\"hook_event_name\":\"Stop\"}");
+    let code = post(&format!("{base}/geraten"), &prompt_body());
 
     assert_eq!(code, 404);
-    agent.expect_silence();
+    terminal.expect_silence();
 }
 
 #[test]
-fn unbekannte_und_unlesbare_meldungen_aendern_nichts() {
-    let status = AgentStatus::start(runtime_folder("unlesbar")).unwrap();
-    let agent = TestAgent::start(&status, 1);
-    let url = hook_url(&agent.settings, "Stop").unwrap();
+fn die_konfiguration_nennt_alle_ereignisse_mit_hooks_an_den_eigenen_rechner() {
+    let folder = runtime_folder("konfiguration");
+    let status = AgentStatus::start(folder.clone()).unwrap();
+    let terminal = Registered::new(&status, 7);
 
-    // Claude Code darf davon nichts merken: Die Antwort bleibt ein Erfolg.
-    assert_eq!(post(&url, "kein json"), 200);
-    assert_eq!(post(&url, "{\"hook_event_name\":\"PostCompact\"}"), 200);
+    assert!(terminal.settings.starts_with(&folder));
+    let text = std::fs::read_to_string(&terminal.settings).unwrap();
+    let settings: Value = serde_json::from_str(&text).unwrap();
+    let keys: Vec<&String> = settings.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["hooks"]);
+    let hooks = settings["hooks"].as_object().unwrap();
+    // Jedes Ereignis, das der Agentenstatus auswertet; `SessionStart` meldet
+    // Claude Code nicht per HTTP.
+    let mut events: Vec<&str> = hooks.keys().map(String::as_str).collect();
+    events.sort();
+    assert_eq!(
+        events,
+        [
+            "Notification",
+            "PermissionRequest",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "PreToolUse",
+            "SessionEnd",
+            "Stop",
+            "StopFailure",
+            "SubagentStart",
+            "SubagentStop",
+            "UserPromptSubmit",
+        ]
+    );
+    for (event, entries) in hooks {
+        for entry in entries.as_array().unwrap() {
+            for hook in entry["hooks"].as_array().unwrap() {
+                assert_eq!(hook["type"], "http", "{event}");
+                let url = hook["url"].as_str().unwrap();
+                assert!(url.starts_with("http://127.0.0.1:"), "{event}: {url}");
+            }
+        }
+    }
+}
 
-    agent.expect_silence();
+#[test]
+fn nach_dem_vergessen_weist_der_empfang_meldungen_ab() {
+    let status = AgentStatus::start(runtime_folder("terminal-endet")).unwrap();
+    let terminal = Registered::new(&status, 1);
+    let url = hook_url(&terminal.settings, "Stop").unwrap();
+    assert_eq!(terminal.post("UserPromptSubmit", &prompt_body()), 200);
+    assert_eq!(
+        terminal.updates.try_recv().unwrap().state,
+        AgentState::Working
+    );
+
+    status.forget(1);
+
+    assert_eq!(
+        terminal.updates.try_recv().unwrap().state,
+        AgentState::Unknown
+    );
+    assert!(!terminal.settings.exists());
+    // Ein Nachzügler des beendeten Agenten findet kein Terminal mehr.
+    let stop = hook_event("Stop", json!({ "last_assistant_message": "Fertig." }));
+    assert_eq!(post(&url, &stop.to_string()), 404);
+    terminal.expect_silence();
+}
+
+#[test]
+fn eine_meldung_erreicht_nur_den_listener_ihres_terminals() {
+    // Zwei Kredr-Prozesse, etwa die Entwicklungsfassung neben der
+    // installierten, haben je einen eigenen Empfänger; ihre
+    // Terminal-Kennungen können sich gleichen. Alle Fenster eines Prozesses
+    // teilen sich einen Empfänger, jedes Terminal hat darin seine eigene
+    // Adresse.
+    let process_a = AgentStatus::start(runtime_folder("prozess-a")).unwrap();
+    let process_b = AgentStatus::start(runtime_folder("prozess-b")).unwrap();
+    let first = Registered::new(&process_a, 1);
+    let second = Registered::new(&process_a, 2);
+    let other = Registered::new(&process_b, 1);
+    assert_ne!(first.settings, second.settings);
+
+    // Was sich nicht lesen lässt, nimmt der Empfang still an: Claude Code
+    // darf davon nichts merken.
+    assert_eq!(second.post("UserPromptSubmit", "kein json"), 200);
+    second.expect_silence();
+    assert_eq!(second.post("UserPromptSubmit", &prompt_body()), 200);
+
+    let update = second
+        .updates
+        .try_recv()
+        .expect("Die Meldung sollte da sein");
+    assert_eq!(update.state, AgentState::Working);
+    assert_eq!(update.assignment.as_deref(), Some("Los"));
+    // Weder ein anderes Terminal desselben Prozesses noch das Terminal mit
+    // derselben Kennung im anderen Prozess erfährt davon.
+    first.expect_silence();
+    other.expect_silence();
 }
 
 #[test]
@@ -1376,28 +1461,6 @@ fn beim_start_verschwinden_nur_die_laufzeitordner_beendeter_kredr_prozesse() {
     assert!(foreign.exists());
     if mixed != orphaned {
         assert!(mixed.join("wichtig.txt").exists());
-    }
-}
-
-#[test]
-fn die_konfiguration_enthaelt_nur_hooks_an_den_eigenen_rechner() {
-    let folder = runtime_folder("konfiguration");
-    let status = AgentStatus::start(folder.clone()).unwrap();
-    let agent = TestAgent::start(&status, 7);
-
-    assert!(agent.settings.starts_with(&folder));
-    let text = std::fs::read_to_string(&agent.settings).unwrap();
-    let settings: Value = serde_json::from_str(&text).unwrap();
-    let keys: Vec<&String> = settings.as_object().unwrap().keys().collect();
-    assert_eq!(keys, ["hooks"]);
-    for (event, entries) in settings["hooks"].as_object().unwrap() {
-        for entry in entries.as_array().unwrap() {
-            for hook in entry["hooks"].as_array().unwrap() {
-                assert_eq!(hook["type"], "http", "{event}");
-                let url = hook["url"].as_str().unwrap();
-                assert!(url.starts_with("http://127.0.0.1:"), "{event}: {url}");
-            }
-        }
     }
 }
 
@@ -1447,10 +1510,10 @@ fn der_agent_startet_mit_der_konfiguration_und_das_projekt_bleibt_unberuehrt() {
     .unwrap();
 
     let status = AgentStatus::start(folder.join("laufzeit")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let settings = status.register(1, None, |_| {}).unwrap();
     let command = with_status_settings(
         programs.join("claude.cmd").to_str().unwrap(),
-        &agent.settings,
+        &settings,
         Shell::Powershell,
     );
     let (sender, events) = channel();
@@ -1479,10 +1542,7 @@ fn der_agent_startet_mit_der_konfiguration_und_das_projekt_bleibt_unberuehrt() {
     std::thread::sleep(Duration::from_millis(200));
 
     let passed = std::fs::read_to_string(&arguments).unwrap();
-    assert_eq!(
-        passed.trim(),
-        format!("--settings {}", agent.settings.display())
-    );
+    assert_eq!(passed.trim(), format!("--settings {}", settings.display()));
     assert_eq!(snapshot(&project), before);
 }
 
@@ -1509,11 +1569,11 @@ fn in_git_bash_kommt_die_konfiguration_als_ein_argument_beim_agenten_an() {
     // Der Laufzeitordner liegt im Benutzerordner; dessen Name kann
     // Leerzeichen und einen Apostroph enthalten.
     let status = AgentStatus::start(folder.join("Max O'Neil").join("lauf zeit")).unwrap();
-    let agent = TestAgent::start(&status, 1);
+    let settings = status.register(1, None, |_| {}).unwrap();
     let program = programs.join("claude").to_str().unwrap().replace('\\', "/");
     let command = with_status_settings(
         &format!("{program} --model opus"),
-        &agent.settings,
+        &settings,
         Shell::GitBash,
     );
     let (sender, events) = channel();
@@ -1542,7 +1602,7 @@ fn in_git_bash_kommt_die_konfiguration_als_ein_argument_beim_agenten_an() {
     std::thread::sleep(Duration::from_millis(200));
 
     let passed = std::fs::read_to_string(&arguments).unwrap();
-    let settings = agent.settings.display().to_string();
+    let settings = settings.display().to_string();
     assert_eq!(
         passed.lines().collect::<Vec<_>>(),
         ["--settings", settings.as_str(), "--model", "opus"]
