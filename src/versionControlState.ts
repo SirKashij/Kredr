@@ -31,7 +31,14 @@ export interface RepositoryState {
   files: ChangedFile[];
 }
 
-export type ErrorReason = "gitMissing" | "notARepository" | "timedOut" | "failed";
+export type ErrorReason =
+  | "gitMissing"
+  | "notARepository"
+  | "timedOut"
+  | "failed"
+  | "localChangesBlockSwitch"
+  | "branchExists"
+  | "invalidBranchName";
 
 /** Warum die Versionskontrolle etwas nicht liefern konnte. */
 export interface VersionControlError {
@@ -97,6 +104,9 @@ export const errorMessages: Record<ErrorReason, MessageKey> = {
   notARepository: "versionControl.noRepository",
   timedOut: "versionControl.error.timedOut",
   failed: "versionControl.error.failed",
+  localChangesBlockSwitch: "versionControl.error.localChangesBlockSwitch",
+  branchExists: "versionControl.error.branchExists",
+  invalidBranchName: "versionControl.error.invalidBranchName",
 };
 
 /** Ob beide dieselbe Zeile der Liste meinen. */
