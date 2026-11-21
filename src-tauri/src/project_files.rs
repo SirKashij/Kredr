@@ -10,8 +10,11 @@ use std::sync::{mpsc, Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
+
+mod folder_watch;
+
+use folder_watch::{FolderEvent, FolderWatch};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -208,8 +211,10 @@ pub struct ProjectChanges {
     /// Dateien und Ordner, je einmal; relativ zum Projektordner und mit `/`
     /// getrennt, etwa `src/ui/App.tsx`.
     pub paths: Vec<String>,
-    /// Es ist mehr passiert, als einzeln gemeldet werden kann. `paths` ist
-    /// dann leer; wer zuhört, liest seinen Stand vollständig neu.
+    /// Es ist mehr passiert, als einzeln gemeldet werden kann, oder Windows
+    /// hat Änderungen verworfen, weil sie nicht schnell genug abgeholt
+    /// wurden. `paths` ist dann leer; wer zuhört, liest seinen Stand
+    /// vollständig neu.
     pub rescan: bool,
 }
 
@@ -217,13 +222,21 @@ type Subscriber = Box<dyn Fn(&ProjectChanges) + Send>;
 type Subscribers = Mutex<HashMap<u64, Subscriber>>;
 
 /// Beobachtet einen Projektordner samt Unterordnern. Alle Abonnenten hängen
-/// am selben Ereignisstrom. Wird der Beobachter verworfen, endet der Strom.
+/// am selben Ereignisstrom: Jede Änderung steht in einem Ereignis, oder ein
+/// Ereignis verlangt, alles neu zu lesen. Wird der Beobachter verworfen,
+/// endet der Strom.
 pub struct ProjectWatcher {
     subscribers: Arc<Subscribers>,
     next_id: AtomicU64,
-    /// Die Beobachtung des Betriebssystems; sie endet mit diesem Wert.
-    watcher: Mutex<RecommendedWatcher>,
+    /// Die Beobachtungen des Betriebssystems; sie enden mit diesem Wert.
+    watches: Mutex<Watches>,
     included: Arc<Mutex<Vec<IncludedFolder>>>,
+}
+
+struct Watches {
+    /// Dorthin melden alle beobachteten Ordner.
+    events: mpsc::Sender<FolderEvent>,
+    folders: Vec<FolderWatch>,
 }
 
 /// Ein Ordner außerhalb des Projektordners, dessen Änderungen der
@@ -235,11 +248,8 @@ struct IncludedFolder {
 
 impl ProjectWatcher {
     pub fn start(project: &Path) -> Result<ProjectWatcher, ProjectFilesError> {
-        let (sender, events) = mpsc::channel::<notify::Result<notify::Event>>();
-        let mut watcher = notify::recommended_watcher(sender).map_err(error)?;
-        watcher
-            .watch(project, RecursiveMode::Recursive)
-            .map_err(error)?;
+        let (sender, events) = mpsc::channel();
+        let watch = FolderWatch::start(project, sender.clone()).map_err(error)?;
 
         let subscribers = Arc::new(Subscribers::default());
         let listeners = subscribers.clone();
@@ -275,7 +285,10 @@ impl ProjectWatcher {
         Ok(ProjectWatcher {
             subscribers,
             next_id: AtomicU64::new(0),
-            watcher: Mutex::new(watcher),
+            watches: Mutex::new(Watches {
+                events: sender,
+                folders: vec![watch],
+            }),
             included,
         })
     }
@@ -285,14 +298,13 @@ impl ProjectWatcher {
     /// er im Projektordner unter `shown_as`. So meldet der Strom auch ein
     /// Git-Verzeichnis, das über dem Projektordner liegt, unter `.git/`.
     pub fn include(&self, folder: &Path, shown_as: &str) -> Result<(), ProjectFilesError> {
-        let mut watcher = self.watcher.lock().map_err(error)?;
+        let mut watches = self.watches.lock().map_err(error)?;
         let mut included = self.included.lock().map_err(error)?;
         if included.iter().any(|known| known.folder == folder) {
             return Ok(());
         }
-        watcher
-            .watch(folder, RecursiveMode::Recursive)
-            .map_err(error)?;
+        let watch = FolderWatch::start(folder, watches.events.clone()).map_err(error)?;
+        watches.folders.push(watch);
         included.push(IncludedFolder {
             folder: folder.to_path_buf(),
             shown_as: shown_as.to_owned(),
@@ -366,27 +378,21 @@ struct Batch {
 }
 
 impl Batch {
-    fn add(&mut self, folders: &Folders, event: notify::Result<notify::Event>) {
-        let Ok(event) = event else {
-            // Was bei einem Fehler der Beobachtung verloren ging, ist unbekannt.
+    fn add(&mut self, folders: &Folders, event: FolderEvent) {
+        let FolderEvent::Changed(path) = event else {
+            // Was verloren ging, ist unbekannt.
             self.rescan = true;
             return;
         };
-        if event.need_rescan() {
-            self.rescan = true;
-        }
-        // Bloßes Lesen ändert nichts.
-        if matches!(event.kind, EventKind::Access(_)) || self.rescan {
+        if self.rescan {
             return;
         }
-        for path in &event.paths {
-            match folders.shown_path(path) {
-                Some(shown) if shown.is_empty() => {}
-                Some(shown) => {
-                    self.paths.insert(shown);
-                }
-                None => self.rescan = true,
+        match folders.shown_path(&path) {
+            Some(shown) if shown.is_empty() => {}
+            Some(shown) => {
+                self.paths.insert(shown);
             }
+            None => self.rescan = true,
         }
         if self.paths.len() > MAX_PATHS {
             self.rescan = true;
