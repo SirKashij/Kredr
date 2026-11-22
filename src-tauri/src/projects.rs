@@ -1,5 +1,5 @@
 //! Projekte öffnen: verbindet die Fenster von Kredr mit der Zuordnung
-//! Fenster ↔ Projekt, der Liste zuletzt geöffneter Projekte und der pro
+//! Fenster ↔ Fensterinhalt, der Liste zuletzt geöffneter Projekte und der pro
 //! Projekt gespeicherten Aufteilung samt Fenstergeometrie.
 
 use std::path::{Path, PathBuf};
@@ -11,13 +11,13 @@ use tauri::{
 };
 
 use crate::arrangement_store::{ArrangementStore, ProjectState, RecentProject};
-use crate::project_windows::{project_folder, project_from_args, ProjectWindows};
+use crate::project_windows::{project_folder, project_from_args, ProjectWindows, WindowContent};
 use crate::window_geometry::{Observed, Screen, WindowGeometry};
 
 /// Das beim Start aus der Konfiguration angelegte Fenster.
 const FIRST_WINDOW: &str = "main";
-/// Meldet einem Fenster auf der Startseite, welches Projekt es jetzt zeigt.
-const PROJECT_OPENED: &str = "project-opened";
+/// Meldet einem Fenster auf der Startseite, was es jetzt zeigt.
+const CONTENT_OPENED: &str = "window-content-opened";
 
 /// Zwei gleichzeitige Aufrufe sollen dasselbe Projekt nicht doppelt öffnen.
 static OPENING: Mutex<()> = Mutex::new(());
@@ -35,8 +35,17 @@ pub fn start(app: &AppHandle) -> tauri::Result<()> {
         remember(app, folder);
         restore_geometry(app, FIRST_WINDOW, folder);
     }
-    app.state::<ProjectWindows>().assign(FIRST_WINDOW, project);
+    app.state::<ProjectWindows>()
+        .assign(FIRST_WINDOW, content_for(project));
     Ok(())
+}
+
+/// Der Fensterinhalt für ein Projekt; ohne Projekt die Startseite.
+fn content_for(project: Option<PathBuf>) -> WindowContent {
+    match project {
+        Some(path) => WindowContent::Project { path },
+        None => WindowContent::StartPage,
+    }
 }
 
 /// Ein weiterer Start von Kredr (Startmenü, Rechtsklick, `kredr .`) landet
@@ -65,14 +74,17 @@ fn open(app: &AppHandle, project: Option<PathBuf>) {
     if let Some(folder) = &project {
         remember(app, folder);
         if let Some(label) = windows.start_page_window() {
-            windows.assign(&label, project.clone());
+            let content = WindowContent::Project {
+                path: folder.clone(),
+            };
+            windows.assign(&label, content.clone());
             restore_geometry(app, &label, folder);
-            let _ = app.emit_to(label.as_str(), PROJECT_OPENED, folder);
+            let _ = app.emit_to(label.as_str(), CONTENT_OPENED, content);
             return focus(app, &label);
         }
     }
     let label = windows.next_label();
-    windows.assign(&label, project.clone());
+    windows.assign(&label, content_for(project.clone()));
     if let Err(error) = open_window(app, &label, project.as_deref()) {
         windows.release(&label);
         eprintln!("Fenster konnte nicht geöffnet werden: {error}");
@@ -180,15 +192,24 @@ fn remember(app: &AppHandle, folder: &Path) {
     }
 }
 
-/// Vergisst ein geschlossenes Fenster; sein Projekt gilt danach nicht mehr als offen.
+/// Vergisst ein geschlossenes Fenster; seine Projekte gelten danach nicht mehr als offen.
 pub fn window_closed(window: &Window) {
     window.state::<ProjectWindows>().release(window.label());
 }
 
-/// Das Projekt des aufrufenden Fensters; ohne Projekt zeigt es die Startseite.
+/// Was das aufrufende Fenster zeigt.
 #[tauri::command]
-pub fn window_project(window: Window, windows: State<'_, ProjectWindows>) -> Option<PathBuf> {
-    windows.project_of(window.label())
+pub fn window_content(window: Window, windows: State<'_, ProjectWindows>) -> WindowContent {
+    windows.content_of(window.label())
+}
+
+/// Das einzelne Projekt des Fensters, dessen Aufteilung gespeichert wird.
+/// Für einen Workspace gibt es noch keinen Speicher.
+fn single_project(windows: &ProjectWindows, label: &str) -> Option<PathBuf> {
+    match windows.content_of(label) {
+        WindowContent::Project { path } => Some(path),
+        WindowContent::StartPage | WindowContent::Workspace { .. } => None,
+    }
 }
 
 #[tauri::command]
@@ -206,29 +227,30 @@ pub fn forget_project(
     Ok(store.recent_projects())
 }
 
-/// Öffnet den Ordner als Projekt im aufrufenden Fenster. Ist das Projekt
-/// schon in einem anderen Fenster offen, kommt jenes nach vorn und das
-/// Ergebnis ist `false`.
+/// Öffnet den Ordner als Projekt im aufrufenden Fenster und liefert, was das
+/// Fenster danach zeigt. Ist das Projekt schon in einem anderen Fenster
+/// offen, kommt jenes nach vorn und das Ergebnis ist nichts.
 #[tauri::command]
 pub fn open_project(
     app: AppHandle,
     window: Window,
     windows: State<'_, ProjectWindows>,
     path: PathBuf,
-) -> Result<bool, String> {
+) -> Result<Option<WindowContent>, String> {
     let folder =
         project_folder(&path).ok_or_else(|| format!("{} is not a folder", path.display()))?;
     let _guard = OPENING.lock();
     if let Some(label) = windows.window_of(&folder) {
         if label != window.label() {
             focus(&app, &label);
-            return Ok(false);
+            return Ok(None);
         }
     }
     remember(&app, &folder);
     restore_geometry(&app, window.label(), &folder);
-    windows.assign(window.label(), Some(folder));
-    Ok(true)
+    let content = WindowContent::Project { path: folder };
+    windows.assign(window.label(), content.clone());
+    Ok(Some(content))
 }
 
 /// Die gespeicherte Aufteilung des Projekts dieses Fensters, im Format der
@@ -239,7 +261,7 @@ pub fn arrangement_load(
     windows: State<'_, ProjectWindows>,
     store: State<'_, ArrangementStore>,
 ) -> Option<serde_json::Value> {
-    let project = windows.project_of(window.label())?;
+    let project = single_project(&windows, window.label())?;
     store.project_state(&project).arrangement
 }
 
@@ -252,7 +274,7 @@ pub fn arrangement_save(
     store: State<'_, ArrangementStore>,
     arrangement: serde_json::Value,
 ) -> Result<(), String> {
-    let Some(project) = windows.project_of(window.label()) else {
+    let Some(project) = single_project(&windows, window.label()) else {
         return Ok(());
     };
     let previous = store.project_state(&project).window;

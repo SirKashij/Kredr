@@ -166,7 +166,7 @@ pub fn run() {
             version_control_commands::version_control_branches,
             version_control_commands::version_control_switch_branch,
             version_control_commands::version_control_create_branch,
-            projects::window_project,
+            projects::window_content,
             projects::recent_projects,
             projects::forget_project,
             projects::open_project,

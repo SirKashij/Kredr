@@ -1,9 +1,9 @@
-//! Tests der Zuordnung von Projekten zu Fenstern über ihre öffentliche
-//! Schnittstelle, gegen echte Ordner im temporären Verzeichnis.
+//! Tests der Zuordnung von Fenstern zu ihrem Fensterinhalt über ihre
+//! öffentliche Schnittstelle, gegen echte Ordner im temporären Verzeichnis.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use kredr_lib::project_windows::{project_from_args, ProjectWindows};
+use kredr_lib::project_windows::{project_from_args, ProjectWindows, WindowContent};
 
 /// Ein leerer Ordner unterhalb des temporären Verzeichnisses.
 fn temp_dir(name: &str) -> PathBuf {
@@ -15,6 +15,22 @@ fn temp_dir(name: &str) -> PathBuf {
 
 fn args(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| value.to_string()).collect()
+}
+
+/// Ein Fenster, das ein einzelnes Projekt zeigt.
+fn single(folder: &Path) -> WindowContent {
+    WindowContent::Project {
+        path: folder.to_path_buf(),
+    }
+}
+
+/// Ein Fenster, das einen Workspace mit diesen Projekten zeigt.
+fn workspace(projects: &[&Path]) -> WindowContent {
+    WindowContent::Workspace {
+        id: "workspace-1".to_string(),
+        name: "Unbenannt".to_string(),
+        projects: projects.iter().map(|folder| folder.to_path_buf()).collect(),
+    }
 }
 
 #[test]
@@ -84,7 +100,7 @@ fn ohne_ordner_gibt_es_kein_projekt() {
 fn ein_offenes_projekt_findet_sein_fenster_auch_in_anderer_schreibweise() {
     let project = temp_dir("offen");
     let windows = ProjectWindows::default();
-    windows.assign("main", Some(project.clone()));
+    windows.assign("main", single(&project));
 
     let other_spelling = format!("{}\\", project.to_str().unwrap().to_uppercase());
 
@@ -92,34 +108,88 @@ fn ein_offenes_projekt_findet_sein_fenster_auch_in_anderer_schreibweise() {
         windows.window_of(other_spelling.as_ref()),
         Some("main".to_string())
     );
-    assert_eq!(windows.project_of("main"), Some(project));
+    assert_eq!(windows.content_of("main"), single(&project));
+}
+
+#[test]
+fn ein_projekt_in_einem_workspace_gilt_als_offen() {
+    let first = temp_dir("workspace-erstes");
+    let second = temp_dir("workspace-zweites");
+    let elsewhere = temp_dir("workspace-anderswo");
+    let windows = ProjectWindows::default();
+    windows.assign("window-1", workspace(&[&first, &second]));
+
+    let other_spelling = second.to_str().unwrap().to_uppercase();
+
+    assert_eq!(
+        windows.window_of(other_spelling.as_ref()),
+        Some("window-1".to_string())
+    );
+    assert_eq!(windows.window_of(&first), Some("window-1".to_string()));
+    assert_eq!(windows.window_of(&elsewhere), None);
+    assert_eq!(
+        windows.content_of("window-1").projects(),
+        [first.clone(), second.clone()]
+    );
+}
+
+#[test]
+fn ein_workspace_ohne_projekte_ist_keine_startseite() {
+    let windows = ProjectWindows::default();
+    windows.assign("window-1", workspace(&[]));
+
+    assert_eq!(windows.start_page_window(), None);
+    assert!(windows.content_of("window-1").projects().is_empty());
 }
 
 #[test]
 fn nach_dem_schliessen_des_fensters_ist_das_projekt_nicht_mehr_offen() {
     let project = temp_dir("geschlossen");
     let windows = ProjectWindows::default();
-    windows.assign("main", Some(project.clone()));
+    windows.assign("main", single(&project));
 
     windows.release("main");
 
     assert_eq!(windows.window_of(&project), None);
-    assert_eq!(windows.project_of("main"), None);
+    assert_eq!(windows.content_of("main"), WindowContent::StartPage);
 }
 
 #[test]
 fn ein_fenster_ohne_projekt_zeigt_die_startseite_bis_es_ein_projekt_bekommt() {
     let project = temp_dir("startseite");
     let windows = ProjectWindows::default();
-    windows.assign("main", Some(temp_dir("startseite-anderes")));
+    windows.assign("main", single(&temp_dir("startseite-anderes")));
     assert_eq!(windows.start_page_window(), None);
 
-    windows.assign("window-1", None);
+    windows.assign("window-1", WindowContent::StartPage);
     assert_eq!(windows.start_page_window(), Some("window-1".to_string()));
 
-    windows.assign("window-1", Some(project.clone()));
+    windows.assign("window-1", single(&project));
     assert_eq!(windows.start_page_window(), None);
     assert_eq!(windows.window_of(&project), Some("window-1".to_string()));
+}
+
+#[test]
+fn die_oberflaeche_erhaelt_den_fensterinhalt_mit_seiner_art() {
+    let folder = PathBuf::from("C:\\Projekte\\Kredr");
+
+    assert_eq!(
+        serde_json::to_value(WindowContent::StartPage).unwrap(),
+        serde_json::json!({ "kind": "startPage" })
+    );
+    assert_eq!(
+        serde_json::to_value(single(&folder)).unwrap(),
+        serde_json::json!({ "kind": "project", "path": "C:\\Projekte\\Kredr" })
+    );
+    assert_eq!(
+        serde_json::to_value(workspace(&[&folder])).unwrap(),
+        serde_json::json!({
+            "kind": "workspace",
+            "id": "workspace-1",
+            "name": "Unbenannt",
+            "projects": ["C:\\Projekte\\Kredr"],
+        })
+    );
 }
 
 #[test]

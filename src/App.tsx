@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, message, open } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityBar, type View } from "./ActivityBar";
 import { AgentStatuses } from "./agentStatus";
 import { AgentCounters } from "./AgentStatusViews";
@@ -41,6 +41,7 @@ import { openFileExternally, openUrl } from "./openExternally";
 import { projectName } from "./project";
 import { ProjectFileList } from "./projectFileList";
 import { watchProjectFiles } from "./projectFiles";
+import { ProjectWatches } from "./projectWatches";
 import { BranchPicker } from "./BranchPicker";
 import { QuickOpen } from "./QuickOpen";
 import { Sidebar } from "./Sidebar";
@@ -57,6 +58,7 @@ import type { ChangedFile } from "./versionControlState";
 import { BranchStatus } from "./VersionControlView";
 import { alertBody } from "./waitingAlerts";
 import { WindowAgents } from "./windowAgents";
+import { firstProject, projectsOf, startPage, type WindowContent } from "./workspace";
 
 /** Eine Datei, die als Dateiansicht geöffnet werden soll. */
 export interface FileRequest extends Partial<FilePosition> {
@@ -74,8 +76,15 @@ export function App() {
   const [sidebarVisible, setSidebarVisible] = useState(true);
   /** Steigt mit jedem Aufruf der Suche; danach erhält ihr Suchfeld die Tastatur. */
   const [searchFocus, setSearchFocus] = useState(0);
-  /** Der Ordner des Projekts dieses Fensters. */
-  const [project, setProject] = useState<string | null>(null);
+  /** Was dieses Fenster zeigt: die Startseite, ein Projekt oder einen Workspace. */
+  const [content, setContent] = useState<WindowContent>(startPage);
+  /** Die Projekte des Fensters in Reihenfolge. */
+  const projects = useMemo(() => projectsOf(content), [content]);
+  /**
+   * Das erste Projekt des Fensters. Ihm folgen bis auf Weiteres die Ansichten,
+   * die Statusleiste und neue Terminals; für ein Projektfenster ist es das Projekt.
+   */
+  const project = firstProject(content);
   const [arrangement, setArrangement] = useState(emptyArrangement);
   /** Ob die gespeicherte Aufteilung des Projekts geladen ist; erst dann wird gezeigt und gespeichert. */
   const [restored, setRestored] = useState(false);
@@ -136,12 +145,12 @@ export function App() {
   }
 
   useEffect(() => {
-    invoke<string | null>("window_project").then((folder) => {
-      if (folder) setProject((current) => current ?? folder);
+    invoke<WindowContent>("window_content").then((opened) => {
+      setContent((current) => (current.kind === "startPage" ? opened : current));
     });
     // Ein weiterer Start von Kredr kann einem Fenster auf der Startseite ein Projekt geben.
-    const unlisten = getCurrentWindow().listen<string>("project-opened", (event) =>
-      setProject(event.payload),
+    const unlisten = getCurrentWindow().listen<WindowContent>("window-content-opened", (event) =>
+      setContent(event.payload),
     );
     return () => {
       unlisten.then((stop) => stop());
@@ -200,11 +209,19 @@ export function App() {
     files.retain(tabsOf(arrangement).flatMap((tab) => filePathOf(tab) ?? []));
   }, [arrangement, files]);
 
-  // Ändert ein Agent eine offene Datei, lädt ihre Dateiansicht neu.
-  useEffect(() => {
-    if (project) return watchProjectFiles(project, (changes) => files.projectChanged(changes));
-  }, [project, files]);
+  // Ändert ein Agent eine offene Datei, lädt ihre Dateiansicht neu. Jedes
+  // Projekt des Fensters hat dafür seinen eigenen Beobachter. `files` bleibt
+  // für die Lebensdauer des Fensters dasselbe Objekt.
+  const [fileWatches] = useState(
+    () =>
+      new ProjectWatches((folder) =>
+        watchProjectFiles(folder, (changes) => files.projectChanged(folder, changes)),
+      ),
+  );
+  useEffect(() => fileWatches.follow(projects), [projects, fileWatches]);
+  useEffect(() => () => fileWatches.follow([]), [fileWatches]);
 
+  // Dateiliste und Versionskontrolle zeigen bis auf Weiteres das erste Projekt.
   useEffect(() => {
     if (project) return fileList.open(project);
   }, [project, fileList]);
@@ -490,7 +507,8 @@ export function App() {
 
   async function openProject(folder: string) {
     // Ist das Projekt schon in einem anderen Fenster offen, kommt jenes nach vorn.
-    if (await invoke<boolean>("open_project", { path: folder })) setProject(folder);
+    const opened = await invoke<WindowContent | null>("open_project", { path: folder });
+    if (opened) setContent(opened);
   }
 
   return (

@@ -1,19 +1,56 @@
-//! Welches Fenster welches Projekt zeigt. Ein Fenster gehört zu genau einem
-//! Projekt oder zeigt die Startseite; ein Projekt ist höchstens in einem
-//! Fenster offen.
+//! Welches Fenster was zeigt: die Startseite, ein einzelnes Projekt oder
+//! einen Workspace. Ein Projekt ist höchstens in einem Fenster offen, auch
+//! wenn es in einem Workspace steckt.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
+use serde::{Deserialize, Serialize};
+
 use crate::paths;
 
-/// Die offenen Fenster nach Kennung, jeweils mit ihrem Projekt.
+/// Was ein Fenster zeigt; die Oberfläche hält denselben Typ.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum WindowContent {
+    /// Noch kein Projekt: die Liste zuletzt geöffneter Projekte.
+    #[default]
+    StartPage,
+    /// Ein einzelnes Projekt ohne Workspace.
+    Project { path: PathBuf },
+    /// Mehrere Projekte in Reihenfolge; die Liste darf auch leer sein.
+    Workspace {
+        /// Unabhängig von Name und Projekten, damit Umbenennen und
+        /// Umsortieren keinen neuen Workspace ergeben.
+        id: String,
+        name: String,
+        projects: Vec<PathBuf>,
+    },
+}
+
+impl WindowContent {
+    /// Die Projektordner, die das Fenster zeigt, in Reihenfolge.
+    pub fn projects(&self) -> &[PathBuf] {
+        match self {
+            WindowContent::StartPage => &[],
+            WindowContent::Project { path } => std::slice::from_ref(path),
+            WindowContent::Workspace { projects, .. } => projects,
+        }
+    }
+
+    /// Ob das Projekt zum Inhalt gehört, gleich in welcher Schreibweise.
+    pub fn contains(&self, folder: &Path) -> bool {
+        self.projects().iter().any(|open| paths::same(open, folder))
+    }
+}
+
+/// Die offenen Fenster nach Kennung, jeweils mit ihrem Inhalt.
 #[derive(Default)]
 pub struct ProjectWindows {
     next_label: AtomicU32,
-    open: Mutex<HashMap<String, Option<PathBuf>>>,
+    open: Mutex<HashMap<String, WindowContent>>,
 }
 
 impl ProjectWindows {
@@ -23,9 +60,9 @@ impl ProjectWindows {
         format!("window-{number}")
     }
 
-    /// Legt fest, was das Fenster zeigt: ein Projekt oder, ohne Projekt, die Startseite.
-    pub fn assign(&self, label: &str, project: Option<PathBuf>) {
-        self.lock().insert(label.to_string(), project);
+    /// Legt fest, was das Fenster zeigt.
+    pub fn assign(&self, label: &str, content: WindowContent) {
+        self.lock().insert(label.to_string(), content);
     }
 
     /// Vergisst ein geschlossenes Fenster.
@@ -33,16 +70,16 @@ impl ProjectWindows {
         self.lock().remove(label);
     }
 
-    /// Das Projekt des Fensters.
-    pub fn project_of(&self, label: &str) -> Option<PathBuf> {
-        self.lock().get(label).cloned().flatten()
+    /// Was das Fenster zeigt; ein unbekanntes Fenster zeigt die Startseite.
+    pub fn content_of(&self, label: &str) -> WindowContent {
+        self.lock().get(label).cloned().unwrap_or_default()
     }
 
-    /// Das Fenster, in dem das Projekt bereits offen ist.
+    /// Das Fenster, in dem das Projekt bereits offen ist, allein oder in einem Workspace.
     pub fn window_of(&self, folder: &Path) -> Option<String> {
         self.lock()
             .iter()
-            .find(|(_, project)| matches!(project, Some(open) if paths::same(open, folder)))
+            .find(|(_, content)| content.contains(folder))
             .map(|(label, _)| label.clone())
     }
 
@@ -50,11 +87,11 @@ impl ProjectWindows {
     pub fn start_page_window(&self) -> Option<String> {
         self.lock()
             .iter()
-            .find(|(_, project)| project.is_none())
+            .find(|(_, content)| **content == WindowContent::StartPage)
             .map(|(label, _)| label.clone())
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Option<PathBuf>>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, WindowContent>> {
         // Die Zuordnung bleibt auch nach einem Absturz eines anderen Threads gültig.
         self.open.lock().unwrap_or_else(|e| e.into_inner())
     }

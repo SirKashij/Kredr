@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { editor } from "monaco-editor/editor/editor.api";
-import { fullPath, pathKey } from "./filePath";
+import { fullPath, pathKey, samePath } from "./filePath";
 import {
   edited,
   loadingFile,
@@ -45,7 +45,8 @@ export class OpenFile {
   private disposed = false;
 
   constructor(
-    private readonly project: string,
+    /** Der Ordner des Projekts, zu dem die Datei gehört. */
+    readonly project: string,
     /** Relativ zum Projektordner; außerhalb des Projekts der volle Pfad. */
     readonly path: string,
     private readonly changed: () => void,
@@ -234,10 +235,11 @@ export class OpenFiles {
     }
   }
 
-  /** Der Ereignisstrom der Projektdateien: Betroffene offene Dateien lesen sich neu. */
-  projectChanged(changes: ProjectChanges) {
+  /** Der Ereignisstrom eines Projekts: Betroffene offene Dateien dieses Projekts lesen sich neu. */
+  projectChanged(project: string, changes: ProjectChanges) {
     const paths = changes.paths.map(pathKey);
     for (const [key, file] of this.files) {
+      if (!samePath(file.project, project)) continue;
       // Auch ein umbenannter oder gelöschter Ordner über der Datei betrifft sie.
       const affected = paths.some((path) => key === path || key.startsWith(`${path}/`));
       if (changes.rescan || affected) file.read();
