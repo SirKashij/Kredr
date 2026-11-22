@@ -58,7 +58,11 @@ import type { ChangedFile } from "./versionControlState";
 import { BranchStatus } from "./VersionControlView";
 import { alertBody } from "./waitingAlerts";
 import { WindowAgents } from "./windowAgents";
-import { firstProject, projectsOf, startPage, type WindowContent } from "./workspace";
+import { addProject, firstProject, projectsOf, startPage, type WindowContent } from "./workspace";
+import { Notice, type NoticeContent } from "./Notice";
+
+/** Was der Kern auf „Projekt hinzufügen“ antwortet. */
+type AddProjectOutcome = { kind: "added"; content: WindowContent } | { kind: "openElsewhere" };
 
 /** Eine Datei, die als Dateiansicht geöffnet werden soll. */
 export interface FileRequest extends Partial<FilePosition> {
@@ -122,6 +126,9 @@ export function App() {
   const [fileList] = useState(() => new ProjectFileList());
   const [quickOpen, setQuickOpen] = useState(false);
   const [branchPicker, setBranchPicker] = useState(false);
+  /** Der Hinweis, der gerade unten rechts steht. */
+  const [notice, setNotice] = useState<NoticeContent | null>(null);
+  const closeNotice = useCallback(() => setNotice(null), []);
   /** Warum sich das Fenster zuletzt nicht schließen ließ. */
   const [closeError, setCloseError] = useState<string | null>(null);
   /** Die in diesem Fenster zuletzt geöffneten Dateien, die jüngste zuerst. */
@@ -158,9 +165,12 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!project) return;
-    getCurrentWindow().setTitle(t("window.title", { project: projectName(project) }));
-  }, [project, t]);
+    const title =
+      content.kind === "workspace"
+        ? t("window.titleWorkspace", { name: content.name })
+        : project && t("window.title", { project: projectName(project) });
+    if (title) getCurrentWindow().setTitle(title);
+  }, [content, project, t]);
 
   // Ein Projekt öffnet sich mit seiner gespeicherten Aufteilung; ohne sie
   // beginnt es mit einem Terminal. Gemerkte Agenten starten sofort und
@@ -511,6 +521,52 @@ export function App() {
     if (opened) setContent(opened);
   }
 
+  /**
+   * „Projekt zum Workspace hinzufügen…“: Aus einem Projektfenster wird dabei
+   * der Workspace „Unbenannt“, der die laufende Aufteilung übernimmt.
+   */
+  async function addProjectToWindow() {
+    const folder = await open({ directory: true, title: t("workspace.addProjectTitle") });
+    if (!folder) return;
+    const added = projectName(folder);
+    const result = addProject(content, folder, {
+      id: crypto.randomUUID(),
+      name: t("workspace.untitled"),
+    });
+    if (result.kind === "refused") {
+      return setNotice({ text: t("workspace.alreadyContained", { project: added }) });
+    }
+    // Was an der Aufteilung noch aussteht, gehört zum Projekt, bevor der Workspace sie übernimmt.
+    await saver.flush();
+    try {
+      const outcome = await invoke<AddProjectOutcome>("add_project", { content: result.content });
+      if (outcome.kind === "openElsewhere") {
+        return setNotice({ text: t("workspace.openElsewhere", { project: added }) });
+      }
+      const becameWorkspace = content.kind === "project";
+      setContent(outcome.content);
+      const next = outcome.content;
+      if (becameWorkspace && next.kind === "workspace") {
+        const from = projectName(content.path);
+        setNotice({
+          text: t("workspace.created", { project: from, name: next.name, added }),
+          // Das Umbenennen selbst folgt; bis dahin führt der Link zum Explorer-Kopf.
+          action: {
+            label: t("workspace.rename"),
+            run: () => {
+              setView("explorer");
+              setSidebarVisible(true);
+            },
+          },
+        });
+      } else {
+        setNotice({ text: t("workspace.added", { project: added }) });
+      }
+    } catch (reason) {
+      setNotice({ text: t("workspace.addFailed", { project: added, details: String(reason) }) });
+    }
+  }
+
   return (
     <VersionControlProvider store={versionControl}>
       <div className="workbench">
@@ -525,6 +581,8 @@ export function App() {
           view={view}
           visible={sidebarVisible}
           project={project}
+          content={content}
+          onAddProject={addProjectToWindow}
           arrangement={arrangement}
           activeFile={activeFile}
           onOpenFile={(path, preview) => openFile({ path, preview })}
@@ -580,6 +638,7 @@ export function App() {
         />
       )}
       {branchPicker && project && <BranchPicker project={project} onClose={closeQuickPick} />}
+      {notice && <Notice notice={notice} onClose={closeNotice} />}
       <footer className="status">
         <BranchStatus onToggle={() => setBranchPicker((open) => !open)} />
         <SyncStatus />

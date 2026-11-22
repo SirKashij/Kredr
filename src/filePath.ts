@@ -19,6 +19,14 @@ export function pathKey(path: string): string {
   return path.toLowerCase();
 }
 
+/**
+ * Woran ein voller Pfad wiedererkannt wird, etwa ein Projektordner: dazu
+ * gleich, ob mit `/` oder `\` getrennt und ob mit abschließendem Trenner.
+ */
+export function folderKey(path: string): string {
+  return pathKey(path.replaceAll("/", "\\").replace(/\\+$/, ""));
+}
+
 /** Ob beide Pfade dieselbe Datei oder denselben Ordner meinen. */
 export function samePath(a: string, b: string): boolean {
   return pathKey(a) === pathKey(b);

@@ -65,6 +65,25 @@ impl ProjectWindows {
         self.lock().insert(label.to_string(), content);
     }
 
+    /// Legt fest, was das Fenster zeigt, sofern keines seiner Projekte in
+    /// einem anderen Fenster offen ist. Sonst bleibt alles, wie es war, und
+    /// das Ergebnis nennt jenes Fenster.
+    pub fn claim(&self, label: &str, content: WindowContent) -> Result<(), String> {
+        let mut open = self.lock();
+        let elsewhere = open.iter().find(|(other, shown)| {
+            other.as_str() != label
+                && content
+                    .projects()
+                    .iter()
+                    .any(|folder| shown.contains(folder))
+        });
+        if let Some((other, _)) = elsewhere {
+            return Err(other.clone());
+        }
+        open.insert(label.to_string(), content);
+        Ok(())
+    }
+
     /// Vergisst ein geschlossenes Fenster.
     pub fn release(&self, label: &str) {
         self.lock().remove(label);
@@ -81,6 +100,25 @@ impl ProjectWindows {
             .iter()
             .find(|(_, content)| content.contains(folder))
             .map(|(label, _)| label.clone())
+    }
+
+    /// Ob noch ein Fenster offen ist.
+    pub fn any_open(&self) -> bool {
+        !self.lock().is_empty()
+    }
+
+    /// Die Kennungen der Workspaces, die gerade in einem Fenster offen sind.
+    pub fn workspace_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .lock()
+            .values()
+            .filter_map(|content| match content {
+                WindowContent::Workspace { id, .. } => Some(id.clone()),
+                WindowContent::StartPage | WindowContent::Project { .. } => None,
+            })
+            .collect();
+        ids.sort();
+        ids
     }
 
     /// Ein Fenster, das noch die Startseite zeigt.

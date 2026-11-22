@@ -7,6 +7,7 @@ import { AgentStatuses, type SubagentUpdate } from "./agentStatus";
 import { emptyArrangement, openTab, tabsOf } from "./arrangement";
 import { I18nProvider } from "./i18n/i18n";
 import { defaultSettings } from "./settingsStore";
+import { startPage } from "./workspace";
 
 vi.mock("./settings", () => ({
   useSettings: () => ({ settings: defaultSettings }),
@@ -64,6 +65,8 @@ describe("Agenten-Ansicht mit Subagenten", () => {
             view={view}
             visible
             project={null}
+            content={startPage}
+            onAddProject={() => {}}
             onOpenTerminalIn={() => {}}
             activeFile={null}
             onOpenFile={() => {}}

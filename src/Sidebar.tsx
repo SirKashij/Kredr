@@ -11,6 +11,7 @@ import { tabLabel, visibleAssignment } from "./tabLabel";
 import type { ChangedFile } from "./versionControlState";
 import { VersionControlView } from "./VersionControlView";
 import { isInterrupted } from "./windowAgents";
+import { projectsOf, type WindowContent } from "./workspace";
 
 /** Zwischen diesen Breiten lässt sich die Seitenleiste ziehen (in Pixeln). */
 const MIN_WIDTH = 170;
@@ -72,8 +73,12 @@ interface SidebarProps extends AgentsViewProps {
   view: View;
   /** Ob die Seitenleiste eingeblendet ist. Ausgeblendet behält sie ihren Zustand. */
   visible: boolean;
-  /** Der Ordner des Projekts dieses Fensters. */
+  /** Der Ordner des ersten Projekts dieses Fensters; ihm folgen Suche und Versionskontrolle. */
   project: string | null;
+  /** Was das Fenster zeigt; der Explorer zeigt alle Projekte. */
+  content: WindowContent;
+  /** Fügt dem Fenster ein weiteres Projekt hinzu. */
+  onAddProject: () => void;
   /** Öffnet ein Terminal in diesem Ordner, mit `agent` samt einem Agenten. */
   onOpenTerminalIn: (folder: string, agent: boolean) => void;
   /** Die Datei des sichtbaren Tabs der fokussierten Gruppe. */
@@ -92,6 +97,8 @@ export function Sidebar({
   view,
   visible,
   project,
+  content,
+  onAddProject,
   onOpenTerminalIn,
   activeFile,
   onOpenFile,
@@ -108,7 +115,7 @@ export function Sidebar({
   const showingAll = useTabSet(agents.arrangement);
   const sidebar = useRef<HTMLElement>(null);
   const title = views.find(({ id }) => id === view)!.label;
-  const showsExplorer = view === "explorer" && project !== null;
+  const showsExplorer = view === "explorer" && content.kind !== "startPage";
   const showsSearch = view === "search" && project !== null;
 
   function resize(event: PointerEvent<HTMLDivElement>) {
@@ -131,10 +138,13 @@ export function Sidebar({
         )}
       </div>
       {/* Der Explorer bleibt bestehen, damit er beim Wechsel der Ansicht nichts neu lesen muss. */}
-      {project !== null && (
+      {content.kind !== "startPage" && (
         <Explorer
-          key={project}
-          project={project}
+          // Wird aus dem Projekt ein Workspace, beginnt der Baum mit Wurzeln neu.
+          key={content.kind === "workspace" ? content.id : content.path}
+          projects={projectsOf(content)}
+          workspace={content.kind === "workspace" ? content.name : null}
+          onAddProject={onAddProject}
           hidden={!showsExplorer}
           onOpenTerminalIn={onOpenTerminalIn}
           activeFile={activeFile}

@@ -170,6 +170,7 @@ pub fn run() {
             projects::recent_projects,
             projects::forget_project,
             projects::open_project,
+            projects::add_project,
             waiting_alerts::waiting_alert,
             waiting_alerts::waiting_alert_clear,
             project_files_commands::project_files_exist,

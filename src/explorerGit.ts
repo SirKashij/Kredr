@@ -40,11 +40,13 @@ export function gitMarks(state: VersionControlState | null): GitMarks {
 
   for (const { path, status } of state.files) {
     files.set(path, heavier(files.get(path), status));
-    for (let folder = parentOf(path); folder !== ""; folder = parentOf(folder)) {
+    // Bis hinauf zum Projektordner `""`, der als Wurzel im Workspace erscheint.
+    for (let folder = parentOf(path); ; folder = parentOf(folder)) {
       const inherited = heavier(folders.get(folder), status);
       // Ist dieser Ordner schon so markiert, sind es auch alle über ihm.
       if (folders.get(folder) === inherited) break;
       folders.set(folder, inherited);
+      if (folder === "") break;
     }
   }
   return { files, folders, ignored: new Set(state.ignored) };

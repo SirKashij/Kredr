@@ -1,16 +1,18 @@
-//! Projekte öffnen: verbindet die Fenster von Kredr mit der Zuordnung
-//! Fenster ↔ Fensterinhalt, der Liste zuletzt geöffneter Projekte und der pro
-//! Projekt gespeicherten Aufteilung samt Fenstergeometrie.
+//! Projekte und Workspaces öffnen: verbindet die Fenster von Kredr mit der
+//! Zuordnung Fenster ↔ Fensterinhalt, der Liste zuletzt geöffneter Projekte
+//! und der pro Projekt bzw. Workspace gespeicherten Aufteilung samt
+//! Fenstergeometrie.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use serde::Serialize;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow,
     WebviewWindowBuilder, Window,
 };
 
-use crate::arrangement_store::{ArrangementStore, ProjectState, RecentProject};
+use crate::arrangement_store::{ArrangementStore, ProjectState, RecentProject, WorkspaceState};
 use crate::project_windows::{project_folder, project_from_args, ProjectWindows, WindowContent};
 use crate::window_geometry::{Observed, Screen, WindowGeometry};
 
@@ -36,8 +38,50 @@ pub fn start(app: &AppHandle) -> tauri::Result<()> {
         restore_geometry(app, FIRST_WINDOW, folder);
     }
     app.state::<ProjectWindows>()
-        .assign(FIRST_WINDOW, content_for(project));
+        .assign(FIRST_WINDOW, content_for(project.clone()));
+    // Ohne Projekt kommen die Workspaces zurück, die beim Beenden offen waren.
+    if project.is_none() {
+        reopen_workspaces(app);
+    }
     Ok(())
+}
+
+/// Öffnet die beim Beenden offenen Workspaces wieder: den ersten im ersten
+/// Fenster, jeden weiteren in einem neuen.
+fn reopen_workspaces(app: &AppHandle) {
+    let store = app.state::<ArrangementStore>();
+    let windows = app.state::<ProjectWindows>();
+    let mut first = true;
+    for id in store.open_workspaces() {
+        let Some(state) = store.workspace_state(&id) else {
+            continue;
+        };
+        let content = WindowContent::Workspace {
+            id,
+            name: state.name,
+            projects: state.projects,
+        };
+        if first {
+            if windows.claim(FIRST_WINDOW, content).is_ok() {
+                place(app, FIRST_WINDOW, state.window);
+                first = false;
+            }
+            continue;
+        }
+        let label = windows.next_label();
+        if windows.claim(&label, content).is_err() {
+            continue;
+        }
+        let app = app.clone();
+        // Ein Fenster darf unter Windows nicht aus dem Hauptthread heraus
+        // entstehen, während dieser ein Ereignis bearbeitet.
+        std::thread::spawn(move || {
+            if let Err(error) = open_window(&app, &label, state.window) {
+                app.state::<ProjectWindows>().release(&label);
+                eprintln!("Fenster konnte nicht geöffnet werden: {error}");
+            }
+        });
+    }
 }
 
 /// Der Fensterinhalt für ein Projekt; ohne Projekt die Startseite.
@@ -85,15 +129,22 @@ fn open(app: &AppHandle, project: Option<PathBuf>) {
     }
     let label = windows.next_label();
     windows.assign(&label, content_for(project.clone()));
-    if let Err(error) = open_window(app, &label, project.as_deref()) {
+    let geometry = project
+        .as_deref()
+        .and_then(|folder| app.state::<ArrangementStore>().project_state(folder).window);
+    if let Err(error) = open_window(app, &label, geometry) {
         windows.release(&label);
         eprintln!("Fenster konnte nicht geöffnet werden: {error}");
     }
 }
 
-/// Ein weiteres Fenster, eingerichtet wie das erste. Mit einem Projekt
-/// erscheint es dort, wo dessen Fenster zuletzt lag.
-fn open_window(app: &AppHandle, label: &str, project: Option<&Path>) -> tauri::Result<()> {
+/// Ein weiteres Fenster, eingerichtet wie das erste. Mit gespeicherter
+/// Fenstergeometrie erscheint es dort, wo es zuletzt lag.
+fn open_window(
+    app: &AppHandle,
+    label: &str,
+    geometry: Option<WindowGeometry>,
+) -> tauri::Result<()> {
     let mut config = app
         .config()
         .app
@@ -105,19 +156,23 @@ fn open_window(app: &AppHandle, label: &str, project: Option<&Path>) -> tauri::R
     // Sichtbar wird das Fenster erst an seinem Platz.
     config.visible = false;
     let window = WebviewWindowBuilder::from_config(app, &config)?.build()?;
-    if let Some(folder) = project {
-        restore_geometry(app, label, folder);
-    }
+    place(app, label, geometry);
     window.show()
 }
 
 /// Gibt dem Fenster Größe und Position, die für das Projekt gespeichert
 /// sind. Ohne gespeicherte Fenstergeometrie bleibt es, wie es ist.
 fn restore_geometry(app: &AppHandle, label: &str, folder: &Path) {
+    let stored = app.state::<ArrangementStore>().project_state(folder).window;
+    place(app, label, stored);
+}
+
+/// Gibt dem Fenster die gespeicherte Größe und Position; ohne sie bleibt es, wie es ist.
+fn place(app: &AppHandle, label: &str, stored: Option<WindowGeometry>) {
     let Some(window) = app.get_webview_window(label) else {
         return;
     };
-    let Some(stored) = app.state::<ArrangementStore>().project_state(folder).window else {
+    let Some(stored) = stored else {
         return;
     };
     // Liegt die Position außerhalb der aktuellen Bildschirme, erscheint das
@@ -194,7 +249,24 @@ fn remember(app: &AppHandle, folder: &Path) {
 
 /// Vergisst ein geschlossenes Fenster; seine Projekte gelten danach nicht mehr als offen.
 pub fn window_closed(window: &Window) {
-    window.state::<ProjectWindows>().release(window.label());
+    let windows = window.state::<ProjectWindows>();
+    windows.release(window.label());
+    // Schließt das letzte Fenster, beendet sich Kredr: Dessen Workspaces
+    // bleiben gemerkt und kommen beim nächsten Start zurück.
+    if windows.any_open() {
+        remember_open_workspaces(window.app_handle());
+    }
+}
+
+/// Merkt sich, welche Workspaces gerade in einem Fenster offen sind.
+fn remember_open_workspaces(app: &AppHandle) {
+    let ids = app.state::<ProjectWindows>().workspace_ids();
+    if let Err(error) = app
+        .state::<ArrangementStore>()
+        .remember_open_workspaces(&ids)
+    {
+        eprintln!("Offene Workspaces konnten nicht gespeichert werden: {error}");
+    }
 }
 
 /// Was das aufrufende Fenster zeigt.
@@ -203,13 +275,95 @@ pub fn window_content(window: Window, windows: State<'_, ProjectWindows>) -> Win
     windows.content_of(window.label())
 }
 
-/// Das einzelne Projekt des Fensters, dessen Aufteilung gespeichert wird.
-/// Für einen Workspace gibt es noch keinen Speicher.
-fn single_project(windows: &ProjectWindows, label: &str) -> Option<PathBuf> {
+/// Wessen Aufteilung ein Fenster speichert: die eines Projekts oder eines Workspace.
+enum Saved {
+    Project(PathBuf),
+    Workspace {
+        id: String,
+        name: String,
+        projects: Vec<PathBuf>,
+    },
+}
+
+fn saved_by(windows: &ProjectWindows, label: &str) -> Option<Saved> {
     match windows.content_of(label) {
-        WindowContent::Project { path } => Some(path),
-        WindowContent::StartPage | WindowContent::Workspace { .. } => None,
+        WindowContent::StartPage => None,
+        WindowContent::Project { path } => Some(Saved::Project(path)),
+        WindowContent::Workspace { id, name, projects } => {
+            Some(Saved::Workspace { id, name, projects })
+        }
     }
+}
+
+/// Was aus dem Hinzufügen eines Projekts zum Fenster wurde.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AddProjectOutcome {
+    /// Das Fenster zeigt jetzt diesen Inhalt.
+    Added { content: WindowContent },
+    /// Ein Projekt ist schon in einem anderen Fenster offen; jenes ist jetzt vorn.
+    OpenElsewhere,
+}
+
+/// Gibt dem aufrufenden Fenster den Workspace `content`, den die Oberfläche
+/// mit einem weiteren Projekt gebildet hat. Wird dabei aus einem
+/// Projektfenster ein Workspace, übernimmt er die gespeicherte Aufteilung
+/// und Fenstergeometrie des Projekts; die des hinzugefügten Projekts bleibt
+/// unberührt (ADR 0004).
+#[tauri::command]
+pub fn add_project(
+    app: AppHandle,
+    window: Window,
+    windows: State<'_, ProjectWindows>,
+    store: State<'_, ArrangementStore>,
+    content: WindowContent,
+) -> Result<AddProjectOutcome, String> {
+    let WindowContent::Workspace { id, name, projects } = content else {
+        return Err("only a workspace can receive another project".to_string());
+    };
+    let projects = projects
+        .iter()
+        .map(|path| {
+            project_folder(path).ok_or_else(|| format!("{} is not a folder", path.display()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let _guard = OPENING.lock();
+    let previous = windows.content_of(window.label());
+    let content = WindowContent::Workspace {
+        id: id.clone(),
+        name: name.clone(),
+        projects: projects.clone(),
+    };
+    if let Err(other) = windows.claim(window.label(), content.clone()) {
+        focus(&app, &other);
+        return Ok(AddProjectOutcome::OpenElsewhere);
+    }
+    // Die Projekte stehen sofort im Speicher, nicht erst mit der nächsten
+    // Änderung der Aufteilung. Ein neuer Workspace übernimmt, was für das
+    // Projekt gespeichert ist; ein bestehender behält seinen Stand.
+    let (arrangement, geometry) = match &previous {
+        WindowContent::Project { path } => {
+            let running = store.project_state(path);
+            (running.arrangement, running.window)
+        }
+        WindowContent::StartPage | WindowContent::Workspace { .. } => store
+            .workspace_state(&id)
+            .map(|state| (state.arrangement, state.window))
+            .unwrap_or_default(),
+    };
+    let state = WorkspaceState {
+        name,
+        projects,
+        arrangement,
+        window: geometry,
+    };
+    if let Err(error) = store.save_workspace_state(&id, &state) {
+        // Ohne gespeicherten Workspace zeigt das Fenster weiter, was es zeigte.
+        windows.assign(window.label(), previous);
+        return Err(error.to_string());
+    }
+    remember_open_workspaces(&app);
+    Ok(AddProjectOutcome::Added { content })
 }
 
 #[tauri::command]
@@ -253,20 +407,22 @@ pub fn open_project(
     Ok(Some(content))
 }
 
-/// Die gespeicherte Aufteilung des Projekts dieses Fensters, im Format der
-/// Oberfläche; nichts, wenn keine lesbare gespeichert ist.
+/// Die gespeicherte Aufteilung des Projekts oder Workspace dieses Fensters,
+/// im Format der Oberfläche; nichts, wenn keine lesbare gespeichert ist.
 #[tauri::command(async)]
 pub fn arrangement_load(
     window: Window,
     windows: State<'_, ProjectWindows>,
     store: State<'_, ArrangementStore>,
 ) -> Option<serde_json::Value> {
-    let project = single_project(&windows, window.label())?;
-    store.project_state(&project).arrangement
+    match saved_by(&windows, window.label())? {
+        Saved::Project(project) => store.project_state(&project).arrangement,
+        Saved::Workspace { id, .. } => store.workspace_state(&id)?.arrangement,
+    }
 }
 
-/// Speichert die Aufteilung des Projekts dieses Fensters und dazu Größe und
-/// Position des Fensters, wie sie gerade sind.
+/// Speichert die Aufteilung des Projekts oder Workspace dieses Fensters und
+/// dazu Größe und Position des Fensters, wie sie gerade sind.
 #[tauri::command(async)]
 pub fn arrangement_save(
     window: Window,
@@ -274,18 +430,30 @@ pub fn arrangement_save(
     store: State<'_, ArrangementStore>,
     arrangement: serde_json::Value,
 ) -> Result<(), String> {
-    let Some(project) = single_project(&windows, window.label()) else {
-        return Ok(());
+    let geometry = |previous: Option<WindowGeometry>| match observe(&window) {
+        Some(observed) => WindowGeometry::remember(previous, observed),
+        None => previous,
     };
-    let previous = store.project_state(&project).window;
-    let state = ProjectState {
-        arrangement: Some(arrangement),
-        window: match observe(&window) {
-            Some(observed) => WindowGeometry::remember(previous, observed),
-            None => previous,
-        },
+    let saved = match saved_by(&windows, window.label()) {
+        None => return Ok(()),
+        Some(Saved::Project(project)) => {
+            let previous = store.project_state(&project).window;
+            let state = ProjectState {
+                arrangement: Some(arrangement),
+                window: geometry(previous),
+            };
+            store.save_project_state(&project, &state)
+        }
+        Some(Saved::Workspace { id, name, projects }) => {
+            let previous = store.workspace_state(&id).and_then(|state| state.window);
+            let state = WorkspaceState {
+                name,
+                projects,
+                arrangement: Some(arrangement),
+                window: geometry(previous),
+            };
+            store.save_workspace_state(&id, &state)
+        }
     };
-    store
-        .save_project_state(&project, &state)
-        .map_err(|e| e.to_string())
+    saved.map_err(|e| e.to_string())
 }

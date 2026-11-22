@@ -134,6 +134,38 @@ fn ein_projekt_in_einem_workspace_gilt_als_offen() {
 }
 
 #[test]
+fn ein_projekt_das_anderswo_offen_ist_kommt_nicht_in_einen_zweiten_workspace() {
+    let first = temp_dir("anderswo-erstes");
+    let second = temp_dir("anderswo-zweites");
+    let windows = ProjectWindows::default();
+    windows.assign("main", single(&first));
+    windows.assign("window-1", single(&second));
+
+    let other_spelling = PathBuf::from(second.to_str().unwrap().to_uppercase());
+    let refused = windows.claim("main", workspace(&[&first, &other_spelling]));
+
+    assert_eq!(refused, Err("window-1".to_string()));
+    // Das Fenster zeigt weiter, was es zeigte.
+    assert_eq!(windows.content_of("main"), single(&first));
+}
+
+#[test]
+fn ein_fenster_darf_seine_eigenen_projekte_in_einen_workspace_nehmen() {
+    let first = temp_dir("eigen-erstes");
+    let second = temp_dir("eigen-zweites");
+    let windows = ProjectWindows::default();
+    windows.assign("main", single(&first));
+    windows.assign("window-1", single(&temp_dir("eigen-anderes")));
+
+    assert_eq!(windows.claim("main", workspace(&[&first, &second])), Ok(()));
+    assert_eq!(windows.window_of(&second), Some("main".to_string()));
+
+    // Nach dem Schließen seines Fensters ist ein Projekt wieder frei.
+    windows.release("main");
+    assert_eq!(windows.claim("window-1", workspace(&[&second])), Ok(()));
+}
+
+#[test]
 fn ein_workspace_ohne_projekte_ist_keine_startseite() {
     let windows = ProjectWindows::default();
     windows.assign("window-1", workspace(&[]));
