@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod agent_status;
 pub mod arrangement_store;
+pub mod dialog_answers;
 pub mod external;
 pub mod file_list;
 pub mod notifications;
@@ -69,6 +70,16 @@ fn available_shells() -> Vec<Shell> {
     terminal::available_shells()
 }
 
+/// Wo Kredr Einstellungen, Projektliste und Aufteilungen ablegt. Die
+/// Entwicklungsfassung nimmt mit `KREDR_DATA_DIR` einen eigenen Ordner, damit
+/// Testläufe die Daten eines installierten Kredr nicht berühren.
+pub(crate) fn data_dir(app: &tauri::AppHandle) -> tauri::Result<PathBuf> {
+    match std::env::var_os("KREDR_DATA_DIR") {
+        Some(dir) if cfg!(debug_assertions) => Ok(PathBuf::from(dir)),
+        _ => app.path().app_data_dir(),
+    }
+}
+
 /// Gibt alles frei, was zu einem geschlossenen Fenster gehört. Die eine
 /// Stelle dafür: Was künftig an einem Fenster hängt, kommt hier dazu.
 fn release_window(window: &tauri::Window) {
@@ -107,9 +118,10 @@ pub fn run() {
         .manage(Searches::default())
         .manage(VersionControls::default())
         .manage(project_windows::ProjectWindows::default())
+        .manage(dialog_answers::DialogAnswers::from_env())
         .setup(|app| {
             let handle = app.handle().clone();
-            let settings = SettingsStore::open(app.path().app_data_dir()?, move |settings| {
+            let settings = SettingsStore::open(data_dir(app.handle())?, move |settings| {
                 // Scheitert das Senden, ist kein Fenster mehr offen.
                 let _ = handle.emit("settings-changed", settings);
             });
@@ -171,6 +183,7 @@ pub fn run() {
             projects::forget_project,
             projects::open_project,
             projects::add_project,
+            dialog_answers::dialog_answer,
             waiting_alerts::waiting_alert,
             waiting_alerts::waiting_alert_clear,
             project_files_commands::project_files_exist,

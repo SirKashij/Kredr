@@ -3,6 +3,12 @@
 param(
   # Ordner des Projekts, das Kredr öffnet. Ohne Angabe: ein frisches Wegwerf-Repo.
   [string]$Projekt,
+  # Antworten auf die Ordnerdialoge der Reihe nach; der letzte gilt für jeden weiteren.
+  [string[]]$Ordner = @(),
+  # Beginnt mit leerem Datenordner: ohne Projektliste, Aufteilungen und Workspaces.
+  [switch]$FrischeDaten,
+  # Startet ohne Projekt wie aus dem Startmenü: Startseite oder die zuletzt offenen Workspaces.
+  [switch]$OhneProjekt,
   [int]$Port = 9333
 )
 $ErrorActionPreference = "Stop"
@@ -12,7 +18,7 @@ New-Item -ItemType Directory -Force $arbeit | Out-Null
 
 # Ein Wegwerf-Repo mit einem Commit und einer offenen Änderung: Versionskontrolle,
 # Diff und Verlauf haben dann etwas zu zeigen.
-if (-not $Projekt) {
+if (-not $Projekt -and -not $OhneProjekt) {
   $Projekt = Join-Path $arbeit "projekt-$(Get-Date -Format yyyyMMdd-HHmmss)"
   New-Item -ItemType Directory $Projekt | Out-Null
   Push-Location $Projekt
@@ -47,7 +53,17 @@ $exe = Join-Path $target "debug\kredr.exe"
 # mit dem installierten Kredr, greift der Debug-Port nicht.
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"
 $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $arbeit "webview2"
-$kredr = Start-Process $exe -ArgumentList "`"$Projekt`"" -PassThru
+# Eigener Datenordner: Testläufe berühren Einstellungen und Aufteilungen des installierten Kredr nicht.
+$daten = Join-Path $arbeit "daten"
+if ($FrischeDaten) { Remove-Item -Recurse -Force $daten -ErrorAction SilentlyContinue }
+$env:KREDR_DATA_DIR = $daten
+# Ordnerdialoge beantwortet Kredr selbst; ohne Angabe erscheint der Windows-Dialog.
+$env:KREDR_TEST_FOLDERS = ($Ordner | ForEach-Object { (Resolve-Path $_).Path }) -join ";"
+$kredr = if ($OhneProjekt) {
+  Start-Process $exe -PassThru
+} else {
+  Start-Process $exe -ArgumentList "`"$Projekt`"" -PassThru
+}
 
 $bis = (Get-Date).AddSeconds(60)
 while ($true) {

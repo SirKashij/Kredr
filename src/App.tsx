@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { confirm, message, open } from "@tauri-apps/plugin-dialog";
+import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityBar, type View } from "./ActivityBar";
 import { AgentStatuses } from "./agentStatus";
@@ -28,6 +28,7 @@ import {
   type Arrangement,
 } from "./arrangement";
 import { ArrangementSaver, loadArrangement } from "./arrangementStore";
+import { chooseFolder } from "./chooseFolder";
 import { mayCloseWindow, type CloseQuestion } from "./closeWindow";
 import { contentFor } from "./fileKinds";
 import { fileName, fullPath, opensExternally, toProjectPath } from "./filePath";
@@ -511,7 +512,7 @@ export function App() {
   const activeFile = filePathOf(activeTab) ?? null;
 
   async function openFolder() {
-    const folder = await open({ directory: true, title: t("dialog.openFolderTitle") });
+    const folder = await chooseFolder(t("dialog.openFolderTitle"));
     if (folder) await openProject(folder);
   }
 
@@ -526,7 +527,7 @@ export function App() {
    * der Workspace „Unbenannt“, der die laufende Aufteilung übernimmt.
    */
   async function addProjectToWindow() {
-    const folder = await open({ directory: true, title: t("workspace.addProjectTitle") });
+    const folder = await chooseFolder(t("workspace.addProjectTitle"));
     if (!folder) return;
     const added = projectName(folder);
     const result = addProject(content, folder, {
