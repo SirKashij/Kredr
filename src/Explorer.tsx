@@ -9,7 +9,7 @@ import {
   type MouseEvent,
 } from "react";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
-import { gitMarks, markOf, type GitMark } from "./explorerGit";
+import { gitMarks, markOf, type GitMark, type GitMarks } from "./explorerGit";
 import {
   childPath,
   emptyTree,
@@ -24,10 +24,18 @@ import {
   rowsWithEdit,
   toggleFolder,
   type Edit,
+  type ExplorerTree,
   type Row,
 } from "./explorerTree";
 import { fileIcon } from "./fileIcons";
-import { fullPath, isOutsideProject, parentOf, samePath } from "./filePath";
+import {
+  fullPath,
+  isOutsideProject,
+  parentOf,
+  folderKey,
+  samePath,
+  toProjectPath,
+} from "./filePath";
 import {
   copyText,
   createEntry,
@@ -39,9 +47,11 @@ import {
   trashEntry,
 } from "./fileOperations";
 import { useT } from "./i18n/i18n";
-import { listFolder, watchProjectFiles, type Entry } from "./projectFiles";
-import { useVersionControl } from "./versionControl";
+import { projectName } from "./project";
+import { listFolder, watchProjectFiles, type Entry, type ProjectChanges } from "./projectFiles";
+import { useVersionControl, VersionControlStore } from "./versionControl";
 import { statusLabels } from "./versionControlState";
+import { projectOf } from "./workspace";
 
 /** Höhe einer Zeile in Pixeln; muss zu `.tree-row` passen. */
 const ROW_HEIGHT = 22;
@@ -49,7 +59,15 @@ const ROW_HEIGHT = 22;
 const OVERSCAN = 10;
 
 interface ExplorerProps {
-  project: string;
+  /** Die Projekte des Fensters in Reihenfolge. */
+  projects: readonly string[];
+  /**
+   * Der Name des Workspace; dann stehen die Projekte als Wurzeln im Baum.
+   * `null` für ein einzelnes Projekt, dessen Einträge ganz oben stehen.
+   */
+  workspace: string | null;
+  /** Fügt dem Fenster ein weiteres Projekt hinzu. */
+  onAddProject: () => void;
   hidden: boolean;
   /** Öffnet ein Terminal im Ordner mit diesem vollen Pfad, mit `agent` samt einem Agenten. */
   onOpenTerminalIn: (folder: string, agent: boolean) => void;
@@ -59,19 +77,55 @@ interface ExplorerProps {
   onOpenFile: (path: string, preview: boolean) => void;
 }
 
+/** Ein Eintrag eines Projekts: das Projekt und der Pfad relativ zu seinem Ordner. */
+interface Located {
+  project: string;
+  path: string;
+}
+
+/** Der Name, unter dem ein Projekt als Wurzel im Baum steht; ohne `/`. */
+function rootSegment(project: string): string {
+  return encodeURIComponent(folderKey(project));
+}
+
 /**
- * Der Ordnerbaum des Projekts. Ordnerinhalte werden erst beim Aufklappen
+ * Der Ordnerbaum des Fensters. Ordnerinhalte werden erst beim Aufklappen
  * gelesen, und gezeichnet wird nur der sichtbare Ausschnitt: So bleibt auch
  * ein Ordner mit zehntausenden Einträgen flüssig.
+ *
+ * Im Workspace steht jedes Projekt als Wurzel im Baum. Seine Einträge liegen
+ * dann unter einem eigenen ersten Pfadteil (`rootSegment`), sonst wie die
+ * Einträge eines einzelnen Projekts direkt unter `""`.
  */
 export function Explorer({
-  project,
+  projects,
+  workspace,
+  onAddProject,
   hidden,
   onOpenTerminalIn,
   activeFile,
   onOpenFile,
 }: ExplorerProps) {
   const t = useT();
+  const roots = workspace !== null;
+  /** Ändert sich nur, wenn sich die Projekte ändern, nicht mit jeder neuen Liste. */
+  const projectsKey = projects.join("\n");
+  const project = projects[0] ?? null;
+
+  /** Projekt und Pfad im Projekt zu einem Pfad im Baum. */
+  function locate(path: string): Located | null {
+    if (!roots) return project === null ? null : { project, path };
+    const segment = path.split("/", 1)[0];
+    const owner = projects.find((candidate) => rootSegment(candidate) === segment);
+    if (owner === undefined) return null;
+    return { project: owner, path: path.slice(segment.length + 1) };
+  }
+
+  /** Der Pfad im Baum zu einem Pfad im Projekt. */
+  function treePath(owner: string, path: string): string {
+    if (!roots) return path;
+    return childPath(rootSegment(owner), path).replace(/\/$/, "");
+  }
   const [tree, setTree] = useState(emptyTree);
   const [selected, setSelected] = useState<string | null>(null);
   /** Die laufende Namenseingabe und die Meldung zu einem abgelehnten Namen. */
@@ -79,6 +133,8 @@ export function Explorer({
   const [editError, setEditError] = useState<string | null>(null);
   /** Das offene Kontextmenü; `row` fehlt beim Rechtsklick auf die freie Fläche. */
   const [menu, setMenu] = useState<{ x: number; y: number; row: Row | null } | null>(null);
+  /** Das offene „…“-Menü im Kopf der Ansicht. */
+  const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(0);
   const viewport = useRef<HTMLDivElement>(null);
@@ -92,9 +148,13 @@ export function Explorer({
 
   /** Liest einen Ordner; von mehreren Aufträgen für denselben Ordner zählt nur der jüngste. */
   function load(folder: string) {
+    // Die Wurzeln eines Workspace sind seine Projekte, in seiner Reihenfolge.
+    if (roots && folder === "") return setTree((current) => withRoots(current, projects));
+    const located = locate(folder);
+    if (!located) return;
     const request = (requestCount.current += 1);
     requests.current.set(folder, request);
-    listFolder(project, folder)
+    listFolder(located.project, located.path)
       // Ein Ordner, der sich nicht lesen lässt (etwa gerade gelöscht), ist leer.
       .catch(() => [])
       .then((entries) => {
@@ -112,18 +172,28 @@ export function Explorer({
     }
   }, [tree]);
 
-  useEffect(
-    () =>
-      watchProjectFiles(project, (changes) => {
+  // Kommt ein Projekt hinzu, erscheint es als aufgeklappte Wurzel.
+  useEffect(() => {
+    if (roots) setTree((current) => withRoots(current, projects));
+  }, [roots, projectsKey]);
+
+  useEffect(() => {
+    const stops = projects.map((owner) =>
+      watchProjectFiles(owner, (changes) => {
+        const inTree: ProjectChanges = {
+          rescan: changes.rescan,
+          paths: changes.paths.map((path) => treePath(owner, path)),
+        };
         // Auch was gerade gelesen wird, kann schon wieder veraltet sein.
         const stale = new Set([
-          ...foldersToReload(currentTree.current, changes),
+          ...foldersToReload(currentTree.current, inTree),
           ...requests.current.keys(),
         ]);
         stale.forEach((folder) => loadFolder.current(folder));
       }),
-    [project],
-  );
+    );
+    return () => stops.forEach((stop) => stop());
+  }, [projectsKey]);
 
   useEffect(() => {
     const element = viewport.current!;
@@ -134,8 +204,17 @@ export function Explorer({
 
   const rows = useMemo(() => rowsWithEdit(rowsOf(tree), edit), [tree, edit]);
   // Die Git-Markierungen folgen dem Zustand der Versionskontrolle des Fensters.
+  // Im Workspace hat jedes Projekt seine eigenen.
   const { state: versionControl } = useVersionControl();
   const marks = useMemo(() => gitMarks(versionControl), [versionControl]);
+  const projectMarks = useProjectMarks(projects, roots);
+  /** Die Markierung einer Zeile, nachgeschlagen im Projekt, zu dem sie gehört. */
+  function rowMark(row: Row): GitMark | null {
+    if (!roots) return markOf(marks, row);
+    const located = locate(row.path);
+    const owned = located && projectMarks.get(located.project);
+    return owned ? markOf(owned, { path: located.path, kind: row.kind }) : null;
+  }
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
   const last = Math.min(rows.length, Math.ceil((scrollTop + height) / ROW_HEIGHT) + OVERSCAN);
 
@@ -155,11 +234,24 @@ export function Explorer({
   // Dateien außerhalb des Projekts stehen nicht im Baum.
   const revealing = useRef<string | null>(null);
   useEffect(() => {
-    if (activeFile === null || isOutsideProject(activeFile)) return;
-    setSelected(activeFile);
-    setTree((current) => revealPath(current, activeFile));
-    revealing.current = activeFile;
+    if (activeFile === null) return;
+    const path = activeFileInTree(activeFile);
+    if (path === null) return;
+    setSelected(path);
+    setTree((current) => revealPath(current, path));
+    revealing.current = path;
   }, [activeFile]);
+
+  /**
+   * Der Pfad im Baum zur Datei des aktiven Tabs; sie ist relativ zum ersten
+   * Projekt oder ein voller Pfad. Nichts, wenn sie in keinem Projekt liegt.
+   */
+  function activeFileInTree(file: string): string | null {
+    if (!isOutsideProject(file)) return project === null ? null : treePath(project, file);
+    if (!roots) return null;
+    const owner = projectOf(projects, file);
+    return owner === null ? null : treePath(owner, toProjectPath(owner, file));
+  }
 
   // Sobald ihre Zeile geladen ist, rückt sie einmal in den sichtbaren Ausschnitt.
   useEffect(() => {
@@ -178,7 +270,23 @@ export function Explorer({
   function select(row: Row) {
     setSelected(row.path);
     if (row.kind === "folder") setTree((current) => toggleFolder(current, row.path));
-    else onOpenFile(row.path, true);
+    else onOpenFile(openPath(row.path), true);
+  }
+
+  /** Wie eine Datei des Baums der Oberfläche übergeben wird: im Workspace mit vollem Pfad. */
+  function openPath(path: string): string {
+    const located = roots ? locate(path) : null;
+    return located ? fullPath(located.project, located.path) : path;
+  }
+
+  /** Ob die Zeile ein Projekt als Wurzel eines Workspace zeigt. */
+  function isRoot(row: Row): boolean {
+    return roots && row.depth === 0;
+  }
+
+  /** Eine Projektwurzel trägt den Namen ihres Projekts. */
+  function rootRow(row: Row): Row {
+    return { ...row, name: projectName(locate(row.path)?.project ?? row.name) };
   }
 
   function startEdit(next: Edit) {
@@ -197,7 +305,12 @@ export function Explorer({
   /** Beginnt die Eingabe für einen neuen Eintrag: im Ordner der Zeile, sonst der Auswahl. */
   function startCreate(kind: Entry["kind"], anchor?: Row | null) {
     const row = anchor === undefined ? rows.find((row) => row.path === selected) : anchor;
-    const folder = folderFor(row);
+    let folder = folderFor(row);
+    // Ohne Auswahl entsteht der Eintrag im Workspace im ersten Projekt.
+    if (roots && folder === "") {
+      if (project === null) return;
+      folder = rootSegment(project);
+    }
     setTree((current) => expandFolder(current, folder));
     startEdit({ type: "create", folder, kind });
   }
@@ -214,14 +327,16 @@ export function Explorer({
     const name = value.trim();
     const unchanged = current.type === "rename" && current.path.split("/").pop() === name;
     if (name === "" || unchanged) return endEdit();
+    const located = locate(current.type === "create" ? current.folder : current.path);
+    if (!located) return endEdit();
     pendingEdit.current = null;
     try {
       if (current.type === "create") {
-        await createEntry(project, current.folder, name, current.kind);
+        await createEntry(located.project, located.path, name, current.kind);
         setSelected(childPath(current.folder, name));
       } else {
         const renamed = childPath(parentOf(current.path), name);
-        await renameEntry(project, current.path, name);
+        await renameEntry(located.project, located.path, name);
         setTree((tree) => renameInTree(tree, current.path, renamed));
         setSelected(renamed);
       }
@@ -251,23 +366,28 @@ export function Explorer({
       cancelLabel: t("dialog.cancel"),
     });
     viewport.current?.focus();
-    if (confirmed) trashEntry(project, row.path).catch((error) => report(error, row.name));
+    const located = locate(row.path);
+    if (confirmed && located) {
+      trashEntry(located.project, located.path).catch((error) => report(error, row.name));
+    }
   }
 
   function menuItems(row: Row | null): MenuItem[] {
-    const path = row?.path ?? "";
-    const name = row?.name ?? project;
+    const located = row ? locate(row.path) : project === null ? null : { project, path: "" };
+    if (!located) return [];
+    const { project: owner, path } = located;
+    const name = row && !isRoot(row) ? row.name : projectName(owner);
     const inFolder: MenuItem[] = [
       { label: t("explorer.newFile"), onSelect: () => startCreate("file", row) },
       { label: t("explorer.newFolder"), onSelect: () => startCreate("folder", row) },
       {
         label: t("explorer.terminalHere"),
         separator: true,
-        onSelect: () => onOpenTerminalIn(fullPath(project, path), false),
+        onSelect: () => onOpenTerminalIn(fullPath(owner, path), false),
       },
       {
         label: t("explorer.agentHere"),
-        onSelect: () => onOpenTerminalIn(fullPath(project, path), true),
+        onSelect: () => onOpenTerminalIn(fullPath(owner, path), true),
       },
     ];
     const items: MenuItem[] = [
@@ -275,15 +395,16 @@ export function Explorer({
       {
         label: t("explorer.reveal"),
         separator: row?.kind !== "file",
-        onSelect: () => revealEntry(project, path).catch((error) => report(error, name)),
+        onSelect: () => revealEntry(owner, path).catch((error) => report(error, name)),
       },
       {
         label: t("explorer.copyPath"),
         separator: true,
-        onSelect: () => copyText(fullPath(project, path)).catch((error) => report(error, name)),
+        onSelect: () => copyText(fullPath(owner, path)).catch((error) => report(error, name)),
       },
     ];
-    if (!row) return items;
+    // Eine Projektwurzel lässt sich hier weder umbenennen noch löschen.
+    if (!row || isRoot(row)) return items;
     return [
       ...items,
       {
@@ -304,7 +425,7 @@ export function Explorer({
 
   function onKeyDown(event: KeyboardEvent) {
     const row = rows.find((row) => row.path === selected);
-    if (!row || edit) return;
+    if (!row || edit || isRoot(row)) return;
     if (event.key === "F2") startRename(row);
     else if (event.key === "Delete") trash(row);
     else return;
@@ -332,7 +453,25 @@ export function Explorer({
             <path d="M14.5 7.5V5H7L5.5 3.5h-4v9H8M12 9.5v5M9.5 12h5" />
           </svg>
         </button>
+        <button
+          title={t("explorer.more")}
+          aria-label={t("explorer.more")}
+          aria-haspopup="menu"
+          onClick={(event) => {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            setMoreMenu({ x: bounds.left, y: bounds.bottom });
+          }}
+        >
+          <svg viewBox="0 0 16 16">
+            <path d="M3.5 8h.01M8 8h.01M12.5 8h.01" strokeWidth={2.4} />
+          </svg>
+        </button>
       </div>
+      {roots && (
+        <div className="tree-head" hidden={hidden}>
+          {t("workspace.label", { name: workspace })}
+        </div>
+      )}
       <div
         className="tree"
         role="tree"
@@ -372,20 +511,29 @@ export function Explorer({
                 role="treeitem"
                 aria-expanded={row.kind === "folder" ? row.expanded : undefined}
                 aria-selected={row.path === selected}
-                className={row.path === selected ? "tree-row sel" : "tree-row"}
+                className={["tree-row", row.path === selected && "sel", isRoot(row) && "root"]
+                  .filter(Boolean)
+                  .join(" ")}
                 style={{ paddingLeft: 8 + row.depth * 12 }}
                 onClick={() => select(row)}
-                onDoubleClick={() => row.kind === "file" && onOpenFile(row.path, false)}
+                onDoubleClick={() => row.kind === "file" && onOpenFile(openPath(row.path), false)}
                 onContextMenu={(event) => openMenu(event, row)}
               >
                 <RowIcon row={row} />
-                <RowName row={row} mark={markOf(marks, row)} />
+                <RowName row={isRoot(row) ? rootRow(row) : row} mark={rowMark(row)} />
               </div>
             ),
           )}
         </div>
       </div>
       {menu && <ContextMenu {...menu} items={menuItems(menu.row)} onClose={() => setMenu(null)} />}
+      {moreMenu && (
+        <ContextMenu
+          {...moreMenu}
+          items={[{ label: t("workspace.addProject"), onSelect: onAddProject }]}
+          onClose={() => setMoreMenu(null)}
+        />
+      )}
     </>
   );
 }
@@ -477,6 +625,53 @@ function RowName({ row, mark }: { row: Row; mark: GitMark | null }) {
       )}
     </>
   );
+}
+
+/**
+ * Der Baum mit den Projekten als Wurzeln in ihrer Reihenfolge. Ein neues
+ * Projekt erscheint aufgeklappt; was zu einem weggefallenen gehörte, entfällt.
+ */
+function withRoots(tree: ExplorerTree, projects: readonly string[]): ExplorerTree {
+  const segments = projects.map(rootSegment);
+  const known = new Set((tree.listings.get("") ?? []).map((entry) => entry.name));
+  const kept = (path: string) => path === "" || segments.includes(path.split("/", 1)[0]);
+  const listings = new Map([...tree.listings].filter(([path]) => kept(path)));
+  listings.set(
+    "",
+    segments.map((name) => ({ name, kind: "folder" as const })),
+  );
+  const expanded = new Set([...tree.expanded].filter(kept));
+  for (const segment of segments) if (!known.has(segment)) expanded.add(segment);
+  return { listings, expanded };
+}
+
+/**
+ * Die Git-Markierungen je Projekt eines Workspace. Jedes Projekt folgt dem
+ * Zustand seiner eigenen Versionskontrolle.
+ */
+function useProjectMarks(
+  projects: readonly string[],
+  enabled: boolean,
+): ReadonlyMap<string, GitMarks> {
+  const [marks, setMarks] = useState<ReadonlyMap<string, GitMarks>>(new Map());
+  const projectsKey = projects.join("\n");
+  useEffect(() => {
+    if (!enabled) return;
+    const stops = projects.map((project) => {
+      const store = new VersionControlStore();
+      const unsubscribe = store.subscribe(() => {
+        const next = gitMarks(store.snapshot().state);
+        setMarks((current) => new Map(current).set(project, next));
+      });
+      const unwatch = store.watch(project);
+      return () => {
+        unsubscribe();
+        unwatch();
+      };
+    });
+    return () => stops.forEach((stop) => stop());
+  }, [projectsKey, enabled]);
+  return marks;
 }
 
 function RowIcon({ row }: { row: Row }) {

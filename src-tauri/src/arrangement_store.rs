@@ -1,7 +1,9 @@
 //! Aufteilungsspeicher: merkt sich im Benutzerdatenverzeichnis von Kredr,
 //! was über das Schließen eines Fensters hinaus erhalten bleibt: die Liste
 //! zuletzt geöffneter Projekte (`projects.json`) und pro Projekt seine
-//! Aufteilung samt Fenstergeometrie (je eine Datei unter `arrangements/`).
+//! Aufteilung samt Fenstergeometrie (je eine Datei unter `arrangements/`),
+//! pro Workspace Name, Projekte, Aufteilung und Fenstergeometrie (je eine
+//! Datei unter `workspaces/`) und die beim Beenden offenen Workspaces.
 //! Jedes Projekt hat seine eigene Datei, damit das laufende Speichern eines
 //! Fensters weder die Projektliste noch die Aufteilung eines anderen
 //! Projekts neu schreibt und eine beschädigte Datei nur ein Projekt trifft.
@@ -22,6 +24,39 @@ const FILE_NAME: &str = "projects.json";
 const MAX_PROJECTS: usize = 20;
 /// Der Ordner mit je einer Datei pro Projekt.
 const ARRANGEMENTS_DIR: &str = "arrangements";
+/// Der Ordner mit je einer Datei pro Workspace.
+const WORKSPACES_DIR: &str = "workspaces";
+/// Die Workspaces, die offen waren, als das letzte Fenster schloss.
+const OPEN_WORKSPACES_FILE: &str = "open-workspaces.json";
+
+/// Was Kredr sich zu einem Workspace merkt: Name, Projekte in Reihenfolge,
+/// Aufteilung und Fenstergeometrie. Die Kennung steht nicht darin; unter ihr
+/// ist der Zustand gespeichert.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkspaceState {
+    pub name: String,
+    pub projects: Vec<PathBuf>,
+    /// Die Aufteilung im Format der Oberfläche, wie bei einem Projekt.
+    pub arrangement: Option<serde_json::Value>,
+    pub window: Option<WindowGeometry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StoredWorkspace {
+    version: u32,
+    /// Die Kennung des Workspace, zu dem die Datei gehört.
+    id: String,
+    name: String,
+    projects: Vec<PathBuf>,
+    arrangement: Option<serde_json::Value>,
+    window: Option<WindowGeometry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StoredOpenWorkspaces {
+    version: u32,
+    workspaces: Vec<String>,
+}
 
 /// Was Kredr sich zu einem Projekt über das Schließen seines Fensters hinaus merkt.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -149,18 +184,79 @@ impl ArrangementStore {
         paths::write_whole(&self.state_file(folder), json)
     }
 
+    /// Name, Projekte, Aufteilung und Fenstergeometrie des Workspace; nichts,
+    /// wenn keine lesbare Datei unter dieser Kennung gespeichert ist.
+    pub fn workspace_state(&self, id: &str) -> Option<WorkspaceState> {
+        let _guard = self.lock.lock();
+        let bytes = std::fs::read(self.workspace_file(id)).ok()?;
+        match serde_json::from_slice::<StoredWorkspace>(&bytes) {
+            Ok(stored) if stored.version == VERSION && stored.id == id => Some(WorkspaceState {
+                name: stored.name,
+                projects: stored.projects,
+                arrangement: stored.arrangement,
+                window: stored.window,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Merkt sich den Workspace unter seiner Kennung.
+    pub fn save_workspace_state(&self, id: &str, state: &WorkspaceState) -> io::Result<()> {
+        let _guard = self.lock.lock();
+        let stored = StoredWorkspace {
+            version: VERSION,
+            id: id.to_string(),
+            name: state.name.clone(),
+            projects: state
+                .projects
+                .iter()
+                .map(|p| paths::normalized(p))
+                .collect(),
+            arrangement: state.arrangement.clone(),
+            window: state.window,
+        };
+        let json = serde_json::to_vec_pretty(&stored).map_err(io::Error::other)?;
+        paths::write_whole(&self.workspace_file(id), json)
+    }
+
+    /// Die Kennungen der Workspaces, die beim Schließen des letzten Fensters
+    /// offen waren; eine fehlende oder nicht lesbare Datei ergibt keine.
+    pub fn open_workspaces(&self) -> Vec<String> {
+        let _guard = self.lock.lock();
+        let Ok(bytes) = std::fs::read(self.dir.join(OPEN_WORKSPACES_FILE)) else {
+            return Vec::new();
+        };
+        match serde_json::from_slice::<StoredOpenWorkspaces>(&bytes) {
+            Ok(stored) if stored.version == VERSION => stored.workspaces,
+            _ => Vec::new(),
+        }
+    }
+
+    /// Merkt sich, welche Workspaces gerade offen sind.
+    pub fn remember_open_workspaces(&self, ids: &[String]) -> io::Result<()> {
+        let _guard = self.lock.lock();
+        let stored = StoredOpenWorkspaces {
+            version: VERSION,
+            workspaces: ids.to_vec(),
+        };
+        let json = serde_json::to_vec_pretty(&stored).map_err(io::Error::other)?;
+        paths::write_whole(&self.dir.join(OPEN_WORKSPACES_FILE), json)
+    }
+
     /// Die Datei des Projekts. Ihr Name folgt aus dem Projektpfad, gleich in
     /// welcher Schreibweise.
     fn state_file(&self, folder: &Path) -> PathBuf {
-        // FNV-1a: über Versionen von Rust und Kredr hinweg derselbe Name.
-        let hash = paths::key(folder)
-            .bytes()
-            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
-                (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-            });
         self.dir
             .join(ARRANGEMENTS_DIR)
-            .join(format!("{hash:016x}.json"))
+            .join(format!("{:016x}.json", file_hash(&paths::key(folder))))
+    }
+
+    /// Die Datei des Workspace. Ihr Name folgt aus der Kennung, damit die
+    /// Kennung selbst keine Zeichen für Dateinamen enthalten muss.
+    fn workspace_file(&self, id: &str) -> PathBuf {
+        self.dir
+            .join(WORKSPACES_DIR)
+            .join(format!("{:016x}.json", file_hash(id)))
     }
 
     fn file(&self) -> PathBuf {
@@ -185,4 +281,11 @@ impl ArrangementStore {
         let json = serde_json::to_vec_pretty(&stored).map_err(io::Error::other)?;
         paths::write_whole(&self.file(), json)
     }
+}
+
+/// FNV-1a: über Versionen von Rust und Kredr hinweg derselbe Dateiname.
+fn file_hash(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }

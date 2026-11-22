@@ -118,3 +118,12 @@ test("ohne Repository und vor dem ersten Zustand gibt es keine Markierungen", ()
   expect(markOf(unavailable, file("a.ts"))).toBeNull();
   expect(markOf(gitMarks(null), folder("src"))).toBeNull();
 });
+
+test("die Projektwurzel trägt wie ein Ordner den Punkt, wenn darunter etwas geändert ist", () => {
+  const changed = gitMarks(
+    repository([change("src/a.ts", "untracked"), change("b.ts", "modified")]),
+  );
+
+  expect(markOf(changed, folder(""))).toEqual({ status: "modified", badge: null });
+  expect(markOf(gitMarks(repository([])), folder(""))).toBeNull();
+});
