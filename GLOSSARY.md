@@ -6,10 +6,14 @@ Kredr ist eine schlanke Arbeitsfläche für Windows, in der eine Person mehrere 
 
 **Projekt**:
 Ein Ordner auf der Festplatte, an dem gearbeitet wird; in der Regel ein Git-Repository.
-_Vermeiden_: Workspace, Arbeitsbereich, Repo
+_Vermeiden_: Arbeitsbereich, Repo, Ordner (für das Projekt als Ganzes)
+
+**Workspace**:
+Eine gespeicherte Zusammenstellung mehrerer Projekte, die zusammen in einem Fenster geöffnet werden. Kommt zu einem Fenster ein zweites Projekt hinzu, entsteht ein unbenannter Workspace, den die Person benennen kann.
+_Vermeiden_: Arbeitsbereich, Projektgruppe, Sammlung
 
 **Fenster**:
-Die Ansicht genau eines Projekts. Mehrere Projekte bedeuten mehrere Fenster.
+Die Ansicht eines einzelnen Projekts oder eines Workspace. Es lassen sich mehrere Fenster nebeneinander öffnen.
 _Vermeiden_: Instanz, Sitzung
 
 **Hauptbereich**:
@@ -44,11 +48,11 @@ _Vermeiden_: Titel, Sitzungsname, erster Prompt
 Der Zustand eines Agenten aus Sicht der Person: arbeitet, ist fertig oder wartet auf Eingabe.
 
 **Agenten-Ansicht**:
-Die Übersicht aller Agenten und Terminals eines Fensters in der Seitenleiste, jeweils mit Agentenstatus.
+Die Übersicht aller Agenten und Terminals eines Fensters in der Seitenleiste, jeweils mit Agentenstatus und nach Projekten gruppiert. Ein Terminal gehört zu dem Projekt, in dessen Ordner es gestartet wurde. Liegt der Startordner in keinem Projekt, steht es unter „Außerhalb der Projekte“.
 _Vermeiden_: Agentenliste, Agenten-Leiste, Dashboard
 
 **Aufteilung**:
-Die Anordnung der Gruppen und Terminals eines Fensters samt Namen, Startordnern und den Gesprächen der Agenten; sie wird pro Projekt gespeichert und beim Öffnen wiederhergestellt. Laufende Prozesse gehören nicht dazu: Ein Agent kommt zurück, indem sein Gespräch fortgesetzt wird.
+Die Anordnung der Gruppen und Terminals eines Fensters samt Namen, Startordnern und den Gesprächen der Agenten; sie wird pro Projekt bzw. pro Workspace gespeichert und beim Öffnen wiederhergestellt. Laufende Prozesse gehören nicht dazu: Ein Agent kommt zurück, indem sein Gespräch fortgesetzt wird.
 _Vermeiden_: Layout, Sitzungszustand
 
 **Dateiansicht**:
