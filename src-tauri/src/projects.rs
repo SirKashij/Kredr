@@ -27,7 +27,7 @@ static OPENING: Mutex<()> = Mutex::new(());
 /// Richtet den Aufteilungsspeicher ein und gibt dem ersten Fenster das
 /// Projekt aus den Programmargumenten (`kredr <Ordner>`).
 pub fn start(app: &AppHandle) -> tauri::Result<()> {
-    app.manage(ArrangementStore::new(app.path().app_data_dir()?));
+    app.manage(ArrangementStore::new(crate::data_dir(app)?));
     let args: Vec<String> = std::env::args_os()
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();

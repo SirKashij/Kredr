@@ -9,13 +9,14 @@ Startet die Entwicklungsfassung mit Remote-Debugging neben einem installierten K
 
 ## Schritte
 
-1. `& .claude/skills/kredr-steuern/start.ps1` (PowerShell). Ohne `-Projekt` öffnet Kredr ein frisches Wegwerf-Repo mit einem Commit und einer offenen Änderung. Fertig, wenn „Kredr läuft: …“ erscheint.
+1. `& .claude/skills/kredr-steuern/start.ps1` (PowerShell). Ohne `-Projekt` öffnet Kredr ein frisches Wegwerf-Repo mit einem Commit und einer offenen Änderung. Braucht der Ablauf einen Ordnerdialog („Ordner öffnen“, „Projekt zum Workspace hinzufügen…“), nenne die Antworten mit `-Ordner <pfad>, <pfad>`. `-FrischeDaten` beginnt ohne Projektliste, Aufteilungen und Workspaces; `-OhneProjekt` startet wie aus dem Startmenü. Fertig, wenn „Kredr läuft: …“ erscheint.
 2. Ein Skript schreiben, das `verbinden()` aus `cdp.mjs` nutzt; `beispiel.mjs` ist die Vorlage. Mit `neuLaden()` beginnen, dann `klicken`, `warten`, `auswerten`; am Ende `steht()` und `fehler` prüfen, bei Bedarf `bildschirmfoto(pfad)`. Für den Agentenstatus (Statuspunkt, Auftrag, Karten) nach „Neuer Agent“ mit `agentMelden(ereignis, felder)` Hook-Ereignisse einspielen statt einen Prompt abzuschicken. Fertig, wenn das Skript per Exit-Code grün oder rot meldet.
 3. `& .claude/skills/kredr-steuern/stop.ps1`. Fertig, wenn „Beendet.“ erscheint.
 
 ## Gotchas
 
-- **Projekt:** Die Entwicklungsfassung teilt sich mit dem installierten Kredr das App-Datenverzeichnis, also Einstellungen und die gespeicherte Aufteilung je Projekt. Öffne deshalb nur Wegwerf-Projekte; mit `-Projekt` auf ein echtes Repo überschreibt sie dessen Aufteilung. Eine per Skript geänderte Einstellung gilt auch im installierten Kredr: Setze sie am Ende zurück.
+- **Daten:** Die Entwicklungsfassung legt Einstellungen, Projektliste, Aufteilungen und Workspaces in `%TEMP%\kredr-steuern\daten` ab (`KREDR_DATA_DIR`), getrennt vom installierten Kredr. Der Ordner bleibt über stop und start erhalten, so lässt sich ein Neustart prüfen.
+- **Ordnerdialog:** Ein Skript erreicht den Windows-Dialog nicht, und `__TAURI_INTERNALS__.invoke` ist schreibgeschützt. Die Antworten kommen über `-Ordner` (`KREDR_TEST_FOLDERS`); der letzte Ordner beantwortet jeden weiteren Dialog, also auch eine zweite Wahl desselben Ordners. Bedient wird Kredr ausschließlich über CDP: Tastatur und Maus des Systems gehören der Person, die gerade am Rechner arbeitet.
 - **Skript im Scratchpad:** Importiere `cdp.mjs` als `file:///C:/…/cdp.mjs`; ein Windows-Pfad mit `C:` scheitert im ESM-Loader.
 - **Grauer Screen:** Eine ungefangene Ausnahme leert `#root`; `steht()` meldet dann `false`, und `fehler` enthält den Stack.
 - **Neu laden:** `neuLaden()` setzt die Oberfläche zurück, Terminals im Kern laufen weiter. Für einen ganz frischen Zustand stop und start.
