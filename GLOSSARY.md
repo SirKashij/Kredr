@@ -87,3 +87,11 @@ _Vermeiden_: Source Control, Git-Panel
 **Änderung**:
 Eine geänderte, neue, gelöschte oder umbenannte Datei des Projekts gegenüber dem letzten Commit. Eine Änderung ist ausgewählt, wenn sie in den nächsten Commit kommt. Im Code und in der englischen Oberfläche heißt „ausgewählt“ wie in Git „staged“, „auswählen“ „stage“.
 _Vermeiden_: gestagt, Stage, Index
+
+**Aktualisierung**:
+Der Wechsel der installierten Kredr-Fassung auf eine neue Version. Kredr bietet sie an, die Person löst sie aus, danach startet Kredr neu.
+_Vermeiden_: Update, Upgrade, Patch
+
+**Neue Version**:
+Ein veröffentlichtes, stabiles Release, das neuer ist als die installierte Fassung. Entwürfe und Vorabversionen zählen nicht.
+_Vermeiden_: Update (für die Version selbst), Build
