@@ -42,6 +42,15 @@ windows = { version = "0.62", features = [
   "UI_Notifications",
 ] }
 
+# Weniger Debug-Informationen: Die Tests linken je eine eigene Programmdatei gegen
+# Tauri, und volle Debug-Informationen machen das Linken langsam und speicherhungrig.
+# Zeilennummern in Backtraces bleiben für den eigenen Code erhalten.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 codegen-units = 1
 lto = true

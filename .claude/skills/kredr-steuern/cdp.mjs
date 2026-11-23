@@ -160,6 +160,18 @@ export async function verbinden({ port = laufenderPort() } = {}) {
     .sort((a, b) => parseFloat(a.style.top) - parseFloat(b.style.top))
     .map((z) => z.textContent.replace(/\\u00a0/g, " ")).join("\\n")`;
 
+  /** Windows-Tastencodes der Tasten, die `taste` kennt. */
+  const tastencodes = { Enter: 13, Escape: 27, ArrowUp: 38, ArrowDown: 40 };
+
+  async function taste(name) {
+    const windowsVirtualKeyCode = tastencodes[name];
+    if (!windowsVirtualKeyCode) throw new Error("Unbekannte Taste: " + name);
+    const text = name === "Enter" ? { text: "\r" } : {};
+    const taste = { key: name, code: name, windowsVirtualKeyCode };
+    await senden("Input.dispatchKeyEvent", { type: "keyDown", ...taste, ...text });
+    await senden("Input.dispatchKeyEvent", { type: "keyUp", ...taste });
+  }
+
   return {
     auswerten,
     warten,
@@ -203,6 +215,17 @@ export async function verbinden({ port = laufenderPort() } = {}) {
     /** Wartet, bis die Dateiansicht `teil` zeigt; Leerzeichen gewöhnlich, Zeilen mit `\n`. */
     editorZeigt: (teil, optionen) =>
       warten(`(${editorText}).includes(${JSON.stringify(teil)})`, optionen),
+    /**
+     * Tippt `text` in das zuletzt geöffnete Terminal und drückt Enter, etwa `tippen("claude")`.
+     * Mit leerem Text nur Enter.
+     */
+    async tippen(text) {
+      await auswerten(`[...document.querySelectorAll(".xterm-helper-textarea")].at(-1).focus()`);
+      if (text) await senden("Input.insertText", { text });
+      await taste("Enter");
+    },
+    /** Drückt eine Taste im fokussierten Element: `Enter`, `Escape`, `ArrowUp`, `ArrowDown`. */
+    taste,
     /** Schickt einen rohen CDP-Befehl, etwa `Page.startScreencast`, und liefert sein Ergebnis. */
     senden,
     /** Ruft `f(params)` bei jedem CDP-Ereignis `methode` auf, etwa `Page.screencastFrame`. */

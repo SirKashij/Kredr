@@ -57,6 +57,11 @@ $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $arbeit "webview2"
 $daten = Join-Path $arbeit "daten"
 if ($FrischeDaten) { Remove-Item -Recurse -Force $daten -ErrorAction SilentlyContinue }
 $env:KREDR_DATA_DIR = $daten
+# Läuft das Skript in einer Claude-Code-Sitzung, erbte Claude Code in Kredrs Terminals
+# deren Variablen und hielte sich für eine Kind-Sitzung: ohne gespeichertes Gespräch,
+# also auch ohne Fortsetzen.
+Get-ChildItem Env: | Where-Object Name -like "CLAUDE_CODE_*" | ForEach-Object { Remove-Item "Env:$($_.Name)" }
+Remove-Item Env:CLAUDECODE -ErrorAction SilentlyContinue
 # Ordnerdialoge beantwortet Kredr selbst; ohne Angabe erscheint der Windows-Dialog.
 $env:KREDR_TEST_FOLDERS = ($Ordner | ForEach-Object { (Resolve-Path $_).Path }) -join ";"
 $kredr = if ($OhneProjekt) {
