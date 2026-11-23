@@ -5,3 +5,5 @@ src-tauri/gen/
 .env
 *.db
 .ua/
+.claude/settings.local.json
+.claude/worktrees/
