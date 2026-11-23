@@ -248,6 +248,7 @@
   "agent.newTooltip": "Neuer Agent (Strg+Umschalt+A)",
   "agent.name": "Agent",
   "agent.interrupted": "Beim Schließen unterbrochen",
+  "agent.backgroundTasks": "Hintergrundaufgaben",
   "agent.subagents": "Subagenten",
   "agent.subagents.count.one": "{count} Subagent",
   "agent.subagents.count.other": "{count} Subagenten",

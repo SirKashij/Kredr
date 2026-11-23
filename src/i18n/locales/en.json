@@ -248,6 +248,7 @@
   "agent.newTooltip": "New Agent (Ctrl+Shift+A)",
   "agent.name": "Agent",
   "agent.interrupted": "Interrupted when closed",
+  "agent.backgroundTasks": "Background tasks",
   "agent.subagents": "Subagents",
   "agent.subagents.count.one": "{count} subagent",
   "agent.subagents.count.other": "{count} subagents",

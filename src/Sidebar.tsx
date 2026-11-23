@@ -16,7 +16,13 @@ import {
   type AgentStatuses,
   type Statuses,
 } from "./agentStatus";
-import { AgentCardStatus, AgentCardTop, stateOrder, SubagentSection } from "./AgentStatusViews";
+import {
+  AgentCardStatus,
+  AgentCardTop,
+  BackgroundTaskSection,
+  stateOrder,
+  SubagentSection,
+} from "./AgentStatusViews";
 import { focusedGroupOf, isTerminal, tabsOf, type Arrangement, type Tab } from "./arrangement";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { Explorer } from "./Explorer";
@@ -289,9 +295,10 @@ function AgentsView({
     // Steht an Stelle der letzten Aktion, bis sich der Agent meldet.
     const interrupted = isInterrupted(tab, known);
     // Die Karte selbst ist kein Knopf, damit keine Knöpfe in einem Knopf
-    // stehen: Ihr oberer Teil und jede Zeile eines Subagenten sind je ein
-    // Knopf, ihre Klicks gehen an die Karte. Pfeil und „weitere“ halten ihre
-    // Klicks zurück. Mit der Maus wirkt die ganze Karte.
+    // stehen: Ihr oberer Teil und jede Zeile eines Subagenten oder einer
+    // Hintergrundaufgabe sind je ein Knopf, ihre Klicks gehen an die Karte.
+    // Pfeil und „weitere“ halten ihre Klicks zurück. Mit der Maus wirkt die
+    // ganze Karte.
     return (
       <div
         key={tab.id}
@@ -321,6 +328,7 @@ function AgentsView({
             onToggleShowsAll={() => showingAll.toggle(tab.id)}
           />
         )}
+        {status && <BackgroundTaskSection tasks={status.backgroundTasks} />}
       </div>
     );
   };

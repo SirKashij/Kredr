@@ -11,6 +11,7 @@ import {
   type AgentState,
   type AgentStatus,
   type AgentStatuses,
+  type BackgroundTaskStatus,
   type SubagentStatus,
   type SummaryPart,
 } from "./agentStatus";
@@ -153,6 +154,36 @@ export function SubagentSection({
             : t("agent.subagents.more", { count: String(hidden) })}
         </button>
       )}
+    </span>
+  );
+}
+
+/**
+ * Der Abschnitt „Hintergrundaufgaben“ auf der Karte eines Agenten, unter den
+ * Subagenten und in ihrem Stil: je laufender Aufgabe ein kleiner Ring, die
+ * Beschreibung (ohne sie der Befehl), der Befehl im Tooltip und die Laufzeit
+ * seit `started`. Jede Zeile ist ein Knopf, der wie ein Klick auf die Karte
+ * wirkt. Ohne laufende Aufgaben erscheint nichts.
+ */
+export function BackgroundTaskSection({ tasks }: { tasks: readonly BackgroundTaskStatus[] }) {
+  const t = useT();
+  if (tasks.length === 0) return null;
+  return (
+    <span className="subagents background-tasks">
+      <span className="subagents-head">{t("agent.backgroundTasks")}</span>
+      {tasks.map((task) => (
+        // Ohne eigenen Klick: Er geht an die Karte und wählt ihr Terminal.
+        <button
+          key={task.id}
+          className="subagent background-task"
+          title={task.command ?? undefined}
+        >
+          {/* Ohne eigenen Tooltip: Über der ganzen Zeile steht der Befehl. */}
+          <span className="dot small background" aria-hidden="true" />
+          <span className="description">{task.description ?? task.command ?? task.kind}</span>
+          <Runtime since={task.started} />
+        </button>
+      ))}
     </span>
   );
 }

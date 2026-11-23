@@ -16,6 +16,8 @@ export interface AgentStatus {
   since: number;
   /** Die Subagenten des Agenten in der Reihenfolge ihres Starts. */
   subagents: readonly SubagentStatus[];
+  /** Die laufenden Hintergrundaufgaben des Agenten in der Reihenfolge des Kerns. */
+  backgroundTasks: readonly BackgroundTaskStatus[];
 }
 
 /** Die Zustände eines Subagenten: die eines Agenten ohne „im Hintergrund“. */
@@ -105,6 +107,30 @@ export interface BackgroundTaskUpdate {
   command: string | null;
 }
 
+/** Eine laufende Hintergrundaufgabe in der Agenten-Ansicht. */
+export interface BackgroundTaskStatus extends BackgroundTaskUpdate {
+  /**
+   * Seit wann sie bekannt ist (Millisekunden wie `Date.now()`). Meist ist das
+   * ihr Start, denn `PostToolUse` meldet sie sofort. Kennt Kredr sie erst aus
+   * einem `Stop` oder nach dem Neuladen der Oberfläche, zählt die Laufzeit
+   * ab dann, wie bei den Subagenten.
+   */
+  started: number;
+}
+
+/**
+ * Die Hintergrundaufgaben nach `update`; Startzeitpunkte bekannter Aufgaben
+ * bleiben, beendete fehlen in `update` und fallen weg.
+ */
+function nextBackgroundTasks(
+  previous: readonly BackgroundTaskStatus[],
+  update: readonly BackgroundTaskUpdate[],
+  now: number,
+): BackgroundTaskStatus[] {
+  const known = new Map(previous.map((task) => [task.id, task.started]));
+  return update.map((task) => ({ ...task, started: known.get(task.id) ?? now }));
+}
+
 /** Der Agentenstatus aller Terminals eines Fensters, nach der Kennung ihres Tabs. */
 export type Statuses = ReadonlyMap<string, AgentStatus>;
 
@@ -134,7 +160,18 @@ export class AgentStatuses {
       const previous = this.statuses.get(tabId);
       const since = previous?.state === update.state ? previous.since : now;
       const subagents = nextSubagents(previous?.subagents ?? [], update.subagents, now);
-      next.set(tabId, { state: update.state, lastAction: update.lastAction, since, subagents });
+      const backgroundTasks = nextBackgroundTasks(
+        previous?.backgroundTasks ?? [],
+        update.backgroundTasks,
+        now,
+      );
+      next.set(tabId, {
+        state: update.state,
+        lastAction: update.lastAction,
+        since,
+        subagents,
+        backgroundTasks,
+      });
     }
     this.replace(next);
   }

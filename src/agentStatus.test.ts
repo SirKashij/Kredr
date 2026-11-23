@@ -54,12 +54,14 @@ describe("Agentenstatus eines Fensters", () => {
       lastAction: null,
       since: 1_000,
       subagents: [],
+      backgroundTasks: [],
     });
     expect(statuses.snapshot().get("tab-2")).toEqual({
       state: "waiting",
       lastAction: "Bash(cargo test)",
       since: 2_000,
       subagents: [],
+      backgroundTasks: [],
     });
   });
 
@@ -86,6 +88,7 @@ describe("Agentenstatus eines Fensters", () => {
       lastAction: "Edit(src/App.tsx)",
       since: 1_000,
       subagents: [],
+      backgroundTasks: [],
     });
 
     statuses.report(
@@ -286,6 +289,43 @@ describe("Subagenten eines Agenten", () => {
       background: 0,
       done: 0,
     });
+  });
+});
+
+describe("Hintergrundaufgaben eines Agenten", () => {
+  const watch = {
+    id: "bz10kzu5q",
+    kind: "shell",
+    description: "CI-Lauf beobachten",
+    command: "gh run watch 4711",
+  } as const;
+  const devServer = { ...watch, id: "c7", description: "Dev-Server", command: "npm run dev" };
+
+  it("übernimmt sie mit dem Zeitpunkt ihres ersten Auftretens", () => {
+    const statuses = new AgentStatuses();
+
+    statuses.report("tab-1", { ...working, backgroundTasks: [watch] }, 1_000);
+    statuses.report(
+      "tab-1",
+      { ...working, state: "background", backgroundTasks: [watch, devServer] },
+      4_000,
+    );
+
+    expect(statuses.snapshot().get("tab-1")?.backgroundTasks).toEqual([
+      { ...watch, started: 1_000 },
+      { ...devServer, started: 4_000 },
+    ]);
+  });
+
+  it("vergisst eine beendete Aufgabe sofort", () => {
+    const statuses = new AgentStatuses();
+    statuses.report("tab-1", { ...working, backgroundTasks: [watch, devServer] }, 1_000);
+
+    statuses.report("tab-1", { ...working, backgroundTasks: [devServer] }, 2_000);
+
+    expect(statuses.snapshot().get("tab-1")?.backgroundTasks).toEqual([
+      { ...devServer, started: 1_000 },
+    ]);
   });
 });
 

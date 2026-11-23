@@ -233,7 +233,7 @@ test("aus einem Projektfenster oder einem fremden Workspace wird nichts entfernt
 });
 
 function statusOf(state: AgentState): AgentStatus {
-  return { state, lastAction: null, since: 0, subagents: [] };
+  return { state, lastAction: null, since: 0, subagents: [], backgroundTasks: [] };
 }
 
 test("gefragt wird, wenn dabei ein Agent arbeitet oder wartet", () => {

@@ -153,6 +153,27 @@ describe("Agenten-Ansicht mit Subagenten", () => {
 
     expect(selected.mock.calls).toEqual([[tabId], [tabId]]);
   });
+
+  it("zeigt die Hintergrundaufgaben unter den Subagenten, eine Zeile wählt das Terminal", () => {
+    statuses.report(tabId, {
+      state: "background",
+      lastAction: null,
+      stateChanged: true,
+      assignment: null,
+      conversation: null,
+      resumeFailed: false,
+      backgroundTasks: [
+        { id: "b1", kind: "shell", description: "CI beobachten", command: "gh run watch" },
+      ],
+      subagents: ["a"].map(sub),
+    });
+    show("agents");
+
+    const heads = [...host.querySelectorAll(".card .subagents-head")];
+    expect(heads.map((head) => head.textContent)).toEqual(["Subagenten", "Hintergrundaufgaben"]);
+    act(() => host.querySelector<HTMLElement>(".background-task")!.click());
+    expect(selected.mock.calls).toEqual([[tabId]]);
+  });
 });
 
 describe("Agenten-Ansicht nach Projekten", () => {

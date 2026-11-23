@@ -2,8 +2,19 @@
 import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentStatuses, type StatusUpdate, type SubagentStatus } from "./agentStatus";
-import { AgentCardStatus, AgentCounters, AgentDot, SubagentSection } from "./AgentStatusViews";
+import {
+  AgentStatuses,
+  type BackgroundTaskStatus,
+  type StatusUpdate,
+  type SubagentStatus,
+} from "./agentStatus";
+import {
+  AgentCardStatus,
+  AgentCounters,
+  AgentDot,
+  BackgroundTaskSection,
+  SubagentSection,
+} from "./AgentStatusViews";
 import { I18nProvider } from "./i18n/i18n";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -140,6 +151,97 @@ describe("Abschnitt Subagenten auf der Karte", () => {
 
     act(() => host.querySelector<HTMLElement>(".subagent")!.click());
     expect(selected).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Abschnitt Hintergrundaufgaben auf der Karte", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    vi.useFakeTimers();
+    vi.setSystemTime(200_000);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+    vi.useRealTimers();
+  });
+
+  const watch: BackgroundTaskStatus = {
+    id: "bz10kzu5q",
+    kind: "shell",
+    description: "CI-Lauf 4711 beobachten",
+    command: "gh run watch 4711 --exit-status",
+    started: 8_000,
+  };
+  const devServer: BackgroundTaskStatus = {
+    id: "c7",
+    kind: "shell",
+    description: "Dev-Server",
+    command: "npm run tauri dev",
+    started: 190_000,
+  };
+
+  function show(language: "de" | "en", tasks: BackgroundTaskStatus[]) {
+    act(() =>
+      root.render(
+        <I18nProvider language={language}>
+          <BackgroundTaskSection tasks={tasks} />
+        </I18nProvider>,
+      ),
+    );
+  }
+
+  const rows = () => [...host.querySelectorAll(".background-task")];
+
+  it("zeigt je Aufgabe Ring, Beschreibung, Befehl im Tooltip und Laufzeit ab dem Start", () => {
+    show("de", [watch, devServer]);
+
+    expect(host.querySelector(".subagents-head")!.textContent).toBe("Hintergrundaufgaben");
+    expect(rows().map((row) => row.querySelector(".description")!.textContent)).toEqual([
+      "CI-Lauf 4711 beobachten",
+      "Dev-Server",
+    ]);
+    expect(rows().map((row) => row.getAttribute("title"))).toEqual([
+      "gh run watch 4711 --exit-status",
+      "npm run tauri dev",
+    ]);
+    expect(rows()[0].querySelector(".dot.small.background")).not.toBeNull();
+    // Der Ring verdeckt den Befehl nicht mit einem eigenen Tooltip.
+    expect(rows()[0].querySelector("[title]")).toBeNull();
+    expect(rows().map((row) => row.querySelector("small")!.textContent)).toEqual(["3 min", "10 s"]);
+
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(rows()[1].querySelector("small")!.textContent).toBe("15 s");
+  });
+
+  it("nennt ohne Beschreibung den Befehl", () => {
+    show("de", [{ ...watch, description: null }]);
+
+    expect(rows()[0].querySelector(".description")!.textContent).toBe(
+      "gh run watch 4711 --exit-status",
+    );
+  });
+
+  it("lässt die Zeile einer beendeten Aufgabe sofort weg und ohne Aufgaben den Abschnitt", () => {
+    show("de", [watch, devServer]);
+
+    show("de", [devServer]);
+    expect(rows()).toHaveLength(1);
+
+    show("de", []);
+    expect(host.innerHTML).toBe("");
+  });
+
+  it("heißt auf Englisch „Background tasks“", () => {
+    show("en", [watch]);
+
+    expect(host.querySelector(".subagents-head")!.textContent).toBe("Background tasks");
   });
 });
 
