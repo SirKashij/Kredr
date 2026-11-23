@@ -16,6 +16,10 @@ _Vermeiden_: Arbeitsbereich, Projektgruppe, Sammlung
 Die Ansicht eines einzelnen Projekts oder eines Workspace. Es lassen sich mehrere Fenster nebeneinander öffnen.
 _Vermeiden_: Instanz, Sitzung
 
+**Fensterinhalt**:
+Was ein Fenster gerade zeigt: die Startseite, ein einzelnes Projekt oder einen Workspace. Zusammen mit der Aufteilung bestimmt er, was die Person im Fenster sieht. Er wechselt, wenn die Person ein Projekt hinzufügt oder entfernt oder einen Workspace öffnet oder schließt.
+_Vermeiden_: Fensterzustand, Fenstermodus
+
 **Hauptbereich**:
 Die zentrale Fläche eines Fensters, in der Terminals und Dateien als Tabs liegen und die sich frei teilen lässt. Ein separates unteres Panel gibt es nicht.
 _Vermeiden_: Editorbereich, Panel
@@ -45,7 +49,12 @@ Der erste Prompt, den ein Agent seit seinem Start oder dem letzten Leeren des Ge
 _Vermeiden_: Titel, Sitzungsname, erster Prompt
 
 **Agentenstatus**:
-Der Zustand eines Agenten aus Sicht der Person: arbeitet, ist fertig oder wartet auf Eingabe.
+Der Zustand eines Agenten aus Sicht der Person: arbeitet, wartet auf Eingabe, ist im Hintergrund (fertig, aber eine Hintergrundaufgabe läuft noch) oder ist fertig. „Wartet“ heißt immer, dass die Person gefragt ist.
+_Vermeiden_: wartet (für einen Agenten, der nur auf eine Hintergrundaufgabe wartet)
+
+**Hintergrundaufgabe**:
+Etwas, das ein Agent gestartet hat und das nach seiner Antwort weiterläuft, etwa eine Shell, die einen CI-Lauf beobachtet. Endet sie, macht der Agent von selbst weiter. Subagenten und geplante Aufgaben zählen nicht dazu.
+_Vermeiden_: Hintergrundprozess, Job, Task
 
 **Agenten-Ansicht**:
 Die Übersicht aller Agenten und Terminals eines Fensters in der Seitenleiste, jeweils mit Agentenstatus und nach Projekten gruppiert. Ein Terminal gehört zu dem Projekt, in dessen Ordner es gestartet wurde. Liegt der Startordner in keinem Projekt, steht es unter „Außerhalb der Projekte“.
