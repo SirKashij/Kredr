@@ -8,6 +8,7 @@
 
 import type { AgentStatuses, Statuses, StatusUpdate } from "./agentStatus";
 import {
+  becomeAgent,
   endAgent,
   recordConversation,
   tabsOf,
@@ -136,8 +137,17 @@ export class WindowAgents<T> {
         // Claude Code fand das Gespräch nicht; die Shell läuft ohne Agenten weiter.
         if (update.resumeFailed) return this.endAgent(tabId);
         this.statuses.report(tabId, update);
-        // Das Gespräch wird gespeichert, sobald Kredr es kennt, nicht erst beim Schließen.
-        this.change((current) => recordConversation(current, tabId, conversationOf(update)));
+        const conversation = conversationOf(update);
+        // Läuft in einem gewöhnlichen Terminal ein Gespräch, wurde dort von
+        // Hand `claude` gestartet: Der Tab ist ab jetzt ein Agent. Das
+        // Gespräch wird gespeichert, sobald Kredr es kennt, nicht erst beim Schließen.
+        this.change((current) =>
+          recordConversation(
+            conversation ? becomeAgent(current, tabId) : current,
+            tabId,
+            conversation,
+          ),
+        );
       },
       onOpened: (agentStarted) => {
         // Ohne `claude` im Startbefehl lässt sich das Gespräch nicht fortsetzen.

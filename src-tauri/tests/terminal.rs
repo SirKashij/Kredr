@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
+use kredr_lib::agent::shell_start_command;
 use kredr_lib::terminal::{
     available_shells, startable_shell, Shell, Terminal, TerminalEvent, TerminalOptions,
 };
@@ -73,6 +74,29 @@ impl TestTerminal {
                 .expect("Antwort auf die Cursorabfrage sollte ankommen");
         }
         self.output.push_str(&text);
+    }
+
+    /// Die Argumente, mit denen der Test-Ersatz für `claude` (siehe
+    /// `fake_claude`) zuletzt aufgerufen wurde, sobald er sie ausgegeben hat.
+    fn claude_args(&mut self) -> String {
+        const MARK: &str = "claude-args: ";
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            if let Some(start) = self.output.rfind(MARK) {
+                let rest = &self.output[start + MARK.len()..];
+                if let Some(end) = rest.find(['\r', '\n']) {
+                    return rest[..end].to_owned();
+                }
+            }
+            match self.next_event(deadline) {
+                Some(TerminalEvent::Output(bytes)) => self.receive(&bytes),
+                Some(TerminalEvent::Exited) => {}
+                None => panic!(
+                    "claude wurde nie aufgerufen. Bisherige Ausgabe:\n{}",
+                    self.output
+                ),
+            }
+        }
     }
 
     fn wait_for_exit(&mut self) {
@@ -274,4 +298,110 @@ fn startbefehl_laeuft_auch_in_git_bash_und_die_shell_bleibt_offen() {
     // Nach dem Ende des Startbefehls nimmt die Shell weiter Eingaben an.
     terminal.send_line("echo \"danach-$((6*7))-${BASH_VERSION:+bash}\"");
     terminal.wait_for_output("danach-42-bash");
+}
+
+/// Ein Ordner mit einem Test-Ersatz für das installierte Programm `claude`,
+/// der nur seine Argumente ausgibt. Geliefert wird die PowerShell-Zeile, die
+/// den Ordner vor alle anderen im Suchpfad stellt.
+fn fake_claude(name: &str) -> String {
+    fake_claude_running(name, "echo claude-args: %*")
+}
+
+/// Wie `fake_claude`, der Test-Ersatz führt aber `script` aus (Batch-Befehle).
+fn fake_claude_running(name: &str, script: &str) -> String {
+    let folder = temp_project(&format!("claude-{name}"));
+    std::fs::write(
+        folder.join("claude.cmd"),
+        format!("@echo off\r\n{script}\r\n"),
+    )
+    .expect("Test-Ersatz sollte anlegbar sein");
+    format!("$env:Path = '{};' + $env:Path", folder.display())
+}
+
+/// Die Konfigurationsdatei eines Terminals, mit Leerzeichen und Apostroph im Pfad.
+fn terminal_settings() -> PathBuf {
+    std::env::temp_dir()
+        .join("kredr test's")
+        .join("terminal-7.json")
+}
+
+/// Öffnet eine PowerShell, wie Kredr sie startet. `profile` läuft vorher,
+/// so wie das Profil der Person.
+fn open_powershell(name: &str, profile: &str, agent_command: Option<&str>) -> TestTerminal {
+    let settings = terminal_settings();
+    let start = shell_start_command(Shell::Powershell, Some(&settings), agent_command)
+        .expect("Mit Konfigurationsdatei sollte es einen Startbefehl geben");
+    let start = format!("{profile}; {start}");
+    TestTerminal::open_with(temp_project(name), Shell::Powershell, Some(&start))
+}
+
+#[test]
+fn claude_im_terminal_bekommt_die_konfigurationsdatei_des_terminals() {
+    let path = fake_claude("argumente");
+    let mut terminal = open_powershell("claude-argumente", &path, None);
+
+    terminal.send_line("claude --model x \"zwei Worte\"");
+
+    let settings = terminal_settings().display().to_string();
+    assert_eq!(
+        terminal.claude_args(),
+        format!("--settings \"{settings}\" --model x \"zwei Worte\"")
+    );
+}
+
+/// Prüft, dass `claude` trotz `definition` aus dem Profil beim installierten
+/// Programm ankommt.
+fn assert_profile_overridden(name: &str, definition: &str) {
+    let profile = format!("{}; {definition}", fake_claude(name));
+    let mut terminal = open_powershell(&format!("claude-{name}"), &profile, None);
+
+    terminal.send_line("claude --model x");
+
+    let args = terminal.claude_args();
+    assert!(args.starts_with("--settings"), "{args}");
+    assert!(args.ends_with("--model x"), "{args}");
+}
+
+#[test]
+fn alias_claude_aus_dem_profil_wird_uebergangen() {
+    assert_profile_overridden("alias", "Set-Alias claude Get-Date");
+}
+
+#[test]
+fn funktion_claude_aus_dem_profil_wird_uebergangen() {
+    assert_profile_overridden("funktion", "function claude { 'aus dem Profil' }");
+}
+
+#[test]
+fn eingabe_aus_der_pipeline_kommt_bei_claude_an() {
+    let path = fake_claude_running(
+        "pipeline",
+        "set /p line=\r\necho claude-args: %* mit %line%",
+    );
+    let mut terminal = open_powershell("claude-pipeline", &path, None);
+
+    terminal.send_line("'zeile-' + 6*7 | claude -p x");
+
+    let args = terminal.claude_args();
+    assert!(args.ends_with("-p x mit zeile-42"), "{args}");
+}
+
+#[test]
+fn agent_von_kredr_startet_ueber_die_funktion_mit_einer_konfigurationsdatei() {
+    let path = fake_claude("agent");
+    let mut terminal = open_powershell("claude-agent", &path, Some("claude --resume abc-123"));
+
+    let args = terminal.claude_args();
+
+    assert_eq!(args.matches("--settings").count(), 1, "{args}");
+    assert!(args.ends_with("--resume abc-123"), "{args}");
+}
+
+#[test]
+fn ohne_konfigurationsdatei_startet_das_terminal_wie_bisher() {
+    assert_eq!(shell_start_command(Shell::Powershell, None, None), None);
+    assert_eq!(
+        shell_start_command(Shell::Powershell, None, Some("claude --resume x")).as_deref(),
+        Some("claude --resume x")
+    );
 }

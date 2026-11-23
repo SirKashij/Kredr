@@ -1,9 +1,10 @@
 //! Agentenstatus: nimmt Statusmeldungen laufender Agenten entgegen und
 //! ordnet sie dem richtigen Terminal zu.
 //!
-//! Für jedes Terminal, in dem ein Agent startet, entsteht eine eigene
+//! Für jedes Terminal entsteht eine eigene
 //! Konfigurationsdatei im Laufzeitordner von Kredr. Claude Code bekommt sie
-//! beim Start über `--settings` mit und meldet dann Ereignisse per HTTP-Hook
+//! beim Start über `--settings` mit, auch wenn die Person `claude` von Hand
+//! startet (ADR 0006), und meldet dann Ereignisse per HTTP-Hook
 //! an einen Empfänger auf dem eigenen Rechner. Die Adresse in der Datei
 //! enthält die Terminal-Kennung und ein Kennwort; darüber findet jede Meldung
 //! ihr Terminal. Einstellungen von Claude Code selbst werden weder gelesen
@@ -191,8 +192,8 @@ impl AgentStatus {
         })
     }
 
-    /// Meldet das Terminal an, in dem ein Agent startet, und liefert die
-    /// Konfigurationsdatei, die der Agent beim Start mitbekommt.
+    /// Meldet das Terminal an, in dem ein Agent starten kann, und liefert
+    /// die Konfigurationsdatei, die der Agent beim Start mitbekommt.
     /// `on_update` erhält danach jede Änderung des Agentenstatus dieses
     /// Terminals, der Reihe nach aus einem Hintergrund-Thread, bevor der
     /// Empfänger die Meldung beantwortet. Setzt der Agent ein Gespräch fort

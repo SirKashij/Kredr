@@ -102,31 +102,31 @@ pub(crate) fn terminal_open(
     let missing_shell = (shell != wanted).then_some(wanted);
     // Der Agent-Startbefehl wird bei jedem Start frisch gelesen, damit eine
     // Änderung in den Einstellungen sofort gilt.
-    let mut start_command = agent.then(|| settings.get().agent_command);
+    let mut agent_command = agent.then(|| settings.get().agent_command);
     if let Some(resumed) = &resume {
-        start_command =
-            start_command.and_then(|command| agent::resuming(&command, &resumed.conversation));
+        agent_command =
+            agent_command.and_then(|command| agent::resuming(&command, &resumed.conversation));
     }
-    let agent_started = start_command.is_some();
+    let agent_started = agent_command.is_some();
     let search_path = paths::search_path();
-    let missing_agent_program = start_command
+    let missing_agent_program = agent_command
         .as_deref()
         .and_then(|command| agent::missing_program(command, &search_path));
-    // Der Agent meldet seinen Status über eine Konfiguration, die nur für
-    // dieses Terminal gilt. Lässt sie sich nicht anlegen, startet er ohne.
-    let status = agent_status
-        .inner()
-        .clone()
-        .filter(|_| start_command.is_some());
-    if let (Some(status), Some(command)) = (&status, &mut start_command) {
-        let settings_file = status.register(id, resume, move |update| {
-            // Hier beginnt jede Reaktion des Kerns auf einen Statuswechsel.
-            let _ = on_agent_status.send(update);
-        });
-        if let Ok(settings_file) = settings_file {
-            *command = agent::with_status_settings(command, &settings_file, shell);
-        }
-    }
+    // Jedes Terminal meldet den Status seines Agenten über eine
+    // Konfiguration, die nur für dieses Terminal gilt, auch wenn die Person
+    // `claude` erst von Hand startet. Lässt sie sich nicht anlegen, startet
+    // das Terminal ohne.
+    let status = agent_status.inner().clone();
+    let settings_file = status.as_ref().and_then(|status| {
+        status
+            .register(id, resume, move |update| {
+                // Hier beginnt jede Reaktion des Kerns auf einen Statuswechsel.
+                let _ = on_agent_status.send(update);
+            })
+            .ok()
+    });
+    let start_command =
+        agent::shell_start_command(shell, settings_file.as_deref(), agent_command.as_deref());
     let options = TerminalOptions {
         shell,
         cwd,

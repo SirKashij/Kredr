@@ -52,6 +52,76 @@ pub fn with_status_settings(command: &str, settings: &Path, shell: Shell) -> Str
     let Some((program, rest)) = claude_program(command) else {
         return command.to_owned();
     };
+    format!("{program} --settings {}{rest}", quoted(settings, shell))
+}
+
+/// Der Befehl, mit dem die Shell eines Terminals startet; `None`, wenn sie
+/// ohne Befehl startet. `settings` ist die Konfigurationsdatei des Terminals
+/// für den Agentenstatus, `agent_command` der Startbefehl seines Agenten.
+///
+/// In PowerShell legt der Befehl nach dem Profil der Person eine Funktion
+/// `claude` an. Sie ruft immer das installierte Programm `claude` mit der
+/// Konfigurationsdatei auf, so dass auch ein von Hand gestartetes `claude`
+/// seinen Agentenstatus meldet (ADR 0006). Ein Alias oder eine Funktion
+/// `claude` aus dem Profil ist dann wirkungslos. Ein Agent, den Kredr mit
+/// `claude` startet, läuft über dieselbe Funktion.
+pub fn shell_start_command(
+    shell: Shell,
+    settings: Option<&Path>,
+    agent_command: Option<&str>,
+) -> Option<String> {
+    let Some(settings) = settings else {
+        return agent_command.map(str::to_owned);
+    };
+    let with_settings = |command: &str| with_status_settings(command, settings, shell);
+    match shell {
+        Shell::Powershell => {
+            let function = powershell_claude_function(settings);
+            Some(match agent_command {
+                None => function,
+                Some(command) if calls_claude_function(command) => {
+                    format!("{function}; {command}")
+                }
+                Some(command) => format!("{function}; {}", with_settings(command)),
+            })
+        }
+        Shell::GitBash => agent_command.map(with_settings),
+    }
+}
+
+/// Die PowerShell-Funktion `claude`, die das installierte Programm mit der
+/// Konfigurationsdatei `settings` aufruft. Ein Alias hätte in PowerShell
+/// Vorrang vor jeder Funktion und wird deshalb entfernt. Das Programm kommt
+/// aus dem Suchpfad: zuerst eine ausführbare Datei (`claude.exe`,
+/// `claude.cmd`), sonst ein Skript (`claude.ps1`). Gibt es keines, endet
+/// der Aufruf mit dem Fehler von `Get-Command`, dass `claude` nicht gefunden
+/// wurde.
+fn powershell_claude_function(settings: &Path) -> String {
+    let settings = quoted(settings, Shell::Powershell);
+    let programs_of_kind = |kind: &str| {
+        format!("@(Get-Command claude -CommandType {kind} -ErrorAction SilentlyContinue)")
+    };
+    // Eingabe aus der Pipeline (`… | claude -p`) reicht die Funktion weiter.
+    format!(
+        "Remove-Item Alias:claude -Force -ErrorAction SilentlyContinue; \
+         function global:claude {{ \
+         $program = {} + {} | Select-Object -First 1; \
+         if (-not $program) {{ $program = Get-Command claude -CommandType Application -ErrorAction Stop }}; \
+         if ($MyInvocation.ExpectingInput) {{ $input | & $program --settings {settings} @args }} \
+         else {{ & $program --settings {settings} @args }} }}",
+        programs_of_kind("Application"),
+        programs_of_kind("ExternalScript"),
+    )
+}
+
+/// Ob `command` das Programm schlicht beim Namen `claude` aufruft und damit
+/// in PowerShell bei der Funktion aus `powershell_claude_function` landet.
+fn calls_claude_function(command: &str) -> bool {
+    claude_program(command).is_some_and(|(program, _)| program.eq_ignore_ascii_case("claude"))
+}
+
+/// Der Pfad in einfachen Anführungszeichen, wie `shell` ihn verlangt.
+fn quoted(path: &Path, shell: Shell) -> String {
     // In einfachen Anführungszeichen werten beide Shells nichts aus, auch
     // keine Backslashes eines Windows-Pfads. Nur der Apostroph im Pfad
     // unterscheidet sich: PowerShell verdoppelt ihn, Bash kennt innerhalb
@@ -60,8 +130,7 @@ pub fn with_status_settings(command: &str, settings: &Path, shell: Shell) -> Str
         Shell::Powershell => "''",
         Shell::GitBash => r"'\''",
     };
-    let quoted = settings.to_string_lossy().replace('\'', apostrophe);
-    format!("{program} --settings '{quoted}'{rest}")
+    format!("'{}'", path.to_string_lossy().replace('\'', apostrophe))
 }
 
 /// Der Startbefehl `command`, ergänzt um das Fortsetzen des Gesprächs

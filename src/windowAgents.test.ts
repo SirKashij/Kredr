@@ -137,6 +137,77 @@ describe("Agenten des Fensters", () => {
     expect(statuses.snapshot().get(tab.id)?.state).toBe("working");
   });
 
+  it("macht ein gewöhnliches Terminal mit der ersten Meldung zum Agenten, der sein Gespräch merkt", () => {
+    const shown = openTab(emptyArrangement, false);
+    const [tab] = tabsOf(shown);
+    const { terminals, statuses, state, agents } = windowWith(shown);
+
+    agents.terminal(tab, project);
+    expect(terminals.find(tab.id)!.start.agent).toBe(false);
+    terminals
+      .find(tab.id)!
+      .signals.onStatus(update({ conversation: "abc-123", assignment: "Baue 24" }));
+
+    const [agent] = tabsOf(state.arrangement);
+    expect(agent.agent).toBe(true);
+    expect(agent.conversation).toEqual({
+      agent: "claudeCode",
+      id: "abc-123",
+      assignment: "Baue 24",
+      working: true,
+    });
+    expect(statuses.snapshot().get(tab.id)?.state).toBe("working");
+    expect(agents.returning(state.arrangement)).toEqual([tab.id]);
+  });
+
+  it("fragt beim Schließen nach einem selbst gestarteten Agenten und setzt ihn beim nächsten Öffnen fort", () => {
+    const shown = openTab(emptyArrangement, false);
+    const [tab] = tabsOf(shown);
+    const closing = windowWith(shown);
+    closing.agents.terminal(tab, project);
+    // Etwa nach `claude --resume fortgesetzt` von Hand: Die Meldung nennt das fortgesetzte Gespräch.
+    closing.terminals
+      .find(tab.id)!
+      .signals.onStatus(update({ conversation: "fortgesetzt", assignment: "Baue 24" }));
+    expect(closing.agents.closingInterrupts(closing.state.arrangement)).toBe(true);
+
+    const stored = closing.state.arrangement;
+    const reopened = windowWith(stored);
+    reopened.agents.resumeAll(stored, project);
+
+    expect(reopened.terminals.find(tab.id)).toMatchObject({
+      running: true,
+      start: { agent: true, resume: { id: "fortgesetzt", assignment: "Baue 24" } },
+    });
+  });
+
+  it("lässt ein gewöhnliches Terminal ohne Gespräch ein Terminal, auch wenn es endet", () => {
+    const shown = openTab(emptyArrangement, false);
+    const [tab] = tabsOf(shown);
+    const { terminals, state, agents } = windowWith(shown);
+
+    agents.terminal(tab, project);
+    terminals.find(tab.id)!.signals.onStatus(update({ state: "unknown" }));
+
+    expect(tabsOf(state.arrangement)[0].agent).toBeUndefined();
+  });
+
+  it("ordnet die Meldungen mehrerer Terminals jeweils dem eigenen Tab zu", () => {
+    const shown = openTab(openTab(emptyArrangement, false), false);
+    const [first, second] = tabsOf(shown);
+    const { terminals, state, agents } = windowWith(shown);
+
+    agents.terminal(first, project);
+    agents.terminal(second, project);
+    terminals.find(second.id)!.signals.onStatus(update({ conversation: "zweites" }));
+
+    const [firstAfter, secondAfter] = tabsOf(state.arrangement);
+    expect(firstAfter.agent).toBeUndefined();
+    expect(firstAfter.conversation).toBeUndefined();
+    expect(secondAfter.agent).toBe(true);
+    expect(secondAfter.conversation?.id).toBe("zweites");
+  });
+
   it("macht den Tab zum gewöhnlichen Terminal, wenn SessionEnd vor der ersten Meldung kommt", () => {
     const stored = twoAgents();
     const [resumed] = tabsOf(stored);

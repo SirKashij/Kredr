@@ -393,6 +393,22 @@ export function recordConversation(
 }
 
 /**
+ * Macht aus einem gewöhnlichen Terminal einen Agenten am selben Platz, etwa
+ * weil darin von Hand `claude` gestartet wurde. Name, Shell und Startordner
+ * bleiben.
+ */
+export function becomeAgent(arrangement: Arrangement, tabId: string): Arrangement {
+  const group = groupOfTab(arrangement, tabId);
+  const tab = group?.tabs.find((tab) => tab.id === tabId);
+  if (!arrangement.root || !group || !tab || tab.agent) return arrangement;
+  const tabs = group.tabs.map((each) =>
+    each.id === tabId ? { ...tab, agent: true as const } : each,
+  );
+  const root = replaceGroup(arrangement.root, group.id, () => ({ ...group, tabs }));
+  return { ...arrangement, root };
+}
+
+/**
  * Macht aus dem Agenten im Terminal ein gewöhnliches Terminal am selben Platz,
  * etwa weil sich sein Gespräch nicht fortsetzen ließ. Name, Shell und
  * Startordner bleiben.

@@ -150,7 +150,7 @@
   "settings.defaultShell": "Default Shell",
   "settings.defaultShell.hint": "The shell a new terminal starts with.",
   "settings.agentCommand": "Agent Start Command",
-  "settings.agentCommand.hint": "The command “New Agent” uses to start Claude Code. You can add options, for example “claude --continue”.",
+  "settings.agentCommand.hint": "The command “New Agent” uses to start Claude Code. You can add options, for example “claude --continue”. In its PowerShell terminals, Kredr overrides “claude” with its own function that always runs the installed program, so a “claude” you start yourself becomes an agent too.",
   "settings.notifications": "Notifications",
   "settings.notifications.hint": "Kredr shows a Windows notification when an agent is waiting for input and the window is not in the foreground. The taskbar button is highlighted even with notifications turned off.",
   "settings.showAssignment": "Show task on tab",
