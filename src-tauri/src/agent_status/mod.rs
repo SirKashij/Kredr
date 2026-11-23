@@ -25,7 +25,9 @@ use std::thread;
 use serde_json::{json, Value};
 use tiny_http::{Method, Response, Server};
 
-pub use tracked_agent::{AgentState, Resumed, StatusUpdate, Subagent, SubagentState, TrackedAgent};
+pub use tracked_agent::{
+    AgentState, BackgroundTask, Resumed, StatusUpdate, Subagent, SubagentState, TrackedAgent,
+};
 use tracked_agent::{IDLE_NOTIFICATION, WAITING_NOTIFICATIONS};
 
 /// Größer ist keine Meldung, die der Empfänger liest.

@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 
 use kredr_lib::agent::with_status_settings;
 use kredr_lib::agent_status::{
-    remove_orphaned_runtime_folders, runtime_folder_of, AgentState, AgentStatus, Resumed,
-    StatusUpdate, SubagentState, TrackedAgent,
+    remove_orphaned_runtime_folders, runtime_folder_of, AgentState, AgentStatus, BackgroundTask,
+    Resumed, StatusUpdate, SubagentState, TrackedAgent,
 };
 use kredr_lib::terminal::{available_shells, Shell, Terminal, TerminalEvent, TerminalOptions};
 use serde_json::{json, Value};
@@ -1232,6 +1232,319 @@ fn endet_das_terminal_ist_der_status_unbekannt() {
     assert_eq!(update.conversation, None);
     // Weiß Kredr noch nichts, ändert sich für die Person nichts.
     assert_eq!(TestAgent::start().forget(), None);
+}
+
+// Hintergrundaufgaben: Die Ereignisse sind die, die Claude Code 2.1.330
+// gemeldet hat (#68, #69).
+
+/// Eine laufende Shell im Hintergrund, wie `Stop` sie in `background_tasks` meldet.
+fn running_shell(id: &str, description: &str, command: &str) -> Value {
+    json!({ "id": id, "type": "shell", "status": "running",
+            "description": description, "command": command })
+}
+
+/// Das Ende der Antwort mit der Liste der Hintergrundaufgaben `tasks`.
+fn stop_with(agent: &TestAgent, tasks: Value) {
+    agent.report(
+        "Stop",
+        json!({ "last_assistant_message": "gestartet", "background_tasks": tasks, "session_crons": [] }),
+    );
+}
+
+#[test]
+fn laeuft_nach_der_antwort_eine_hintergrundaufgabe_ist_der_agent_im_hintergrund() {
+    let agent = TestAgent::start();
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Beobachte die CI" }));
+    stop_with(
+        &agent,
+        json!([running_shell(
+            "bz10kzu5q",
+            "Run sleep 20 and echo fertig in background",
+            "sleep 20; echo fertig"
+        )]),
+    );
+
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Background);
+    assert!(update.state_changed);
+    assert_eq!(update.last_action.as_deref(), Some("gestartet"));
+    assert_eq!(
+        update.background_tasks,
+        vec![BackgroundTask {
+            id: "bz10kzu5q".to_owned(),
+            kind: "shell".to_owned(),
+            description: Some("Run sleep 20 and echo fertig in background".to_owned()),
+            command: Some("sleep 20; echo fertig".to_owned()),
+        }]
+    );
+}
+
+/// Die Kennungen der Hintergrundaufgaben einer Meldung.
+fn task_ids(update: &StatusUpdate) -> Vec<&str> {
+    update
+        .background_tasks
+        .iter()
+        .map(|task| task.id.as_str())
+        .collect()
+}
+
+#[test]
+fn es_zaehlen_alle_laufenden_hintergrundaufgaben_ausser_subagenten() {
+    let agent = TestAgent::start();
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.report(
+        "Stop",
+        json!({
+            "last_assistant_message": "gestartet",
+            "background_tasks": [
+                { "id": "a1", "type": "subagent", "status": "running", "agent_type": "Explore", "description": "Lesen" },
+                { "id": "m1", "type": "monitor", "status": "running", "description": "Log beobachten", "command": "tail -f log" },
+                { "id": "x1", "type": "kuenftig", "status": "running", "description": "Neuer Typ" },
+                { "id": "b1", "type": "shell", "status": "completed", "description": "Schon fertig", "command": "echo" },
+            ],
+            "session_crons": [{ "id": "c1", "cron": "*/5 * * * *", "prompt": "Prüfe" }],
+        }),
+    );
+
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Background);
+    assert_eq!(task_ids(&update), ["m1", "x1"]);
+    assert_eq!(update.background_tasks[1].command, None);
+}
+
+#[test]
+fn nur_ein_hintergrund_subagent_oder_eine_geplante_aufgabe_laesst_den_agenten_fertig() {
+    let agent = TestAgent::start();
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.report(
+        "Stop",
+        json!({
+            "last_assistant_message": "gestartet",
+            "background_tasks": [{ "id": "a1", "type": "subagent", "status": "running", "agent_type": "general-purpose" }],
+            "session_crons": [{ "id": "c1", "cron": "*/5 * * * *", "prompt": "Prüfe" }],
+        }),
+    );
+
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Done);
+    assert!(update.background_tasks.is_empty());
+}
+
+#[test]
+fn im_hintergrund_ersetzt_nur_fertig() {
+    let agent = TestAgent::start();
+    let shell = json!([running_shell("b1", "CI beobachten", "gh run watch 4711")]);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Beobachte die CI" }));
+    stop_with(&agent, shell.clone());
+    assert_eq!(settle(&agent).state, AgentState::Background);
+
+    // Ein neuer Prompt lässt ihn arbeiten, die Hintergrundaufgabe läuft weiter.
+    agent.report("UserPromptSubmit", json!({ "prompt": "Und jetzt?" }));
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Working);
+    assert_eq!(task_ids(&update), ["b1"]);
+
+    // Eine Rückfrage lässt ihn warten.
+    agent.report(
+        "PermissionRequest",
+        json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } }),
+    );
+    assert_eq!(agent.next_state(), AgentState::Waiting);
+
+    // Eine Rückfrage eines Subagenten nach der Antwort lässt ihn ebenfalls warten.
+    stop_with(&agent, shell);
+    assert_eq!(settle(&agent).state, AgentState::Background);
+    agent.report("SubagentStart", from_subagent("a1", json!({})));
+    agent.report(
+        "PermissionRequest",
+        from_subagent(
+            "a1",
+            json!({ "tool_name": "Bash", "tool_input": { "command": "rm x" } }),
+        ),
+    );
+    assert_eq!(settle(&agent).state, AgentState::Waiting);
+}
+
+#[test]
+fn endet_die_letzte_hintergrundaufgabe_ist_der_agent_mit_dem_naechsten_stop_fertig() {
+    let agent = TestAgent::start();
+    let notification = "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>";
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Beobachte die CI" }));
+    stop_with(
+        &agent,
+        json!([running_shell("b1", "CI beobachten", "gh run watch 4711")]),
+    );
+    assert_eq!(settle(&agent).state, AgentState::Background);
+
+    agent.report("UserPromptSubmit", json!({ "prompt": notification }));
+    assert_eq!(agent.next_state(), AgentState::Working);
+    stop_with(&agent, json!([]));
+
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Done);
+    assert!(update.background_tasks.is_empty());
+}
+
+/// Ein Aufruf von Bash mit `run_in_background`, wie `PostToolUse` ihn meldet;
+/// `fields` ergänzt die Antwort des Werkzeugs.
+fn background_bash(command: &str, description: &str, task: &str, fields: Value) -> Value {
+    let mut response = json!({
+        "stdout": "", "stderr": "", "interrupted": false, "isImage": false,
+        "noOutputExpected": false, "backgroundTaskId": task,
+    });
+    for (key, value) in fields.as_object().expect("Felder als Objekt") {
+        response[key] = value.clone();
+    }
+    json!({
+        "tool_name": "Bash",
+        "tool_input": { "command": command, "description": description, "run_in_background": true },
+        "tool_response": response,
+    })
+}
+
+#[test]
+fn nach_einem_abbruch_mit_esc_ist_eine_gestartete_hintergrundaufgabe_bekannt() {
+    let agent = TestAgent::start();
+    let idle = json!({ "message": "Claude is waiting for your input", "notification_type": "idle_prompt" });
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Beobachte die CI" }));
+    agent.report(
+        "PostToolUse",
+        background_bash("gh run watch 4711", "CI beobachten", "b1", json!({})),
+    );
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Working);
+    assert_eq!(
+        update.background_tasks,
+        vec![BackgroundTask {
+            id: "b1".to_owned(),
+            kind: "shell".to_owned(),
+            description: Some("CI beobachten".to_owned()),
+            command: Some("gh run watch 4711".to_owned()),
+        }]
+    );
+
+    // Esc: Claude Code meldet kein `Stop`, nur später `idle_prompt`.
+    agent.report("Notification", idle.clone());
+    assert_eq!(agent.next_state(), AgentState::Background);
+
+    // Die zuletzt bekannte Liste gilt weiter.
+    agent.report("Notification", idle);
+    agent.expect_silence();
+}
+
+#[test]
+fn eine_hintergrundaufgabe_die_mit_ihrem_subagenten_endet_zaehlt_nicht() {
+    let agent = TestAgent::start();
+
+    // Gemessen: Ein Subagent im Vordergrund startet eine Shell im
+    // Hintergrund. Sie steht in seinem `SubagentStop` und endet mit ihm.
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.report("SubagentStart", from_subagent("a1", json!({})));
+    agent.report(
+        "PostToolUse",
+        from_subagent(
+            "a1",
+            background_bash(
+                "sleep 35 ; echo sub-done",
+                "Sleep 35 seconds",
+                "b2",
+                json!({ "backgroundEndsWithFinalResponse": true }),
+            ),
+        ),
+    );
+    agent.report(
+        "SubagentStop",
+        from_subagent(
+            "a1",
+            json!({ "background_tasks": [running_shell("b2", "Sleep 35 seconds", "sleep 35 ; echo sub-done")] }),
+        ),
+    );
+    agent.report(
+        "Notification",
+        json!({ "message": "Claude is waiting for your input", "notification_type": "idle_prompt" }),
+    );
+
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Done);
+    assert!(update.background_tasks.is_empty());
+}
+
+#[test]
+fn die_hintergrundaufgabe_eines_hintergrund_subagenten_die_ihn_ueberdauert_zaehlt() {
+    let agent = TestAgent::start();
+
+    // Gemessen: Ein Subagent im Hintergrund startet eine Shell, die ihn
+    // überdauert; das nächste `Stop` des Agenten nennt sie als `shell`.
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.report("SubagentStart", from_subagent("a1", json!({})));
+    agent.report(
+        "Stop",
+        json!({ "background_tasks": [{ "id": "a1", "type": "subagent", "status": "running" }] }),
+    );
+    assert_eq!(settle(&agent).state, AgentState::Done);
+
+    agent.report(
+        "PostToolUse",
+        from_subagent(
+            "a1",
+            background_bash("sleep 40", "Sleep 40 seconds", "b3", json!({})),
+        ),
+    );
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Background);
+    assert_eq!(task_ids(&update), ["b3"]);
+}
+
+#[test]
+fn ein_hintergrund_subagent_ist_keine_hintergrundaufgabe() {
+    let agent = TestAgent::start();
+
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    launch(&agent, "a1", "Explore", "Datei a lesen", "t1");
+    agent.report(
+        "Notification",
+        json!({ "message": "Claude is waiting for your input", "notification_type": "idle_prompt" }),
+    );
+
+    let update = settle(&agent);
+    assert_eq!(update.state, AgentState::Done);
+    assert!(update.background_tasks.is_empty());
+}
+
+#[test]
+fn sessionend_und_das_ende_des_terminals_raeumen_die_hintergrundaufgaben_weg() {
+    for end in ["SessionEnd", "forget"] {
+        let agent = TestAgent::start();
+        agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+        stop_with(
+            &agent,
+            json!([running_shell("b1", "CI beobachten", "gh run watch 4711")]),
+        );
+        assert_eq!(settle(&agent).state, AgentState::Background);
+
+        let update = if end == "forget" {
+            agent.forget().expect("Eine Statusmeldung sollte kommen")
+        } else {
+            // Auch `/clear` endet so.
+            agent.report("SessionEnd", json!({ "reason": "clear" }));
+            agent.next()
+        };
+        assert_eq!(update.state, AgentState::Unknown, "{end}");
+        assert!(update.background_tasks.is_empty(), "{end}");
+
+        // Nach `/clear` beginnt das neue Gespräch ohne die alten Hintergrundaufgaben.
+        agent.report("UserPromptSubmit", json!({ "prompt": "Neu" }));
+        agent.report("Stop", json!({ "last_assistant_message": "fertig" }));
+        let update = settle(&agent);
+        assert_eq!(update.state, AgentState::Done, "{end}");
+        assert!(update.background_tasks.is_empty(), "{end}");
+    }
 }
 
 // Der Empfang: Die folgenden Tests schicken die Meldungen per HTTP. Der

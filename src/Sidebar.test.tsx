@@ -76,6 +76,7 @@ describe("Agenten-Ansicht mit Subagenten", () => {
       assignment: null,
       conversation: null,
       resumeFailed: false,
+      backgroundTasks: [],
       subagents: ["a", "b", "c", "d"].map(sub),
     });
   });
@@ -196,6 +197,7 @@ describe("Agenten-Ansicht nach Projekten", () => {
         assignment: null,
         conversation: null,
         resumeFailed: false,
+        backgroundTasks: [],
         subagents: [],
       });
     report("t1", "working");
@@ -264,6 +266,39 @@ describe("Agenten-Ansicht nach Projekten", () => {
     expect(cardsIn("Kern")).toEqual([]);
     expect(labelled("1 arbeitet")).not.toBeNull();
     expect(labelled("1 wartet")).not.toBeNull();
+  });
+
+  it("zählt Agenten im Hintergrund im Abschnittskopf zwischen wartenden und fertigen", () => {
+    const update = (state: "background" | "done") => ({
+      state,
+      lastAction: null,
+      stateChanged: true,
+      assignment: null,
+      conversation: null,
+      resumeFailed: false,
+      backgroundTasks: [],
+      subagents: [],
+    });
+    const more: Tab[] = [
+      { id: "t5", agent: true, cwd: "D:\\temp" },
+      { id: "t6", agent: true, cwd: "D:\\temp" },
+    ];
+    statuses.report("t5", update("background"));
+    statuses.report("t6", update("done"));
+
+    show(workspace, {
+      ...arrangement,
+      root: { kind: "group", id: "g0", tabs: [...tabs, ...more], activeTab: "t1" },
+    });
+
+    const outside = [...host.querySelectorAll(".agent-section")].find((section) =>
+      section.textContent?.includes("Außerhalb der Projekte"),
+    )!;
+    expect(
+      [...outside.querySelectorAll(".agent-section-counts > span")].map((count) =>
+        count.getAttribute("aria-label"),
+      ),
+    ).toEqual(["1 wartet", "1 im Hintergrund", "1 fertig"]);
   });
 
   it("startet mit den Knöpfen des Abschnitts ohne Rückfrage im Projekt", () => {

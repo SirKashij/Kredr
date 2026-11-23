@@ -19,17 +19,19 @@ import { plural, useT, type MessageKey } from "./i18n/i18n";
 const labels: Record<AgentState, MessageKey> = {
   working: "agentStatus.working",
   waiting: "agentStatus.waiting",
+  background: "agentStatus.background",
   done: "agentStatus.done",
 };
 
 const tooltips: Record<AgentState, MessageKey> = {
   working: "agentStatus.workingTooltip",
   waiting: "agentStatus.waitingTooltip",
+  background: "agentStatus.backgroundTooltip",
   done: "agentStatus.doneTooltip",
 };
 
 /** Die Reihenfolge der Zähler in der Statusleiste und in den Abschnitten der Agenten-Ansicht. */
-export const stateOrder: AgentState[] = ["working", "waiting", "done"];
+export const stateOrder: AgentState[] = ["working", "waiting", "background", "done"];
 
 /** Der Farbpunkt eines Zustands mit Kurzbeschreibung beim Überfahren. */
 function Dot({ state, small = false }: { state: AgentState; small?: boolean }) {

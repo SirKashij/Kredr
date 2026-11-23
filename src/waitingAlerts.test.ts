@@ -28,6 +28,24 @@ describe("Wann sich Kredr wegen eines wartenden Agenten meldet", () => {
     expect(decision.notification).toBe(true);
   });
 
+  it("meldet weder den Wechsel auf „im Hintergrund“ noch den von dort auf „fertig“", () => {
+    let alerts = noAlerts;
+    for (const [state, since] of [
+      ["working", 1_000],
+      ["background", 2_000],
+      ["done", 3_000],
+    ] as const) {
+      const decision = decide(alerts, {
+        ...background,
+        statuses: statuses({ t1: [state, since] }),
+        now: since,
+      });
+      expect(decision.notify, state).toBeNull();
+      expect(decision.checkAgainAt, state).toBeNull();
+      alerts = decision.alerts;
+    }
+  });
+
   it("meldet nichts, solange das Fenster im Vordergrund ist", () => {
     const decision = decide(noAlerts, {
       foreground: true,

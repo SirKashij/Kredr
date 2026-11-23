@@ -1,8 +1,11 @@
 import { useSyncExternalStore } from "react";
 import { plural, type MessageKey, type Translate } from "./i18n/i18n";
 
-/** Die Zustände eines erkannten Agenten; ohne Eintrag ist der Status „unbekannt“. */
-export type AgentState = "working" | "done" | "waiting";
+/**
+ * Die Zustände eines erkannten Agenten; ohne Eintrag ist der Status
+ * „unbekannt“. `background`: fertig, aber eine Hintergrundaufgabe läuft noch.
+ */
+export type AgentState = "working" | "done" | "waiting" | "background";
 
 /** Der Agentenstatus eines Terminals. */
 export interface AgentStatus {
@@ -15,8 +18,8 @@ export interface AgentStatus {
   subagents: readonly SubagentStatus[];
 }
 
-/** Die Zustände eines Subagenten: dieselben wie die eines Agenten. */
-export type SubagentState = AgentState;
+/** Die Zustände eines Subagenten: die eines Agenten ohne „im Hintergrund“. */
+export type SubagentState = Exclude<AgentState, "background">;
 
 /** Ein Subagent, wie der Kern ihn meldet. */
 export interface SubagentUpdate {
@@ -86,6 +89,20 @@ export interface StatusUpdate {
   resumeFailed: boolean;
   /** Die laufenden und die seit dem letzten Prompt der Person fertigen Subagenten. */
   subagents: readonly SubagentUpdate[];
+  /** Die laufenden Hintergrundaufgaben des Agenten. */
+  backgroundTasks: readonly BackgroundTaskUpdate[];
+}
+
+/** Eine laufende Hintergrundaufgabe, wie der Kern sie meldet. */
+export interface BackgroundTaskUpdate {
+  /** Die Kennung, unter der Claude Code sie führt; eindeutig je Agent. */
+  id: string;
+  /** Ihr Typ, etwa `shell` oder `monitor`. */
+  kind: string;
+  /** Die Beschreibung, die der Agent ihr mitgegeben hat. */
+  description: string | null;
+  /** Der Befehl, den sie ausführt, falls es einen gibt. */
+  command: string | null;
 }
 
 /** Der Agentenstatus aller Terminals eines Fensters, nach der Kennung ihres Tabs. */
@@ -139,9 +156,9 @@ export function useAgentStatuses(statuses: AgentStatuses): Statuses {
   return useSyncExternalStore(statuses.subscribe, statuses.snapshot);
 }
 
-/** Wie viele (Sub-)Agenten arbeiten, auf Eingabe warten und fertig sind. */
+/** Wie viele (Sub-)Agenten arbeiten, auf Eingabe warten, im Hintergrund und fertig sind. */
 export function countStates(agents: Iterable<{ state: AgentState }>): Record<AgentState, number> {
-  const counts = { working: 0, waiting: 0, done: 0 };
+  const counts = { working: 0, waiting: 0, background: 0, done: 0 };
   for (const { state } of agents) counts[state]++;
   return counts;
 }
@@ -150,6 +167,7 @@ export function countStates(agents: Iterable<{ state: AgentState }>): Record<Age
 export const stateCounters: Record<AgentState, [one: MessageKey, other: MessageKey]> = {
   working: ["agentStatus.count.working.one", "agentStatus.count.working.other"],
   waiting: ["agentStatus.count.waiting.one", "agentStatus.count.waiting.other"],
+  background: ["agentStatus.count.background.one", "agentStatus.count.background.other"],
   done: ["agentStatus.count.done.one", "agentStatus.count.done.other"],
 };
 

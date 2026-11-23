@@ -19,6 +19,7 @@ const working = {
   assignment: null,
   conversation: null,
   resumeFailed: false,
+  backgroundTasks: [],
   subagents: [],
 } as const;
 
@@ -42,6 +43,7 @@ describe("Agentenstatus eines Fensters", () => {
         assignment: null,
         conversation: null,
         resumeFailed: false,
+        backgroundTasks: [],
         subagents: [],
       },
       2_000,
@@ -74,6 +76,7 @@ describe("Agentenstatus eines Fensters", () => {
         assignment: null,
         conversation: null,
         resumeFailed: false,
+        backgroundTasks: [],
         subagents: [],
       },
       5_000,
@@ -94,6 +97,7 @@ describe("Agentenstatus eines Fensters", () => {
         assignment: null,
         conversation: null,
         resumeFailed: false,
+        backgroundTasks: [],
         subagents: [],
       },
       9_000,
@@ -114,6 +118,7 @@ describe("Agentenstatus eines Fensters", () => {
         assignment: null,
         conversation: null,
         resumeFailed: false,
+        backgroundTasks: [],
         subagents: [],
       },
       2_000,
@@ -159,6 +164,7 @@ describe("Agentenstatus eines Fensters", () => {
         assignment: null,
         conversation: null,
         resumeFailed: false,
+        backgroundTasks: [],
         subagents: [],
       },
       2_000,
@@ -179,12 +185,18 @@ describe("Agentenstatus eines Fensters", () => {
         assignment: null,
         conversation: null,
         resumeFailed: false,
+        backgroundTasks: [],
         subagents: [],
       },
       1_000,
     );
 
-    expect(countStates(statuses.snapshot().values())).toEqual({ working: 2, waiting: 1, done: 0 });
+    expect(countStates(statuses.snapshot().values())).toEqual({
+      working: 2,
+      waiting: 1,
+      background: 0,
+      done: 0,
+    });
   });
 });
 
@@ -268,7 +280,12 @@ describe("Subagenten eines Agenten", () => {
       1_000,
     );
 
-    expect(countStates(statuses.snapshot().values())).toEqual({ working: 1, waiting: 0, done: 0 });
+    expect(countStates(statuses.snapshot().values())).toEqual({
+      working: 1,
+      waiting: 0,
+      background: 0,
+      done: 0,
+    });
   });
 });
 

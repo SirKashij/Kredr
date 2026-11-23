@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act, useState } from "react";
+import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SubagentStatus } from "./agentStatus";
-import { SubagentSection } from "./AgentStatusViews";
+import { AgentStatuses, type StatusUpdate, type SubagentStatus } from "./agentStatus";
+import { AgentCardStatus, AgentCounters, AgentDot, SubagentSection } from "./AgentStatusViews";
 import { I18nProvider } from "./i18n/i18n";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -140,5 +140,77 @@ describe("Abschnitt Subagenten auf der Karte", () => {
 
     act(() => host.querySelector<HTMLElement>(".subagent")!.click());
     expect(selected).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Agenten im Hintergrund", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  function update(state: StatusUpdate["state"]): StatusUpdate {
+    return {
+      state,
+      lastAction: null,
+      stateChanged: true,
+      assignment: null,
+      conversation: null,
+      resumeFailed: false,
+      subagents: [],
+      backgroundTasks: [],
+    };
+  }
+
+  function show(language: "de" | "en", element: ReactNode) {
+    act(() => root.render(<I18nProvider language={language}>{element}</I18nProvider>));
+  }
+
+  it("zählt sie in der Statusleiste zwischen wartenden und fertigen", () => {
+    const statuses = new AgentStatuses();
+    const states = ["done", "background", "working", "background", "waiting"] as const;
+    states.forEach((state, index) => statuses.report(`tab-${index}`, update(state)));
+
+    show("de", <AgentCounters statuses={statuses} />);
+
+    expect([...host.querySelectorAll(".agent-count")].map((count) => count.textContent)).toEqual([
+      "1 arbeitet",
+      "1 wartet",
+      "2 im Hintergrund",
+      "1 fertig",
+    ]);
+  });
+
+  it("zeigt den Ring im Grün von fertig mit Text und Tooltip", () => {
+    const statuses = new AgentStatuses();
+    statuses.report("tab-1", update("background"), 1_000);
+    const status = statuses.snapshot().get("tab-1")!;
+
+    show(
+      "de",
+      <>
+        <AgentDot statuses={statuses} tabId="tab-1" fallback={null} />
+        <AgentCardStatus status={status} />
+      </>,
+    );
+
+    const dot = host.querySelector(".dot")!;
+    expect(dot.classList.contains("background")).toBe(true);
+    expect(dot.getAttribute("title")).toBe(
+      "Der Agent ist fertig, eine Hintergrundaufgabe läuft noch.",
+    );
+    expect(host.querySelector(".state.background")!.textContent).toBe("im Hintergrund");
+
+    show("en", <AgentCardStatus status={status} />);
+    expect(host.querySelector(".state")!.textContent).toBe("background");
   });
 });

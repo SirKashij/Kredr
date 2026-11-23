@@ -40,6 +40,8 @@ pub enum AgentState {
     Unknown,
     Working,
     Done,
+    /// Der Agent ist fertig, aber eine Hintergrundaufgabe läuft noch.
+    Background,
     /// Der Agent wartet auf Eingabe.
     Waiting,
 }
@@ -65,6 +67,24 @@ pub struct StatusUpdate {
     /// Die Subagenten des Agenten in der Reihenfolge ihres Starts: die
     /// laufenden und die seit dem letzten Prompt der Person fertigen.
     pub subagents: Vec<Subagent>,
+    /// Die laufenden Hintergrundaufgaben des Agenten in der Reihenfolge,
+    /// in der Claude Code sie meldet.
+    pub background_tasks: Vec<BackgroundTask>,
+}
+
+/// Eine laufende Hintergrundaufgabe, wie Claude Code sie in
+/// `background_tasks` meldet.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundTask {
+    /// Die Kennung, unter der Claude Code sie führt (`id`).
+    pub id: String,
+    /// Ihr Typ, etwa `shell` oder `monitor` (`type`).
+    pub kind: String,
+    /// Die Beschreibung, die der Agent ihr mitgegeben hat.
+    pub description: Option<String>,
+    /// Der Befehl, den sie ausführt, falls es einen gibt.
+    pub command: Option<String>,
 }
 
 /// Der Zustand eines Subagenten.
@@ -123,6 +143,8 @@ pub struct TrackedAgent {
     /// Die Aufrufe des `Agent`-Werkzeugs der laufenden Antwort, deren
     /// Subagent noch nicht gestartet ist, der älteste zuerst.
     launches: Vec<Launch>,
+    /// Die laufenden Hintergrundaufgaben.
+    background_tasks: Vec<BackgroundTask>,
     /// Der Auftrag des laufenden Gesprächs.
     assignment: Option<String>,
     /// Die Kennung des laufenden Gesprächs.
@@ -193,12 +215,15 @@ impl TrackedAgent {
 
     /// Zustand und letzte Aktion, wie die Person sie sieht: Solange ein
     /// Subagent fragt, wartet der Agent. Wonach der Subagent fragt, steht in
-    /// dessen Zeile; die letzte Aktion des Agenten bleibt.
+    /// dessen Zeile; die letzte Aktion des Agenten bleibt. Ein fertiger
+    /// Agent mit laufender Hintergrundaufgabe ist im Hintergrund.
     fn displayed_status(&self) -> (AgentState, Option<String>) {
-        let state = if self.asking.is_empty() {
-            self.state
-        } else {
+        let state = if !self.asking.is_empty() {
             AgentState::Waiting
+        } else if self.state == AgentState::Done && !self.background_tasks.is_empty() {
+            AgentState::Background
+        } else {
+            self.state
         };
         (state, self.last_action.clone())
     }
@@ -212,6 +237,7 @@ impl TrackedAgent {
                 agent.assignment.clone(),
                 agent.conversation.clone(),
                 agent.subagents.clone(),
+                agent.background_tasks.clone(),
             )
         };
         if visible(&next) == visible(self) {
@@ -233,6 +259,7 @@ impl TrackedAgent {
             conversation: self.conversation.clone(),
             resume_failed,
             subagents: self.subagents.clone(),
+            background_tasks: self.background_tasks.clone(),
         }
     }
 
@@ -298,6 +325,7 @@ impl TrackedAgent {
             }
         }
         next.next_subagents(subagent, event);
+        next.next_background_tasks(subagent.is_some(), event);
         next.mark_asking();
         next.assignment = next_assignment(&self.assignment, event);
         next.conversation = next_conversation(&self.conversation, event);
@@ -397,6 +425,42 @@ impl TrackedAgent {
         }
     }
 
+    /// Führt die Hintergrundaufgaben nach dem Ereignis `event` fort;
+    /// `from_subagent` sagt, ob es von einem Subagenten stammt.
+    ///
+    /// Jedes `Stop` des Agenten bringt die vollständige Liste; fehlt sie,
+    /// läuft keine. Dazwischen nimmt `PostToolUse` eine gestartete
+    /// Hintergrundaufgabe sofort auf, damit sie auch nach einem Abbruch der
+    /// Antwort bekannt ist, nach dem kein `Stop` kommt. Startet ein Subagent
+    /// eine Hintergrundaufgabe, endet sie meist mit seiner Antwort
+    /// (`backgroundEndsWithFinalResponse`) und zählt dann nicht; überdauert
+    /// sie ihn, zählt sie wie eine eigene des Agenten. Der Start eines
+    /// Hintergrund-Subagenten trägt keine `backgroundTaskId` (gemessen mit
+    /// Claude Code 2.1.330). `StopFailure` lässt die Liste, wie sie ist.
+    fn next_background_tasks(&mut self, from_subagent: bool, event: &Value) {
+        match event["hook_event_name"].as_str() {
+            Some("Stop") if !from_subagent => self.background_tasks = background_tasks_of(event),
+            Some("PostToolUse") => {
+                let response = &event["tool_response"];
+                let Some(id) = response["backgroundTaskId"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                else {
+                    return;
+                };
+                if response["backgroundEndsWithFinalResponse"] == true
+                    || self.background_tasks.iter().any(|task| task.id == id)
+                {
+                    return;
+                }
+                let kind = task_kind_of(event["tool_name"].as_str().unwrap_or_default());
+                self.background_tasks
+                    .push(BackgroundTask::new(id, kind, &event["tool_input"]));
+            }
+            _ => {}
+        }
+    }
+
     /// Lässt die Subagenten mit offener Rückfrage warten und die übrigen, die
     /// noch nicht fertig sind, arbeiten.
     fn mark_asking(&mut self) {
@@ -409,6 +473,46 @@ impl TrackedAgent {
                 };
             }
         }
+    }
+}
+
+/// Die laufenden Hintergrundaufgaben, die `event` in `background_tasks`
+/// meldet. Subagenten zählen nicht, sie erscheinen als Subagenten; Typen, die
+/// Kredr nicht kennt, zählen mit.
+fn background_tasks_of(event: &Value) -> Vec<BackgroundTask> {
+    let Some(tasks) = event["background_tasks"].as_array() else {
+        return Vec::new();
+    };
+    tasks
+        .iter()
+        .filter(|task| task["status"] == "running" && task["type"] != "subagent")
+        .filter_map(|task| {
+            let id = task["id"].as_str().filter(|id| !id.is_empty())?;
+            let kind = task["type"].as_str().unwrap_or_default().to_owned();
+            Some(BackgroundTask::new(id, kind, task))
+        })
+        .collect()
+}
+
+impl BackgroundTask {
+    /// Die Hintergrundaufgabe `id` vom Typ `kind`; Beschreibung und Befehl
+    /// stehen in `fields` unter `description` und `command`.
+    fn new(id: &str, kind: String, fields: &Value) -> BackgroundTask {
+        BackgroundTask {
+            id: id.to_owned(),
+            kind,
+            description: fields["description"].as_str().and_then(one_line),
+            command: fields["command"].as_str().map(str::to_owned),
+        }
+    }
+}
+
+/// Der Typ einer Hintergrundaufgabe, die das Werkzeug `tool` gestartet hat,
+/// wie `Stop` ihn nennen wird. Bis dahin genügt eine Annäherung.
+fn task_kind_of(tool: &str) -> String {
+    match tool {
+        "Bash" | "PowerShell" => "shell".to_owned(),
+        _ => tool.to_lowercase(),
     }
 }
 

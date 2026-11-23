@@ -967,6 +967,23 @@ button {
   background: var(--done);
 }
 
+/* Im Hintergrund: keine eigene Farbe, ein Ring im Grün von „fertig“, dessen
+   offener Ausschnitt langsam kreist. */
+.dot.background {
+  background: transparent;
+  border: 2px solid var(--done);
+  border-right-color: transparent;
+  animation: spin 2.4s linear infinite;
+}
+
+.dot.small.background {
+  border-width: 1.5px;
+}
+
+.state.background {
+  color: var(--done);
+}
+
 .state.working {
   color: var(--work);
 }

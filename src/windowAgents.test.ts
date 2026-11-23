@@ -53,6 +53,7 @@ function update(change: Partial<StatusUpdate> = {}): StatusUpdate {
     assignment: null,
     conversation: null,
     resumeFailed: false,
+    backgroundTasks: [],
     subagents: [],
     ...change,
   };
