@@ -33,8 +33,8 @@ Ein Tab im Hauptbereich, in dem eine Shell läuft (standardmäßig PowerShell).
 _Vermeiden_: Konsole, Shell-Fenster
 
 **Agent**:
-Eine Claude-Code-Sitzung, die in einem Terminal läuft.
-_Vermeiden_: Bot, KI, Claude-Terminal
+Eine Claude-Code-Sitzung, die in einem Terminal läuft, gleich ob Kredr sie gestartet oder die Person `claude` im Terminal aufgerufen hat. Ein Aufruf ohne Sitzung, etwa `claude -p` oder `claude --version`, ist kein Agent. Endet die Sitzung, ist das Terminal wieder ein gewöhnliches Terminal.
+_Vermeiden_: Bot, KI, Claude-Terminal, manueller Agent
 
 **Subagent**:
 Ein Helfer, den ein Agent für eine Teilaufgabe startet. Er läuft im Terminal seines Agenten, hat kein eigenes Gespräch und endet mit seiner Teilaufgabe.
