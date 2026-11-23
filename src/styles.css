@@ -591,6 +591,120 @@ button {
   padding: 6px 2px 0;
 }
 
+/* Ein Abschnitt je Projekt in der Agenten-Ansicht eines Workspace, Kopf wie in VS Code. */
+.agent-section {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-section-cards {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-section-head {
+  height: 22px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.agent-section-toggle {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  text-align: left;
+  font-weight: inherit;
+  text-transform: inherit;
+}
+
+.agent-section-toggle svg {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  transition: transform 0.1s;
+}
+
+.agent-section.collapsed .agent-section-toggle svg {
+  transform: rotate(-90deg);
+}
+
+.agent-section-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-section-counts {
+  display: flex;
+  gap: 8px;
+  font-weight: 400;
+  color: var(--dim);
+}
+
+.agent-section-counts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Beim Darüberfahren treten die Knöpfe an die Stelle der Statuspunkte. */
+.agent-section-actions {
+  display: none;
+  gap: 1px;
+}
+
+.agent-section-head:hover .agent-section-actions,
+.agent-section-head:focus-within .agent-section-actions {
+  display: flex;
+}
+
+.agent-section-head:hover .agent-section-counts,
+.agent-section-head:focus-within .agent-section-counts {
+  display: none;
+}
+
+.agent-section-actions button {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--dim);
+}
+
+.agent-section-actions button:hover {
+  background: #2a2d2e;
+  color: var(--text);
+}
+
+.agent-section-actions svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.link-button {
+  padding: 0;
+  color: #3794ff;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
 .card {
   text-align: left;
   border: 1px solid var(--border);

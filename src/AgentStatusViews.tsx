@@ -28,8 +28,8 @@ const tooltips: Record<AgentState, MessageKey> = {
   done: "agentStatus.doneTooltip",
 };
 
-/** Die Reihenfolge der Zähler in der Statusleiste. */
-const states: AgentState[] = ["working", "waiting", "done"];
+/** Die Reihenfolge der Zähler in der Statusleiste und in den Abschnitten der Agenten-Ansicht. */
+export const stateOrder: AgentState[] = ["working", "waiting", "done"];
 
 /** Der Farbpunkt eines Zustands mit Kurzbeschreibung beim Überfahren. */
 function Dot({ state, small = false }: { state: AgentState; small?: boolean }) {
@@ -222,7 +222,7 @@ export function AgentCounters({ statuses }: { statuses: AgentStatuses }) {
   const counts = countStates(useAgentStatuses(statuses).values());
   return (
     <>
-      {states
+      {stateOrder
         .filter((state) => counts[state] > 0)
         .map((state) => (
           <span key={state} className="agent-count">

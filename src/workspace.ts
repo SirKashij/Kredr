@@ -110,6 +110,52 @@ export function projectOfTab(projects: readonly string[], tab: Tab): string | nu
   return isOutsideProject(file) ? projectOf(projects, file) : first;
 }
 
+/** Ein Abschnitt der Agenten-Ansicht im Workspace. */
+export interface AgentSection {
+  /** Das Projekt des Abschnitts; `null` für „Außerhalb der Projekte“. */
+  project: string | null;
+  /** Die Terminals des Abschnitts in der Reihenfolge der Aufteilung. */
+  tabs: Tab[];
+}
+
+/**
+ * Die Terminals unter `tabs`, nach Projekten gruppiert: ein Abschnitt je
+ * Projekt in der Reihenfolge des Workspace, auch ohne Terminals, und zuletzt
+ * „Außerhalb der Projekte“, wenn ein Terminal außerhalb aller Projekte
+ * gestartet wurde. Dateien gehören in keinen Abschnitt.
+ */
+export function agentSections(projects: readonly string[], tabs: readonly Tab[]): AgentSection[] {
+  const sections: AgentSection[] = projects.map((project) => ({ project, tabs: [] }));
+  const outside: AgentSection = { project: null, tabs: [] };
+  for (const tab of tabs.filter(isTerminal)) {
+    const owner = projectOfTab(projects, tab);
+    (sections.find((section) => section.project === owner) ?? outside).tabs.push(tab);
+  }
+  return outside.tabs.length > 0 ? [...sections, outside] : sections;
+}
+
+/** Der Schlüssel des Abschnitts in `collapsedSections`. */
+function sectionKey(project: string | null): string {
+  return project === null ? "" : folderKey(project);
+}
+
+/** Ob der Abschnitt des Projekts (`null`: „Außerhalb der Projekte“) zugeklappt ist. */
+export function isSectionCollapsed(arrangement: Arrangement, project: string | null): boolean {
+  return arrangement.collapsedSections?.includes(sectionKey(project)) ?? false;
+}
+
+/**
+ * Klappt den Abschnitt des Projekts zu oder auf. Das gehört zur Aufteilung
+ * und wird mit ihr pro Workspace gespeichert.
+ */
+export function toggleSection(arrangement: Arrangement, project: string | null): Arrangement {
+  const key = sectionKey(project);
+  const current = arrangement.collapsedSections ?? [];
+  const next = current.includes(key) ? current.filter((other) => other !== key) : [...current, key];
+  const { collapsedSections: _, ...rest } = arrangement;
+  return next.length > 0 ? { ...rest, collapsedSections: next } : rest;
+}
+
 /** Was aus dem Entfernen eines Projekts aus dem Workspace wird. */
 export interface Removal {
   /** Der Workspace ohne das Projekt; er bleibt bestehen, auch leer. */

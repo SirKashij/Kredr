@@ -1,9 +1,17 @@
 import { expect, test } from "vitest";
 import type { AgentState, AgentStatus } from "./agentStatus";
-import { emptyArrangement, tabsOf, type Arrangement, type Tab } from "./arrangement";
+import {
+  emptyArrangement,
+  restoreArrangement,
+  tabsOf,
+  type Arrangement,
+  type Tab,
+} from "./arrangement";
 import {
   addProject,
+  agentSections,
   firstProject,
+  isSectionCollapsed,
   keepConversations,
   moveProject,
   projectOf,
@@ -13,6 +21,7 @@ import {
   removeProject,
   renameWorkspace,
   startPage,
+  toggleSection,
   type WindowContent,
 } from "./workspace";
 
@@ -132,6 +141,55 @@ const mixed: Arrangement = {
   nextId: 10,
 };
 const ids = (tabs: readonly Tab[]) => tabs.map((tab) => tab.id);
+
+test("die Agenten-Ansicht gruppiert Terminals nach Projekten in der Reihenfolge des Workspace", () => {
+  const sections = agentSections(three.projects, tabsOf(mixed));
+
+  // Dateien und die Versionskontrolle stehen nicht in der Agenten-Ansicht;
+  // ein Projekt ohne Terminals behält seinen Abschnitt, „Außerhalb“ kommt zuletzt.
+  expect(sections.map((section) => [section.project, ids(section.tabs)])).toEqual([
+    ["C:\\Projekte\\Web", ["t1"]],
+    ["C:\\Projekte\\Kern", ["t4"]],
+    ["C:\\Projekte\\Notizen", []],
+    [null, ["t6"]],
+  ]);
+});
+
+test("zugeklappte Abschnitte stehen in der Aufteilung und überstehen das Speichern", () => {
+  const folded = toggleSection(toggleSection(mixed, "C:\\Projekte\\Kern"), null);
+  const reopened = restoreArrangement(JSON.parse(JSON.stringify(folded)));
+
+  expect(isSectionCollapsed(reopened, "c:/projekte/kern/")).toBe(true);
+  expect(isSectionCollapsed(reopened, null)).toBe(true);
+  expect(isSectionCollapsed(reopened, "C:\\Projekte\\Web")).toBe(false);
+  expect(tabsOf(reopened)).toEqual(tabsOf(restoreArrangement(mixed)));
+
+  const unfolded = toggleSection(reopened, "C:\\Projekte\\Kern");
+  expect(isSectionCollapsed(unfolded, "C:\\Projekte\\Kern")).toBe(false);
+  expect(isSectionCollapsed(unfolded, null)).toBe(true);
+});
+
+test("zugeklappte Abschnitte bleiben auch ohne offenen Tab gespeichert", () => {
+  const folded = toggleSection(emptyArrangement, "C:\\Projekte\\Web");
+  const reopened = restoreArrangement(JSON.parse(JSON.stringify(folded)));
+
+  expect(isSectionCollapsed(reopened, "C:\\Projekte\\Web")).toBe(true);
+  expect(restoreArrangement({ ...folded, collapsedSections: [3, null] })).toEqual(emptyArrangement);
+});
+
+test("ohne Terminal außerhalb der Projekte gibt es keinen Abschnitt dafür", () => {
+  const inside: Tab[] = [
+    { id: "t1", agent: true, cwd: "c:/projekte/web/KERN" },
+    { id: "t2", cwd: "C:\\Projekte\\Web" },
+  ];
+  const sections = agentSections(["C:\\Projekte\\Web", "C:\\Projekte\\Web\\Kern"], inside);
+
+  // Das verschachtelte Projekt gewinnt, Groß- und Kleinschreibung zählt nicht.
+  expect(sections.map((section) => [section.project, ids(section.tabs)])).toEqual([
+    ["C:\\Projekte\\Web", ["t2"]],
+    ["C:\\Projekte\\Web\\Kern", ["t1"]],
+  ]);
+});
 
 test("beim Entfernen schließen genau die Terminals und Dateien des Projekts", () => {
   const removal = removeProject(three, mixed, "c:/projekte/kern")!;

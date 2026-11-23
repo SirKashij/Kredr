@@ -71,9 +71,11 @@ import {
   removeProject,
   renameWorkspace,
   startPage,
+  toggleSection,
   type WindowContent,
 } from "./workspace";
 import { Notice, type NoticeContent } from "./Notice";
+import { ProjectPicker } from "./ProjectPicker";
 
 /** Was der Kern auf „Projekt hinzufügen“ antwortet. */
 type AddProjectOutcome = { kind: "added"; content: WindowContent } | { kind: "openElsewhere" };
@@ -144,6 +146,8 @@ export function App() {
   const [fileList] = useState(() => new ProjectFileList());
   const [quickOpen, setQuickOpen] = useState(false);
   const [branchPicker, setBranchPicker] = useState(false);
+  /** Die offene Frage nach dem Projekt für einen neuen Agenten oder ein neues Terminal. */
+  const [projectPick, setProjectPick] = useState<{ agent: boolean } | null>(null);
   /** Der Hinweis, der gerade unten rechts steht. */
   const [notice, setNotice] = useState<NoticeContent | null>(null);
   const closeNotice = useCallback(() => setNotice(null), []);
@@ -410,10 +414,14 @@ export function App() {
     if (isFileView && line !== undefined) files.get(project, file).reveal({ line, ...position });
   }
 
-  /** Schließt „Datei per Namen öffnen“ und die Branch-Liste; die Tastatur geht zurück in den Hauptbereich. */
+  /**
+   * Schließt „Datei per Namen öffnen“, die Branch-Liste und die Projektauswahl;
+   * die Tastatur geht zurück in den Hauptbereich.
+   */
   const closeQuickPick = useCallback(() => {
     setQuickOpen(false);
     setBranchPicker(false);
+    setProjectPick(null);
     setFocusRequest((count) => count + 1);
   }, []);
 
@@ -490,8 +498,21 @@ export function App() {
     if (next === "search") setSearchFocus((count) => count + 1);
   }
 
-  /** „Neuer Agent“: öffnet ein Terminal, in dem sofort der Agent startet. */
-  const newAgent = (current: Arrangement) => openTab(current, true);
+  /**
+   * „Neuer Agent“ (`agent`: ein Terminal, in dem sofort der Agent startet)
+   * oder „Neues Terminal“ ohne Angabe des Projekts. Mit mehreren Projekten
+   * fragt Kredr per QuickPick, in welchem.
+   */
+  function startTerminal(agent: boolean) {
+    if (projects.length > 1) return setProjectPick({ agent });
+    update((current) => openTab(current, agent));
+  }
+
+  /** Öffnet das Terminal, nach dem die Projektauswahl gefragt hat, im gewählten Projekt. */
+  function startTerminalIn(project: string, agent: boolean) {
+    setProjectPick(null);
+    update((current) => openTabIn(current, project, agent));
+  }
 
   function run(command: Command) {
     if (command.kind === "openSettings") return setSettingsOpen(true);
@@ -500,9 +521,9 @@ export function App() {
     const focused = focusedGroupOf(arrangement);
     switch (command.kind) {
       case "newTerminal":
-        return update((current) => openTab(current));
+        return startTerminal(false);
       case "newAgent":
-        return update(newAgent);
+        return startTerminal(true);
       case "splitRight":
       case "splitDown": {
         // Ohne Gruppe gibt es nichts zu teilen; dann entsteht das erste Terminal.
@@ -831,8 +852,11 @@ export function App() {
           onShowChange={showChange}
           statuses={statuses}
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
-          onNewAgent={project ? () => update(newAgent) : undefined}
-          onNewTerminal={project ? () => update((current) => openTab(current)) : undefined}
+          onNewAgent={project ? () => startTerminal(true) : undefined}
+          onNewTerminal={project ? () => startTerminal(false) : undefined}
+          onToggleSection={(section) =>
+            setArrangement((current) => toggleSection(current, section))
+          }
           onOpenTerminalIn={(folder, agent) =>
             update((current) => openTabIn(current, folder, agent))
           }
@@ -869,10 +893,10 @@ export function App() {
           ) : (
             <div className="empty-main">
               <p>{t("terminal.none")}</p>
-              <button className="btn" onClick={() => update(newAgent)}>
+              <button className="btn" onClick={() => startTerminal(true)}>
                 {t("agent.new")}
               </button>
-              <button className="btn ghost" onClick={() => update((current) => openTab(current))}>
+              <button className="btn ghost" onClick={() => startTerminal(false)}>
                 {t("terminal.new")}
               </button>
             </div>
@@ -889,6 +913,14 @@ export function App() {
         />
       )}
       {branchPicker && project && <BranchPicker project={project} onClose={closeQuickPick} />}
+      {projectPick && (
+        <ProjectPicker
+          projects={projects}
+          agent={projectPick.agent}
+          onPick={(picked) => startTerminalIn(picked, projectPick.agent)}
+          onClose={closeQuickPick}
+        />
+      )}
       {notice && <Notice notice={notice} onClose={closeNotice} />}
       <footer className="status">
         <BranchStatus onToggle={() => setBranchPicker((open) => !open)} />

@@ -1,17 +1,27 @@
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { message } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { views, type View } from "./ActivityBar";
-import { useAgentStatuses, type AgentStatuses } from "./agentStatus";
-import { AgentCardStatus, AgentCardTop, SubagentSection } from "./AgentStatusViews";
+import {
+  countStates,
+  stateCounters,
+  useAgentStatuses,
+  type AgentStatuses,
+  type Statuses,
+} from "./agentStatus";
+import { AgentCardStatus, AgentCardTop, stateOrder, SubagentSection } from "./AgentStatusViews";
 import { focusedGroupOf, isTerminal, tabsOf, type Arrangement, type Tab } from "./arrangement";
+import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { Explorer } from "./Explorer";
-import { useT } from "./i18n/i18n";
+import { copyText, errorMessage, revealEntry } from "./fileOperations";
+import { plural, useT } from "./i18n/i18n";
+import { projectName } from "./project";
 import { SearchView, type SearchViewProps } from "./SearchView";
 import { useSettings } from "./settings";
 import { tabLabel, visibleAssignment } from "./tabLabel";
 import type { ChangedFile } from "./versionControlState";
 import { VersionControlView } from "./VersionControlView";
 import { isInterrupted } from "./windowAgents";
-import { projectsOf, type WindowContent } from "./workspace";
+import { agentSections, isSectionCollapsed, projectsOf, type WindowContent } from "./workspace";
 
 /** Zwischen diesen Breiten lässt sich die Seitenleiste ziehen (in Pixeln). */
 const MIN_WIDTH = 170;
@@ -28,6 +38,16 @@ interface AgentsViewProps {
   onNewAgent?: () => void;
   /** Öffnet ein gewöhnliches Terminal; fehlt ohne Projekt. */
   onNewTerminal?: () => void;
+  /** Klappt den Abschnitt des Projekts zu oder auf; `null` steht für „Außerhalb der Projekte“. */
+  onToggleSection: (project: string | null) => void;
+}
+
+/** Was die Agenten-Ansicht zusätzlich von der Seitenleiste bekommt. */
+interface AgentsViewContext {
+  content: WindowContent;
+  onOpenTerminalIn: (folder: string, agent: boolean) => void;
+  onAddProject: () => void;
+  onRemoveProject: (folder: string) => void;
 }
 
 /** Wie die Agenten ihre Subagenten zeigen, nach Tab. */
@@ -154,7 +174,15 @@ export function Sidebar({
       <div className="side-title">{t(title)}</div>
       <div className="side-body" hidden={showsExplorer || showsSearch}>
         {view === "agents" ? (
-          <AgentsView {...agents} collapsed={collapsed} showingAll={showingAll} />
+          <AgentsView
+            {...agents}
+            collapsed={collapsed}
+            showingAll={showingAll}
+            content={content}
+            onOpenTerminalIn={onOpenTerminalIn}
+            onAddProject={onAddProject}
+            onRemoveProject={onRemoveProject}
+          />
         ) : view === "versionControl" && project !== null ? (
           <VersionControlView onShowChange={onShowChange} />
         ) : (
@@ -207,7 +235,8 @@ export function Sidebar({
 /**
  * Die Agenten-Ansicht: oben die Agenten des Fensters als Karten mit
  * Agentenstatus, Laufzeit und letzter Aktion, darunter die gewöhnlichen
- * Terminals. Ein wartender Agent ist hervorgehoben.
+ * Terminals. Ein wartender Agent ist hervorgehoben. Im Workspace stehen sie
+ * in aufklappbaren Abschnitten je Projekt (siehe {@link AgentSectionView}).
  */
 function AgentsView({
   arrangement,
@@ -215,16 +244,21 @@ function AgentsView({
   onSelectTab,
   onNewAgent,
   onNewTerminal,
+  onToggleSection,
   collapsed,
   showingAll,
-}: AgentsViewProps & SubagentFolding) {
+  content,
+  onOpenTerminalIn,
+  onAddProject,
+  onRemoveProject,
+}: AgentsViewProps & SubagentFolding & AgentsViewContext) {
   const t = useT();
   const { settings } = useSettings();
   const known = useAgentStatuses(statuses);
+  const [menu, setMenu] = useState<{ x: number; y: number; project: string } | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
   // Dateiansichten gehören nicht in die Agenten-Ansicht.
   const tabs = tabsOf(arrangement).filter(isTerminal);
-  const agents = tabs.filter((tab) => tab.agent);
-  const terminals = tabs.filter((tab) => !tab.agent);
   const selected = focusedGroupOf(arrangement)?.activeTab;
   const card = (tab: Tab) => {
     const status = known.get(tab.id);
@@ -268,6 +302,37 @@ function AgentsView({
       </div>
     );
   };
+  /** Agenten zuerst, dann die gewöhnlichen Terminals, mit `heading` unter „Terminals“. */
+  const cards = (shown: readonly Tab[], heading: boolean) => {
+    const agents = shown.filter((tab) => tab.agent);
+    const terminals = shown.filter((tab) => !tab.agent);
+    return (
+      <>
+        {agents.map(card)}
+        {terminals.length > 0 && heading && <div className="sect">{t("sidebar.terminals")}</div>}
+        {terminals.map(card)}
+      </>
+    );
+  };
+  const projectMenu = (project: string): MenuItem[] => {
+    const name = projectName(project);
+    const report = (error: unknown) => {
+      const { key, values } = errorMessage(error, name);
+      message(t(key, values), { title: t("activity.agents"), kind: "error" });
+    };
+    return [
+      { label: t("explorer.agentHere"), onSelect: () => onOpenTerminalIn(project, true) },
+      { label: t("explorer.terminalHere"), onSelect: () => onOpenTerminalIn(project, false) },
+      {
+        label: t("explorer.reveal"),
+        separator: true,
+        onSelect: () => revealEntry(project, "").catch(report),
+      },
+      { label: t("explorer.copyPath"), onSelect: () => copyText(project).catch(report) },
+      { label: t("workspace.addProject"), separator: true, onSelect: onAddProject },
+      { label: t("workspace.removeProject"), onSelect: () => onRemoveProject(project) },
+    ];
+  };
   return (
     <div className="cards">
       <div className="side-actions">
@@ -288,10 +353,161 @@ function AgentsView({
           {t("terminal.new")}
         </button>
       </div>
-      {agents.map(card)}
-      {tabs.length === 0 && <p className="hint">{t("terminal.none")}</p>}
-      {terminals.length > 0 && <div className="sect">{t("sidebar.terminals")}</div>}
-      {terminals.map(card)}
+      {content.kind === "workspace" ? (
+        agentSections(content.projects, tabs).map(({ project, tabs: shown }) => (
+          <AgentSectionView
+            key={project ?? ""}
+            project={project}
+            tabs={shown}
+            statuses={known}
+            collapsed={isSectionCollapsed(arrangement, project)}
+            onToggle={() => onToggleSection(project)}
+            onOpenTerminalIn={onOpenTerminalIn}
+            onMenu={(x, y) => project !== null && setMenu({ x, y, project })}
+          >
+            {shown.length > 0
+              ? cards(
+                  shown,
+                  shown.some((tab) => tab.agent),
+                )
+              : // „Außerhalb der Projekte“ erscheint nur mit Terminals.
+                project !== null && (
+                  <p className="hint">
+                    {t("workspace.sectionEmpty")}{" "}
+                    <button className="link-button" onClick={() => onOpenTerminalIn(project, true)}>
+                      {t("workspace.startAgent")}
+                    </button>
+                  </p>
+                )}
+          </AgentSectionView>
+        ))
+      ) : (
+        <>
+          {cards(tabs, true)}
+          {tabs.length === 0 && <p className="hint">{t("terminal.none")}</p>}
+        </>
+      )}
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={projectMenu(menu.project)} onClose={closeMenu} />
+      )}
     </div>
+  );
+}
+
+/**
+ * Ein Abschnitt der Agenten-Ansicht im Workspace. Im Kopf stehen Name und
+ * Statuspunkte mit Anzahl; beim Darüberfahren erscheinen stattdessen Knöpfe
+ * für einen neuen Agenten oder ein neues Terminal im Projekt und „…“ für sein
+ * Kontextmenü. „Außerhalb der Projekte“ (`project` ist `null`) hat keine Knöpfe.
+ */
+function AgentSectionView({
+  project,
+  tabs,
+  statuses,
+  collapsed,
+  onToggle,
+  onOpenTerminalIn,
+  onMenu,
+  children,
+}: {
+  project: string | null;
+  tabs: readonly Tab[];
+  statuses: Statuses;
+  collapsed: boolean;
+  onToggle: () => void;
+  onOpenTerminalIn: (folder: string, agent: boolean) => void;
+  /** Öffnet das Kontextmenü des Projekts an dieser Stelle. */
+  onMenu: (x: number, y: number) => void;
+  children: ReactNode;
+}) {
+  const t = useT();
+  const name = project === null ? t("workspace.outsideProjects") : projectName(project);
+  const counts = countStates(tabs.flatMap((tab) => statuses.get(tab.id) ?? []));
+  return (
+    <section className={collapsed ? "agent-section collapsed" : "agent-section"}>
+      <div
+        className="agent-section-head"
+        onContextMenu={(event) => {
+          if (project === null) return;
+          event.preventDefault();
+          onMenu(event.clientX, event.clientY);
+        }}
+      >
+        <button
+          className="agent-section-toggle"
+          aria-expanded={!collapsed}
+          title={project ?? undefined}
+          onClick={onToggle}
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M2 3.5 5 6.5 8 3.5" />
+          </svg>
+          <span className="agent-section-name">{name}</span>
+        </button>
+        <span className="agent-section-counts">
+          {stateOrder
+            .filter((state) => counts[state] > 0)
+            .map((state) => {
+              const text = plural(t, counts[state], ...stateCounters[state]);
+              return (
+                <span key={state} role="img" title={text} aria-label={text}>
+                  <span className={`dot ${state}`} />
+                  {counts[state]}
+                </span>
+              );
+            })}
+        </span>
+        {project !== null && (
+          <span className="agent-section-actions">
+            <SectionButton
+              label={t("agent.newIn", { project: name })}
+              onClick={() => onOpenTerminalIn(project, true)}
+              path="M4 5.5h8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1zM8 2.5v3M6 9h.01M10 9h.01"
+            />
+            <SectionButton
+              label={t("terminal.newIn", { project: name })}
+              onClick={() => onOpenTerminalIn(project, false)}
+              path="m3 4 4 4-4 4M8 12h5"
+            />
+            <SectionButton
+              label={t("explorer.more")}
+              popup
+              onClick={(bounds) => onMenu(bounds.left, bounds.bottom)}
+              path="M3.5 8h.01M8 8h.01M12.5 8h.01"
+              strokeWidth={2.4}
+            />
+          </span>
+        )}
+      </div>
+      {!collapsed && <div className="agent-section-cards">{children}</div>}
+    </section>
+  );
+}
+
+/** Ein Symbolknopf im Kopf eines Abschnitts. */
+function SectionButton({
+  label,
+  path,
+  popup = false,
+  strokeWidth,
+  onClick,
+}: {
+  label: string;
+  path: string;
+  popup?: boolean;
+  strokeWidth?: number;
+  onClick: (bounds: DOMRect) => void;
+}) {
+  return (
+    <button
+      title={label}
+      aria-label={label}
+      aria-haspopup={popup ? "menu" : undefined}
+      onClick={(event) => onClick(event.currentTarget.getBoundingClientRect())}
+    >
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <path d={path} strokeWidth={strokeWidth} />
+      </svg>
+    </button>
   );
 }

@@ -147,6 +147,12 @@ export interface Arrangement {
    * (siehe `maximizedGroupOf`).
    */
   maximized?: string;
+  /**
+   * Die zugeklappten Abschnitte der Agenten-Ansicht im Workspace, je als
+   * Ordnerschlüssel des Projekts; „Außerhalb der Projekte“ als leere
+   * Zeichenkette. Siehe `toggleSection` in `workspace.ts`.
+   */
+  collapsedSections?: string[];
 }
 
 export const emptyArrangement: Arrangement = {
@@ -868,6 +874,27 @@ export function restoreArrangement(
   stored: unknown,
   exists: (path: string) => boolean = () => true,
   options: RestoreOptions = { resumeAgents: false },
+): Arrangement {
+  const restored = restoreLayout(stored, exists, options);
+  const collapsed = restoreCollapsed(stored);
+  return collapsed ? { ...restored, collapsedSections: collapsed } : restored;
+}
+
+/** Die zugeklappten Abschnitte der gespeicherten Aufteilung; fehlen sie oder sind unlesbar, keine. */
+function restoreCollapsed(stored: unknown): string[] | undefined {
+  if (typeof stored !== "object" || stored === null) return undefined;
+  const { version, collapsedSections: value } = stored as Raw;
+  if (version !== emptyArrangement.version || !Array.isArray(value) || value.length === 0) {
+    return undefined;
+  }
+  return value.every((key) => typeof key === "string") ? [...value] : undefined;
+}
+
+/** Gruppen, Tabs und Fokus der gespeicherten Aufteilung (siehe `restoreArrangement`). */
+function restoreLayout(
+  stored: unknown,
+  exists: (path: string) => boolean,
+  options: RestoreOptions,
 ): Arrangement {
   try {
     const raw = rawObject(stored);
