@@ -156,7 +156,11 @@ Bug reports and feature requests are welcome in the [issues](https://github.com/
 
 ## Acknowledgements
 
-Kredr stands on the shoulders of [Tauri](https://tauri.app), [xterm.js](https://xtermjs.org), [Monaco](https://microsoft.github.io/monaco-editor/), [portable-pty](https://github.com/wezterm/wezterm/tree/main/pty) and [ripgrep](https://github.com/BurntSushi/ripgrep) (`ignore`, `grep-searcher`).
+Kredr stands on the shoulders of [Tauri](https://tauri.app), [xterm.js](https://xtermjs.org), [Monaco](https://microsoft.github.io/monaco-editor/), [portable-pty](https://github.com/wezterm/wezterm/tree/main/pty) and [ripgrep](https://github.com/BurntSushi/ripgrep) (`ignore`, `grep-searcher`). All included packages and their licenses are listed in Kredr under Settings → Third-party licenses; `npm run build` collects them in `dist/THIRD_PARTY_LICENSES.txt`.
+
+## Security
+
+Please report vulnerabilities privately, not as public issues. See [SECURITY.md](SECURITY.md).
 
 ## License
 

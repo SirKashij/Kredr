@@ -134,8 +134,39 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             onChange={(event) => change({ resumeAgents: event.target.checked })}
           />
         </SettingRow>
+        <ThirdPartyLicenses />
       </div>
     </section>
+  );
+}
+
+/**
+ * Die Lizenzen der Pakete, die in Kredr stecken. `scripts/lizenzen.mjs` legt
+ * die Datei beim Bauen neben die Oberfläche; geladen wird sie erst beim
+ * Aufklappen. Unter `npm run tauri dev` gibt es sie nicht.
+ */
+function ThirdPartyLicenses() {
+  const t = useT();
+  const [text, setText] = useState<string | null>(null);
+  return (
+    <details
+      className="setting licenses"
+      onToggle={(event) => {
+        if (!event.currentTarget.open || text !== null) return;
+        fetch("/THIRD_PARTY_LICENSES.txt")
+          // Der Entwicklungsserver beantwortet fehlende Dateien mit index.html.
+          .then((response) =>
+            response.ok && response.headers.get("content-type")?.startsWith("text/plain")
+              ? response.text()
+              : Promise.reject(),
+          )
+          .then(setText, () => setText(t("settings.licenses.missing")));
+      }}
+    >
+      <summary className="setting-label">{t("settings.licenses")}</summary>
+      <span className="setting-hint">{t("settings.licenses.hint")}</span>
+      {text !== null && <pre>{text}</pre>}
+    </details>
   );
 }
 

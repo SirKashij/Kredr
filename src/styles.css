@@ -1534,6 +1534,24 @@ button {
   outline-offset: -1px;
 }
 
+.licenses summary {
+  cursor: pointer;
+}
+
+.licenses pre {
+  align-self: stretch;
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: var(--dim);
+  background: #181818;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+}
+
 /* Statusleiste */
 .status {
   height: 24px;
