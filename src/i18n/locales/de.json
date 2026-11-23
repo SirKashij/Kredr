@@ -150,7 +150,7 @@
   "settings.defaultShell": "Standard-Shell",
   "settings.defaultShell.hint": "Die Shell, mit der ein neues Terminal startet.",
   "settings.agentCommand": "Agent-Startbefehl",
-  "settings.agentCommand.hint": "Der Befehl, mit dem „Neuer Agent“ Claude Code startet. Zusätze wie „claude --continue“ sind möglich. In seinen PowerShell-Terminals überdeckt Kredr „claude“ mit einer eigenen Funktion, die immer das installierte Programm aufruft; so wird auch ein von Hand gestartetes „claude“ zum Agenten.",
+  "settings.agentCommand.hint": "Der Befehl, mit dem „Neuer Agent“ Claude Code startet. Zusätze wie „claude --continue“ sind möglich. In seinen Terminals überdeckt Kredr „claude“ mit einer eigenen Funktion, die immer das installierte Programm aufruft; so wird auch ein von Hand gestartetes „claude“ zum Agenten.",
   "settings.notifications": "Benachrichtigungen",
   "settings.notifications.hint": "Kredr zeigt eine Windows-Benachrichtigung, wenn ein Agent auf Eingabe wartet und das Fenster nicht im Vordergrund ist. Das Taskleisten-Symbol macht auch ohne Benachrichtigungen auf sich aufmerksam.",
   "settings.showAssignment": "Auftrag am Tab zeigen",
