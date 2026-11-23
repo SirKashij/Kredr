@@ -83,8 +83,10 @@ Working with several Claude Code agents at once quickly turns into juggling term
 1. Download the installer `Kredr_<version>_x64-setup.exe` from the [releases page](https://github.com/SirKashij/Kredr/releases/latest).
 2. Run it. Kredr is installed for the current user, no administrator rights required.
 
+The installer adds “Open with Kredr” to the Explorer context menu and a folder with the `kredr` command to your user `PATH`. Uninstalling Kredr (Windows Settings → Apps) removes both again.
+
 > [!NOTE]
-> The installer is not signed yet, so Windows SmartScreen shows a warning on first launch. Click “More info” → “Run anyway” to start it.
+> The installer is not signed, so Windows SmartScreen shows a warning on first launch. Click “More info” → “Run anyway” to start it.
 
 ### Requirements
 
