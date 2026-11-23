@@ -203,6 +203,21 @@ describe("Agenten des Fensters", () => {
     expect(agents.closingInterrupts(state.arrangement)).toBe(true);
   });
 
+  it("beendet beim Schließen die Hintergrundaufgaben eines Agenten, der zurückkommt", () => {
+    const shown = openTab(emptyArrangement, true);
+    const [tab] = tabsOf(shown);
+    const { terminals, state, agents } = windowWith(shown);
+    agents.terminal(tab, project);
+    const signals = terminals.find(tab.id)!.signals;
+
+    signals.onStatus(update({ state: "done", conversation: "abc-123" }));
+    expect(agents.closingEndsBackgroundTasks(state.arrangement)).toBe(false);
+
+    signals.onStatus(update({ state: "background", conversation: "abc-123" }));
+    expect(agents.closingEndsBackgroundTasks(state.arrangement)).toBe(true);
+    expect(agents.closingInterrupts(state.arrangement)).toBe(false);
+  });
+
   it("lässt ohne „Agenten beim Öffnen fortsetzen“ keinen Agenten zurückkommen", () => {
     const shown = openTab(emptyArrangement, true);
     const [tab] = tabsOf(shown);

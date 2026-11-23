@@ -3,7 +3,7 @@ import { mayCloseWindow, type ClosingWindow, type CloseQuestion } from "./closeW
 
 /** Ein Fenster, das der Test beschreibt; es merkt sich, was gefragt und gemeldet wurde. */
 function closing(
-  situation: { unsaved?: boolean; running?: boolean; working?: boolean },
+  situation: { unsaved?: boolean; running?: boolean; working?: boolean; background?: boolean },
   answer: (question: CloseQuestion) => boolean | Promise<boolean> = () => true,
 ) {
   const asked: CloseQuestion[] = [];
@@ -13,6 +13,7 @@ function closing(
     hasUnsavedFiles: () => situation.unsaved ?? false,
     hasRunningProcess: async () => situation.running ?? false,
     hasWorkingAgent: () => situation.working ?? false,
+    hasBackgroundAgent: () => situation.background ?? false,
     confirm: async (question) => {
       asked.push(question);
       return answer(question);
@@ -58,6 +59,23 @@ test("ein arbeitender Agent, der fortgesetzt wird, verlangt eine eigene Rückfra
   expect(confirmed.asked).toEqual(["workingAgent"]);
   expect(confirmed.saved()).toBe(1);
   expect(await mayCloseWindow(cancelled.window)).toBe(false);
+});
+
+test("ein Agent im Hintergrund, der fortgesetzt wird, verlangt eine eigene Rückfrage", async () => {
+  const confirmed = closing({ background: true });
+  const cancelled = closing({ background: true }, () => false);
+
+  expect(await mayCloseWindow(confirmed.window)).toBe(true);
+  expect(confirmed.asked).toEqual(["backgroundAgent"]);
+  expect(await mayCloseWindow(cancelled.window)).toBe(false);
+  expect(cancelled.saved()).toBe(0);
+});
+
+test("arbeitet zugleich ein Agent, kommt nur die Frage zum arbeitenden Agenten", async () => {
+  const both = closing({ unsaved: true, running: true, working: true, background: true });
+
+  expect(await mayCloseWindow(both.window)).toBe(true);
+  expect(both.asked).toEqual(["unsavedFiles", "runningProcess", "workingAgent"]);
 });
 
 test("zu jedem Anlass erscheint höchstens eine Frage", async () => {

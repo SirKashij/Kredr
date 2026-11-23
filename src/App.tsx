@@ -69,7 +69,8 @@ import {
   keepConversations,
   moveProject,
   projectsOf,
-  removalInterrupts,
+  removalQuestion,
+  type RemovalQuestion,
   removeProject,
   renameWorkspace,
   startPage,
@@ -296,6 +297,7 @@ export function App() {
       hasUnsavedFiles: () => files.anyDirty(),
       hasRunningProcess: () => terminals.anyHasChildProcess(resumed),
       hasWorkingAgent: () => agents.closingInterrupts(arrangement),
+      hasBackgroundAgent: () => agents.closingEndsBackgroundTasks(arrangement),
       confirm: (question) => {
         const [title, message] = texts[question];
         return confirm(t(message), {
@@ -323,6 +325,10 @@ export function App() {
             "terminal.closeWindowConfirm.message",
           ],
           workingAgent: ["agent.closeWindowConfirm.title", "agent.closeWindowConfirm.message"],
+          backgroundAgent: [
+            "agent.closeWindowConfirm.title",
+            "agent.closeWindowConfirm.backgroundMessage",
+          ],
         },
         "file.closeWindowConfirm.ok",
       );
@@ -754,6 +760,7 @@ export function App() {
         unsavedFiles: ["file.closeConfirm.title", "workspace.closeConfirm.unsavedFiles"],
         runningProcess: ["workspace.closeConfirm.title", "workspace.closeConfirm.runningProcess"],
         workingAgent: ["workspace.closeConfirm.title", "workspace.closeConfirm.workingAgent"],
+        backgroundAgent: ["workspace.closeConfirm.title", "workspace.closeConfirm.backgroundAgent"],
       },
       "workspace.close",
     );
@@ -774,9 +781,10 @@ export function App() {
   /**
    * „Projekt aus Workspace entfernen“: Terminals und Tabs des Projekts
    * schließen, seine Beobachter enden. Gingen dabei ungespeicherte Änderungen
-   * verloren oder würde ein arbeitender oder wartender Agent unterbrochen,
-   * fragt Kredr vorher. Die Gespräche seiner Agenten kommen in die eigene
-   * Aufteilung des Projekts und gehen beim nächsten Öffnen dort weiter.
+   * verloren, würde ein arbeitender oder wartender Agent unterbrochen oder
+   * endeten die Hintergrundaufgaben eines Agenten, fragt Kredr vorher. Die
+   * Gespräche seiner Agenten kommen in die eigene Aufteilung des Projekts und
+   * gehen beim nächsten Öffnen dort weiter.
    */
   async function removeProjectFromWindow(folder: string) {
     const name = projectName(folder);
@@ -795,10 +803,12 @@ export function App() {
     if (dirty && !(await ask("workspace.removeUnsaved.message", "file.closeConfirm.title"))) {
       return refocusTerminal();
     }
-    if (
-      removalInterrupts(removal.closing, statuses.snapshot()) &&
-      !(await ask("workspace.removeConfirm.message", "workspace.removeConfirm.title"))
-    ) {
+    const question = removalQuestion(removal.closing, statuses.snapshot());
+    const messages: Record<RemovalQuestion, MessageKey> = {
+      interruptsAgent: "workspace.removeConfirm.message",
+      endsBackgroundTasks: "workspace.removeConfirm.backgroundMessage",
+    };
+    if (question && !(await ask(messages[question], "workspace.removeConfirm.title"))) {
       return refocusTerminal();
     }
     // Während der Rückfragen können sich Fensterinhalt und Aufteilung geändert haben.

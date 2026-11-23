@@ -114,6 +114,15 @@ export class WindowAgents<T> {
     return this.returning(arrangement).some((tabId) => statuses.get(tabId)?.state === "working");
   }
 
+  /**
+   * Ob Schließen die Hintergrundaufgaben eines Agenten beendete: Er kommt
+   * zurück, steht aber „im Hintergrund“. Die Shells der Aufgaben kommen nicht mit.
+   */
+  closingEndsBackgroundTasks(arrangement: Arrangement): boolean {
+    const statuses = this.statuses.snapshot();
+    return this.returning(arrangement).some((tabId) => statuses.get(tabId)?.state === "background");
+  }
+
   private open(tab: Tab, project: string): T {
     const start: TerminalStart = {
       cwd: tab.cwd ?? project,

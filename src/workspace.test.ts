@@ -19,7 +19,7 @@ import {
   projectOf,
   projectOfTab,
   projectsOf,
-  removalInterrupts,
+  removalQuestion,
   removeProject,
   renameWorkspace,
   startPage,
@@ -240,11 +240,34 @@ test("gefragt wird, wenn dabei ein Agent arbeitet oder wartet", () => {
   const closing = removeProject(three, mixed, "C:\\Projekte\\Kern")!.closing;
   const elsewhere = new Map([["t1", statusOf("working")]]);
 
-  expect(removalInterrupts(closing, new Map())).toBe(false);
-  expect(removalInterrupts(closing, elsewhere)).toBe(false);
-  expect(removalInterrupts(closing, new Map([["t4", statusOf("done")]]))).toBe(false);
-  expect(removalInterrupts(closing, new Map([["t4", statusOf("working")]]))).toBe(true);
-  expect(removalInterrupts(closing, new Map([["t4", statusOf("waiting")]]))).toBe(true);
+  expect(removalQuestion(closing, new Map())).toBeNull();
+  expect(removalQuestion(closing, elsewhere)).toBeNull();
+  expect(removalQuestion(closing, new Map([["t4", statusOf("done")]]))).toBeNull();
+  expect(removalQuestion(closing, new Map([["t4", statusOf("working")]]))).toBe("interruptsAgent");
+  expect(removalQuestion(closing, new Map([["t4", statusOf("waiting")]]))).toBe("interruptsAgent");
+});
+
+test("ein Agent im Hintergrund verlangt eine eigene Rückfrage", () => {
+  const closing = removeProject(three, mixed, "C:\\Projekte\\Kern")!.closing;
+  const elsewhere = new Map([["t1", statusOf("background")]]);
+
+  expect(removalQuestion(closing, elsewhere)).toBeNull();
+  expect(removalQuestion(closing, new Map([["t4", statusOf("background")]]))).toBe(
+    "endsBackgroundTasks",
+  );
+});
+
+test("arbeitet zugleich ein Agent, kommt nur die Frage zum Unterbrechen", () => {
+  const closing: Tab[] = [
+    { id: "a1", agent: true },
+    { id: "a2", agent: true },
+  ];
+  const both = new Map([
+    ["a1", statusOf("background")],
+    ["a2", statusOf("working")],
+  ]);
+
+  expect(removalQuestion(closing, both)).toBe("interruptsAgent");
 });
 
 const interrupted: Tab = {

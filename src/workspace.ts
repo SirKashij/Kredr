@@ -358,16 +358,24 @@ export function keepConversations(
   return addGroupBeside(kept, added);
 }
 
+/** Wonach Kredr vor dem Entfernen eines Projekts fragt, wenn dabei ein Agent etwas verliert. */
+export type RemovalQuestion = "interruptsAgent" | "endsBackgroundTasks";
+
 /**
- * Ob das Schließen dieser Tabs einen Agenten unterbräche, der arbeitet oder
- * auf Eingabe wartet; dann fragt Kredr vorher nach. Ein fertiger Agent
- * verliert nichts.
+ * Wonach Kredr vor dem Schließen dieser Tabs fragt: `interruptsAgent`, wenn
+ * ein Agent arbeitet oder auf Eingabe wartet, sonst `endsBackgroundTasks`,
+ * wenn einer „im Hintergrund“ steht, denn seine Hintergrundaufgaben enden mit
+ * dem Terminal. Es kommt höchstens eine Frage. Ein fertiger Agent verliert
+ * nichts; dann `null`.
  */
-export function removalInterrupts(closing: readonly Tab[], statuses: Statuses): boolean {
-  return closing.some((tab) => {
-    const state = statuses.get(tab.id)?.state;
-    return state === "working" || state === "waiting";
-  });
+export function removalQuestion(
+  closing: readonly Tab[],
+  statuses: Statuses,
+): RemovalQuestion | null {
+  const states = closing.map((tab) => statuses.get(tab.id)?.state);
+  if (states.some((state) => state === "working" || state === "waiting")) return "interruptsAgent";
+  if (states.includes("background")) return "endsBackgroundTasks";
+  return null;
 }
 
 /**
