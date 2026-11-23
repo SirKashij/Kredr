@@ -6,7 +6,7 @@
 use std::fmt;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -30,6 +30,22 @@ pub enum Shell {
     Powershell,
     /// Die Bash aus Git für Windows.
     GitBash,
+}
+
+impl Shell {
+    /// `text` in einfachen Anführungszeichen, so dass es in dieser Shell als
+    /// ein Argument ankommt, auch mit Leerzeichen oder Apostroph.
+    pub fn quote(self, text: &str) -> String {
+        // In einfachen Anführungszeichen werten beide Shells nichts aus, auch
+        // keine Backslashes eines Windows-Pfads. Nur der Apostroph
+        // unterscheidet sich: PowerShell verdoppelt ihn, Bash kennt innerhalb
+        // der Anführungszeichen keine Maskierung und setzt ihn dazwischen.
+        let apostrophe = match self {
+            Shell::Powershell => "''",
+            Shell::GitBash => r"'\''",
+        };
+        format!("'{}'", text.replace('\'', apostrophe))
+    }
 }
 
 /// Die Shells, die sich auf diesem Rechner starten lassen. PowerShell steht
@@ -272,12 +288,16 @@ fn shell_command(
         Shell::GitBash => {
             let bash = git_bash().ok_or_else(|| error("Git Bash not found"))?;
             let mut command = CommandBuilder::new(bash);
-            // Als Anmelde-Shell lädt Bash das Profil von Git für Windows,
-            // das unter anderem den Suchpfad für die Unix-Werkzeuge setzt.
-            command.args(["--login", "-i"]);
-            if let Some(start_command) = start_command {
-                // Bash endet nach `-c`; eine zweite Bash hält das Terminal offen.
-                command.args(["-c", &format!("{start_command}\nexec bash --login -i")]);
+            match start_command {
+                // Als Anmelde-Shell lädt Bash das Profil von Git für Windows,
+                // das unter anderem den Suchpfad für die Unix-Werkzeuge setzt.
+                None => command.args(["--login", "-i"]),
+                Some(start_command) => {
+                    let start_file = write_bash_start_file(start_command)?;
+                    command.arg("--rcfile");
+                    command.arg(start_file);
+                    command.arg("-i");
+                }
             }
             // Ohne diese Angabe wechselt das Profil in den Benutzerordner.
             command.env("CHERE_INVOKING", "1");
@@ -285,6 +305,34 @@ fn shell_command(
             Ok(command)
         }
     }
+}
+
+/// Schreibt die Startdatei einer interaktiven Git Bash, die `start_command`
+/// ausführt, und liefert ihren Pfad.
+///
+/// Sie lädt zuerst die Profile wie eine Anmelde-Shell und führt danach den
+/// Befehl in derselben Shell aus, die anschließend auf Eingaben wartet. So
+/// gilt, was der Befehl festlegt, etwa eine Funktion `claude`, auch nach der
+/// `.bashrc` der Person. Bash liest die Datei beim Start ganz ein; ihre erste
+/// Zeile löscht sie deshalb gleich wieder.
+fn write_bash_start_file(start_command: &str) -> Result<String, TerminalError> {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let number = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let file = std::env::temp_dir().join(format!("kredr-bash-{}-{number}.sh", std::process::id()));
+    // Bash versteht Windows-Pfade mit Schrägstrichen.
+    let path = file.to_string_lossy().replace('\\', "/");
+    let script = format!(
+        "/usr/bin/rm -f -- {}\n\
+         if [ -f /etc/profile ]; then . /etc/profile; fi\n\
+         if [ -f ~/.bash_profile ]; then . ~/.bash_profile\n\
+         elif [ -f ~/.bash_login ]; then . ~/.bash_login\n\
+         elif [ -f ~/.profile ]; then . ~/.profile\n\
+         fi\n\
+         {start_command}\n",
+        Shell::GitBash.quote(&path)
+    );
+    std::fs::write(&file, script).map_err(error)?;
+    Ok(path)
 }
 
 /// Die Bash aus Git für Windows, wenn es installiert ist. Ein `bash.exe` aus

@@ -60,14 +60,15 @@ pub fn with_status_settings(command: &str, settings: &Path, shell: Shell) -> Str
 /// ohne Befehl startet. `hooks` sagt, worüber der Agent des Terminals seinen
 /// Status meldet, `agent_command` ist der Startbefehl seines Agenten.
 ///
-/// In PowerShell legt der Befehl nach dem Profil der Person eine Funktion
-/// `claude` an. Sie ruft immer das installierte Programm `claude` mit der
-/// Konfigurationsdatei auf, so dass auch ein von Hand gestartetes `claude`
-/// seinen Agentenstatus meldet (ADR 0006). Kehrt das Programm zurück, meldet
-/// sie das, auch nach einem Absturz oder Strg+C. Ein Alias oder eine Funktion
-/// `claude` aus dem Profil ist dann wirkungslos. Ein Agent, den Kredr mit
-/// `claude` startet, läuft über dieselbe Funktion; ein Startbefehl mit einem
-/// Pfad zu `claude` meldet seine Rückkehr ebenso.
+/// Der Befehl legt nach dem Profil der Person (PowerShell) bzw. nach ihrer
+/// `.bashrc` (Git Bash) eine Funktion `claude` an. Sie ruft immer das
+/// installierte Programm `claude` mit der Konfigurationsdatei auf, so dass
+/// auch ein von Hand gestartetes `claude` seinen Agentenstatus meldet (ADR
+/// 0006). Kehrt das Programm zurück, meldet sie das, auch nach einem Absturz
+/// oder Strg+C. Ein Alias oder eine Funktion `claude` aus dem Profil ist dann
+/// wirkungslos. Ein Agent, den Kredr mit `claude` startet, läuft über
+/// dieselbe Funktion; ein Startbefehl mit einem Pfad zu `claude` meldet seine
+/// Rückkehr ebenso.
 pub fn shell_start_command(
     shell: Shell,
     hooks: Option<&TerminalHooks>,
@@ -76,25 +77,78 @@ pub fn shell_start_command(
     let Some(hooks) = hooks else {
         return agent_command.map(str::to_owned);
     };
-    let with_settings = |command: &str| with_status_settings(command, &hooks.settings, shell);
+    let (function, separator) = match shell {
+        Shell::Powershell => (powershell_claude_function(hooks), "; "),
+        Shell::GitBash => (bash_claude_function(hooks), "\n"),
+    };
+    let agent_command = match agent_command {
+        None => return Some(function),
+        Some(command) if calls_claude_function(command, shell) => command.to_owned(),
+        Some(command) if claude_program(command).is_some() => reporting_exit(
+            shell,
+            &with_status_settings(command, &hooks.settings, shell),
+            &hooks.exited_url,
+        ),
+        Some(command) => command.to_owned(),
+    };
+    Some(format!("{function}{separator}{agent_command}"))
+}
+
+/// `command`, gefolgt von der Meldung an `url`, dass er zurückgekehrt ist;
+/// auch nach einem Absturz oder Strg+C.
+fn reporting_exit(shell: Shell, command: &str, url: &str) -> String {
     match shell {
-        Shell::Powershell => {
-            let function = powershell_claude_function(hooks);
-            Some(match agent_command {
-                None => function,
-                Some(command) if calls_claude_function(command) => {
-                    format!("{function}; {command}")
-                }
-                Some(command) if claude_program(command).is_some() => format!(
-                    "{function}; try {{ {} }} finally {{ {} }}",
-                    with_settings(command),
-                    powershell_exit_report(&hooks.exited_url)
-                ),
-                Some(command) => format!("{function}; {command}"),
-            })
-        }
-        Shell::GitBash => agent_command.map(with_settings),
+        Shell::Powershell => format!(
+            "try {{ {command} }} finally {{ {} }}",
+            powershell_exit_report(url)
+        ),
+        // Der `trap` der Subshell läuft auch, wenn ein Signal sie beendet.
+        Shell::GitBash => format!("( trap '{}' EXIT; {command} )", bash_exit_report(url)),
     }
+}
+
+/// Bash-Befehle, die per POST an `url` melden, dass `claude` zurückgekehrt
+/// ist. Sie gehen über die Netzwerk-Umleitung von Bash und brauchen kein
+/// weiteres Programm. Was dabei schiefgeht, bleibt still; ist Kredr fort,
+/// lehnt der Rechner die Verbindung sofort ab. Enthält keine Apostrophe,
+/// damit es in einen `trap` passt.
+fn bash_exit_report(url: &str) -> String {
+    // Die Adresse stammt vom Empfänger: `http://<host>:<port>/<pfad>`.
+    let Some((host, port, path)) = url.strip_prefix("http://").and_then(|rest| {
+        let (authority, path) = rest.split_once('/')?;
+        let (host, port) = authority.rsplit_once(':')?;
+        Some((host, port, path))
+    }) else {
+        return ":".to_owned();
+    };
+    format!(
+        "{{ exec 3<>/dev/tcp/{host}/{port} && \
+         printf \"POST /{path} HTTP/1.0\\r\\nContent-Length: 0\\r\\n\\r\\n\" >&3 && \
+         read -r -t 3 <&3; exec 3>&-; }} 2>/dev/null"
+    )
+}
+
+/// Die Bash-Funktion `claude`, das Gegenstück zu
+/// `powershell_claude_function`. Ein Alias hätte in Bash Vorrang vor jeder
+/// Funktion und wird deshalb entfernt; `command` überspringt Funktionen und
+/// ruft das Programm aus dem Suchpfad. Gibt es keines, meldet Bash selbst,
+/// dass `claude` nicht gefunden wurde, und es gibt keine Rückkehr zu melden.
+fn bash_claude_function(hooks: &TerminalHooks) -> String {
+    let settings = quoted(&hooks.settings, Shell::GitBash);
+    let sessionless_options = SESSIONLESS_OPTIONS.join("|");
+    let session = reporting_exit(
+        Shell::GitBash,
+        &format!("command claude --settings {settings} \"$@\""),
+        &hooks.exited_url,
+    );
+    format!(
+        "unalias claude 2>/dev/null\n\
+         function claude {{\n\
+         if [[ $# -gt 0 && $1 =~ {SUBCOMMAND_PATTERN} ]] || ! type -P claude >/dev/null; then command claude \"$@\"; return; fi\n\
+         local arg; for arg in \"$@\"; do case $arg in {sessionless_options}) command claude \"$@\"; return;; esac; done\n\
+         {session}\n\
+         }}"
+    )
 }
 
 /// PowerShell-Befehle, die per POST an `url` melden, dass `claude`
@@ -161,22 +215,22 @@ const SESSIONLESS_OPTIONS: [&str; 6] = ["-p", "--print", "-v", "--version", "-h"
 const SUBCOMMAND_PATTERN: &str = "^[a-z][a-z-]*$";
 
 /// Ob `command` das Programm schlicht beim Namen `claude` aufruft und damit
-/// in PowerShell bei der Funktion aus `powershell_claude_function` landet.
-fn calls_claude_function(command: &str) -> bool {
-    claude_program(command).is_some_and(|(program, _)| program.eq_ignore_ascii_case("claude"))
+/// bei der Funktion aus `powershell_claude_function` bzw.
+/// `bash_claude_function` landet.
+///
+/// PowerShell unterscheidet bei Namen von Funktionen nicht zwischen Groß-
+/// und Kleinschreibung, Bash schon: Dort findet `Claude` das Programm
+/// direkt, und der Befehl bekommt die Konfigurationsdatei wie ein Pfad.
+fn calls_claude_function(command: &str, shell: Shell) -> bool {
+    claude_program(command).is_some_and(|(program, _)| match shell {
+        Shell::Powershell => program.eq_ignore_ascii_case("claude"),
+        Shell::GitBash => program == "claude",
+    })
 }
 
 /// Der Pfad in einfachen Anführungszeichen, wie `shell` ihn verlangt.
 fn quoted(path: &Path, shell: Shell) -> String {
-    // In einfachen Anführungszeichen werten beide Shells nichts aus, auch
-    // keine Backslashes eines Windows-Pfads. Nur der Apostroph im Pfad
-    // unterscheidet sich: PowerShell verdoppelt ihn, Bash kennt innerhalb
-    // der Anführungszeichen keine Maskierung und setzt ihn dazwischen.
-    let apostrophe = match shell {
-        Shell::Powershell => "''",
-        Shell::GitBash => r"'\''",
-    };
-    format!("'{}'", path.to_string_lossy().replace('\'', apostrophe))
+    shell.quote(&path.to_string_lossy())
 }
 
 /// Der Startbefehl `command`, ergänzt um das Fortsetzen des Gesprächs

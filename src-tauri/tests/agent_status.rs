@@ -2428,8 +2428,7 @@ fn der_agent_startet_mit_der_konfiguration_und_das_projekt_bleibt_unberuehrt() {
 
 #[test]
 fn in_git_bash_kommt_die_konfiguration_als_ein_argument_beim_agenten_an() {
-    if !available_shells().contains(&Shell::GitBash) {
-        eprintln!("Git Bash wurde nicht gefunden; Test übersprungen");
+    if !git_bash_found() {
         return;
     }
     let folder = runtime_folder("git-bash");
@@ -2509,31 +2508,54 @@ struct ShellWithClaude {
 
 impl ShellWithClaude {
     fn open(name: &str, script: &str, agent_command: Option<&str>) -> ShellWithClaude {
+        ShellWithClaude::open_in(Shell::Powershell, name, script, agent_command)
+    }
+
+    /// Wie `open`, aber eine Git Bash; der Test-Ersatz ist ein Shell-Skript
+    /// `claude`, das `script` ausführt.
+    fn open_git_bash(name: &str, script: &str, agent_command: Option<&str>) -> ShellWithClaude {
+        ShellWithClaude::open_in(Shell::GitBash, name, script, agent_command)
+    }
+
+    fn open_in(
+        shell: Shell,
+        name: &str,
+        script: &str,
+        agent_command: Option<&str>,
+    ) -> ShellWithClaude {
         let folder = runtime_folder(name);
         let programs = folder.join("programme");
         std::fs::create_dir_all(&programs).unwrap();
-        std::fs::write(
-            programs.join("claude.cmd"),
-            format!("@echo off\r\n{script}\r\n"),
-        )
-        .unwrap();
+        let (program, content) = match shell {
+            Shell::Powershell => ("claude.cmd", format!("@echo off\r\n{script}\r\n")),
+            Shell::GitBash => ("claude", format!("#!/bin/sh\n{script}\n")),
+        };
+        std::fs::write(programs.join(program), content).unwrap();
         let status = AgentStatus::start(folder.join("laufzeit"), no_task_outputs()).unwrap();
         let registered = Registered::new(&status, 1);
-        let start = shell_start_command(Shell::Powershell, Some(&registered.hooks), agent_command)
+        let start = shell_start_command(shell, Some(&registered.hooks), agent_command)
             .expect("Mit Konfigurationsdatei sollte es einen Startbefehl geben");
-        let profile = format!("$env:Path = '{};' + $env:Path", programs.display());
+        let start = match shell {
+            Shell::Powershell => {
+                format!("$env:Path = '{};' + $env:Path; {start}", programs.display())
+            }
+            Shell::GitBash => format!(
+                "PATH=\"$(cygpath -u '{}'):$PATH\"\n{start}",
+                programs.display()
+            ),
+        };
         let (sender, events) = channel();
         let options = TerminalOptions {
-            shell: Shell::Powershell,
+            shell,
             cwd: folder,
             cols: 200,
             rows: 30,
-            start_command: Some(format!("{profile}; {start}")),
+            start_command: Some(start),
         };
         let terminal = Terminal::open(options, move |event| {
             let _ = sender.send(event);
         })
-        .expect("PowerShell sollte starten");
+        .expect("Die Shell sollte starten");
         ShellWithClaude {
             terminal,
             events,
@@ -2645,6 +2667,118 @@ fn aufrufe_von_claude_ohne_sitzung_melden_kein_ende() {
         std::fs::read_to_string(&args).is_ok_and(|text| text.contains("mcp list"))
     });
     // Die Meldung wäre spätestens zusammen mit dem nächsten Befehl da.
+    shell.send_line("claude --version");
+    std::thread::sleep(Duration::from_secs(2));
+
+    shell.registered.expect_silence();
+}
+
+// Dasselbe in Git Bash: Dort meldet ein `trap` die Rückkehr.
+
+/// Git Bash gehört zu Git für Windows; ohne es gibt es hier nichts zu prüfen.
+fn git_bash_found() -> bool {
+    let found = available_shells().contains(&Shell::GitBash);
+    if !found {
+        eprintln!("Git Bash wurde nicht gefunden; Test übersprungen");
+    }
+    found
+}
+
+#[test]
+fn kehrt_claude_in_git_bash_zurueck_kommt_das_ende_der_sitzung_an() {
+    if !git_bash_found() {
+        return;
+    }
+    for (case, script) in [("regulaer", "echo gelaufen"), ("fehler", "exit 3")] {
+        let shell = ShellWithClaude::open_git_bash(&format!("bash-rueckkehr-{case}"), script, None);
+
+        shell.send_line("claude --model x");
+
+        assert!(shell.next_update().session_ended, "{case}");
+    }
+}
+
+/// Ein Test-Ersatz für Git Bash, der die Windows-Kennung seines Prozesses in
+/// `pid.txt` neben sich schreibt und dann wartet.
+const BASH_CLAUDE_WAITING: &str = "cat /proc/$$/winpid > \"$(dirname \"$0\")/pid.txt\"\nsleep 60";
+
+/// Wartet, bis der Test-Ersatz aus `BASH_CLAUDE_WAITING` läuft.
+fn wait_for_waiting_claude(shell: &ShellWithClaude) -> String {
+    let pid_file = shell.programs.join("pid.txt");
+    let mut pid = String::new();
+    shell.wait_until("claude wurde nie gestartet", || {
+        pid = std::fs::read_to_string(&pid_file).unwrap_or_default();
+        pid.trim().parse::<u32>().is_ok()
+    });
+    pid.trim().to_owned()
+}
+
+#[test]
+fn wird_claude_in_git_bash_hart_beendet_kommt_das_ende_der_sitzung_an() {
+    if !git_bash_found() {
+        return;
+    }
+    let shell = ShellWithClaude::open_git_bash("bash-hart-beendet", BASH_CLAUDE_WAITING, None);
+    shell.send_line("claude");
+    let pid = wait_for_waiting_claude(&shell);
+
+    let killed = std::process::Command::new("taskkill")
+        .args(["/F", "/T", "/PID", &pid])
+        .output()
+        .unwrap();
+    assert!(killed.status.success(), "{killed:?}");
+
+    assert!(shell.next_update().session_ended);
+}
+
+#[test]
+fn bricht_strg_c_claude_in_git_bash_ab_kommt_das_ende_der_sitzung_an() {
+    if !git_bash_found() {
+        return;
+    }
+    let shell = ShellWithClaude::open_git_bash("bash-strg-c", BASH_CLAUDE_WAITING, None);
+    shell.send_line("claude");
+    wait_for_waiting_claude(&shell);
+
+    shell.terminal.write(b"\x03").unwrap();
+
+    assert!(shell.next_update().session_ended);
+}
+
+#[test]
+fn ein_agent_von_kredr_meldet_sein_ende_auch_in_git_bash() {
+    if !git_bash_found() {
+        return;
+    }
+    let name = "bash-agent-mit-pfad";
+    let program = runtime_folder(name).join("programme").join("claude");
+    let with_path = format!("{} --model x", program.display()).replace('\\', "/");
+    for (case, command) in [
+        ("bash-agent-von-kredr", "claude --resume abc-123"),
+        (name, with_path.as_str()),
+    ] {
+        let shell = ShellWithClaude::open_git_bash(case, "exit 1", Some(command));
+
+        assert!(shell.next_update().session_ended, "{case}");
+    }
+}
+
+#[test]
+fn aufrufe_von_claude_ohne_sitzung_melden_in_git_bash_kein_ende() {
+    if !git_bash_found() {
+        return;
+    }
+    let shell = ShellWithClaude::open_git_bash(
+        "bash-ohne-sitzung-kein-ende",
+        "echo \"$@\" >> \"$(dirname \"$0\")/args.txt\"",
+        None,
+    );
+    let args = shell.programs.join("args.txt");
+
+    shell.send_line("claude --version; claude mcp list");
+    shell.wait_until("claude wurde nie aufgerufen", || {
+        std::fs::read_to_string(&args).is_ok_and(|text| text.contains("mcp list"))
+    });
     shell.send_line("claude --version");
     std::thread::sleep(Duration::from_secs(2));
 

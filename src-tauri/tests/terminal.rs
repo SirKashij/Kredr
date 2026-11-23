@@ -464,3 +464,146 @@ fn ohne_konfigurationsdatei_startet_das_terminal_wie_bisher() {
         Some("claude --resume x")
     );
 }
+
+// Git Bash verhält sich wie PowerShell: Auch dort legt Kredr eine Funktion
+// `claude` an.
+
+/// Ein Ordner mit einem Test-Ersatz `claude` für Git Bash, der jedes Argument
+/// in eckigen Klammern ausgibt. Geliefert wird die Bash-Zeile, die den Ordner
+/// vor alle anderen im Suchpfad stellt.
+fn fake_claude_for_bash(name: &str) -> String {
+    let folder = temp_project(&format!("bash-claude-{name}"));
+    std::fs::write(
+        folder.join("claude"),
+        format!("#!/bin/sh\nprintf '{FAKE_CLAUDE_MARK}'\nprintf '[%s] ' \"$@\"\necho\n"),
+    )
+    .expect("Test-Ersatz sollte anlegbar sein");
+    format!("PATH=\"$(cygpath -u '{}'):$PATH\"", folder.display())
+}
+
+/// Öffnet eine Git Bash, wie Kredr sie startet. `profile` läuft vorher, so
+/// wie die `.bashrc` der Person.
+fn open_git_bash(name: &str, profile: &str, agent_command: Option<&str>) -> TestTerminal {
+    // Ohne Empfänger: Die Meldung der Rückkehr von `claude` geht ins Leere.
+    let hooks = TerminalHooks {
+        settings: terminal_settings(),
+        exited_url: "http://127.0.0.1:9/hook/7/kennwort/exited".to_owned(),
+    };
+    let start = shell_start_command(Shell::GitBash, Some(&hooks), agent_command)
+        .expect("Mit Konfigurationsdatei sollte es einen Startbefehl geben");
+    let start = format!("{profile}\n{start}");
+    TestTerminal::open_with(temp_project(name), Shell::GitBash, Some(&start))
+}
+
+/// Die Argumente, wie der Test-Ersatz für Git Bash sie ausgibt.
+fn bracketed(args: &[&str]) -> String {
+    args.iter()
+        .map(|arg| format!("[{arg}]"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[test]
+fn claude_in_git_bash_bekommt_die_konfigurationsdatei_des_terminals() {
+    if !git_bash_found() {
+        return;
+    }
+    let path = fake_claude_for_bash("argumente");
+    let mut terminal = open_git_bash("bash-claude-argumente", &path, None);
+
+    terminal.send_line("claude --model x \"zwei Worte\"");
+
+    let settings = terminal_settings().display().to_string();
+    assert_eq!(
+        terminal.claude_args(),
+        bracketed(&["--settings", &settings, "--model", "x", "zwei Worte"])
+    );
+}
+
+#[test]
+fn in_git_bash_bekommen_nur_aufrufe_mit_sitzung_die_konfigurationsdatei() {
+    if !git_bash_found() {
+        return;
+    }
+    let path = fake_claude_for_bash("ohne-sitzung");
+    let mut terminal = open_git_bash("bash-claude-ohne-sitzung", &path, None);
+    let settings = terminal_settings().display().to_string();
+    let with_settings = |args: &[&str]| {
+        let mut all = vec!["--settings", settings.as_str()];
+        all.extend_from_slice(args);
+        bracketed(&all)
+    };
+    let cases = [
+        ("-p \"x\"", bracketed(&["-p", "x"])),
+        ("--print x", bracketed(&["--print", "x"])),
+        ("--version", bracketed(&["--version"])),
+        ("-v", bracketed(&["-v"])),
+        ("--help", bracketed(&["--help"])),
+        ("-h", bracketed(&["-h"])),
+        ("mcp list", bracketed(&["mcp", "list"])),
+        ("--model x -p y", bracketed(&["--model", "x", "-p", "y"])),
+        ("", with_settings(&[])),
+        ("--model x", with_settings(&["--model", "x"])),
+        ("-c", with_settings(&["-c"])),
+        ("-P", with_settings(&["-P"])),
+        ("\"zwei Worte\"", with_settings(&["zwei Worte"])),
+    ];
+
+    let line = cases
+        .iter()
+        .map(|(args, _)| format!("claude {args}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    terminal.send_line(&line);
+
+    let calls = terminal.next_claude_calls(cases.len());
+    let expected: Vec<String> = cases.into_iter().map(|(_, passed)| passed).collect();
+    assert_eq!(calls, expected);
+}
+
+#[test]
+fn claude_aus_der_bashrc_wird_uebergangen() {
+    if !git_bash_found() {
+        return;
+    }
+    for (name, definition) in [
+        ("alias", "alias claude=date"),
+        ("funktion", "claude() { echo 'aus der .bashrc'; }"),
+    ] {
+        let profile = format!("{}\n{definition}", fake_claude_for_bash(name));
+        let mut terminal = open_git_bash(&format!("bash-claude-{name}"), &profile, None);
+
+        terminal.send_line("claude --model x");
+
+        let settings = terminal_settings().display().to_string();
+        assert_eq!(
+            terminal.claude_args(),
+            bracketed(&["--settings", &settings, "--model", "x"]),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn agent_von_kredr_startet_in_git_bash_ueber_die_funktion() {
+    if !git_bash_found() {
+        return;
+    }
+    let path = fake_claude_for_bash("agent");
+    let settings = terminal_settings().display().to_string();
+    // Bash unterscheidet bei Funktionen Groß- und Kleinschreibung, Windows
+    // beim Programm nicht: `Claude` bekommt die Datei trotzdem genau einmal.
+    for program in ["claude", "Claude"] {
+        let mut terminal = open_git_bash(
+            &format!("bash-claude-agent-{}", program.to_lowercase()),
+            &path,
+            Some(&format!("{program} --resume abc-123")),
+        );
+
+        assert_eq!(
+            terminal.claude_args(),
+            bracketed(&["--settings", &settings, "--resume", "abc-123"]),
+            "{program}"
+        );
+    }
+}
