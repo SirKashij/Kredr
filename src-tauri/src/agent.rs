@@ -96,23 +96,46 @@ pub fn shell_start_command(
 /// `claude.cmd`), sonst ein Skript (`claude.ps1`). Gibt es keines, endet
 /// der Aufruf mit dem Fehler von `Get-Command`, dass `claude` nicht gefunden
 /// wurde.
+///
+/// Aufrufe ohne Sitzung (siehe `SESSIONLESS_OPTIONS` und
+/// `SUBCOMMAND_PATTERN`) bekommen die Konfigurationsdatei nicht, damit sie
+/// das Terminal nicht zum Agenten machen.
 fn powershell_claude_function(settings: &Path) -> String {
     let settings = quoted(settings, Shell::Powershell);
     let programs_of_kind = |kind: &str| {
         format!("@(Get-Command claude -CommandType {kind} -ErrorAction SilentlyContinue)")
     };
+    let sessionless_options = SESSIONLESS_OPTIONS
+        .map(|option| format!("'{option}'"))
+        .join(",");
     // Eingabe aus der Pipeline (`… | claude -p`) reicht die Funktion weiter.
+    // Optionen von Claude Code unterscheiden Groß- und Kleinschreibung,
+    // deshalb `-cmatch` und `-cin`.
     format!(
         "Remove-Item Alias:claude -Force -ErrorAction SilentlyContinue; \
          function global:claude {{ \
          $program = {} + {} | Select-Object -First 1; \
          if (-not $program) {{ $program = Get-Command claude -CommandType Application -ErrorAction Stop }}; \
-         if ($MyInvocation.ExpectingInput) {{ $input | & $program --settings {settings} @args }} \
-         else {{ & $program --settings {settings} @args }} }}",
+         $sessionless = ($args.Count -gt 0 -and \"$($args[0])\" -cmatch '{SUBCOMMAND_PATTERN}') \
+         -or @($args | Where-Object {{ \"$_\" -cin {sessionless_options} }}).Count -gt 0; \
+         $settingsArgs = @(); if (-not $sessionless) {{ $settingsArgs = '--settings', {settings} }}; \
+         if ($MyInvocation.ExpectingInput) {{ $input | & $program @settingsArgs @args }} \
+         else {{ & $program @settingsArgs @args }} }}",
         programs_of_kind("Application"),
         programs_of_kind("ExternalScript"),
     )
 }
+
+/// Optionen, mit denen `claude` keine interaktive Sitzung startet, gleich an
+/// welcher Stelle sie stehen.
+const SESSIONLESS_OPTIONS: [&str; 6] = ["-p", "--print", "-v", "--version", "-h", "--help"];
+
+/// Ein erstes Argument, das so aussieht, ist ein Unterbefehl wie `mcp` oder
+/// `update` und startet keine Sitzung. Ein Prompt als erstes Argument
+/// (`claude "erkläre das"`) enthält meist ein Leerzeichen und startet weiter
+/// eine Sitzung; nur ein Prompt aus einem einzigen kleingeschriebenen Wort
+/// gilt fälschlich als Unterbefehl.
+const SUBCOMMAND_PATTERN: &str = "^[a-z][a-z-]*$";
 
 /// Ob `command` das Programm schlicht beim Namen `claude` aufruft und damit
 /// in PowerShell bei der Funktion aus `powershell_claude_function` landet.

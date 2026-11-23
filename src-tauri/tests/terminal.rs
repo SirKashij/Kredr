@@ -12,6 +12,9 @@ use kredr_lib::terminal::{
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Damit beginnt jede Ausgabe des Test-Ersatzes für `claude`.
+const FAKE_CLAUDE_MARK: &str = "claude-args: ";
+
 struct TestTerminal {
     terminal: Terminal,
     events: Receiver<TerminalEvent>,
@@ -79,20 +82,39 @@ impl TestTerminal {
     /// Die Argumente, mit denen der Test-Ersatz für `claude` (siehe
     /// `fake_claude`) zuletzt aufgerufen wurde, sobald er sie ausgegeben hat.
     fn claude_args(&mut self) -> String {
-        const MARK: &str = "claude-args: ";
+        let mut calls = self.wait_for_claude_calls(1);
+        calls.pop().expect("Mindestens ein Aufruf")
+    }
+
+    /// Die Argumente der nächsten `count` Aufrufe des Test-Ersatzes für
+    /// `claude`, in ihrer Reihenfolge. Bereits gelesene Ausgabe zählt nicht mit.
+    fn next_claude_calls(&mut self, count: usize) -> Vec<String> {
+        self.output.clear();
+        self.wait_for_claude_calls(count)
+    }
+
+    /// Liest Ereignisse, bis die bisherige Ausgabe mindestens `count`
+    /// vollständige Aufrufe des Test-Ersatzes enthält, und liefert alle.
+    fn wait_for_claude_calls(&mut self, count: usize) -> Vec<String> {
         let deadline = Instant::now() + TIMEOUT;
         loop {
-            if let Some(start) = self.output.rfind(MARK) {
-                let rest = &self.output[start + MARK.len()..];
-                if let Some(end) = rest.find(['\r', '\n']) {
-                    return rest[..end].to_owned();
-                }
+            let calls: Vec<String> = self
+                .output
+                .match_indices(FAKE_CLAUDE_MARK)
+                .filter_map(|(start, _)| {
+                    let rest = &self.output[start + FAKE_CLAUDE_MARK.len()..];
+                    rest.find(['\r', '\n'])
+                        .map(|end| rest[..end].trim_end().to_owned())
+                })
+                .collect();
+            if calls.len() >= count {
+                return calls;
             }
             match self.next_event(deadline) {
                 Some(TerminalEvent::Output(bytes)) => self.receive(&bytes),
                 Some(TerminalEvent::Exited) => {}
                 None => panic!(
-                    "claude wurde nie aufgerufen. Bisherige Ausgabe:\n{}",
+                    "claude wurde keine {count} Mal aufgerufen. Bisherige Ausgabe:\n{}",
                     self.output
                 ),
             }
@@ -304,7 +326,7 @@ fn startbefehl_laeuft_auch_in_git_bash_und_die_shell_bleibt_offen() {
 /// der nur seine Argumente ausgibt. Geliefert wird die PowerShell-Zeile, die
 /// den Ordner vor alle anderen im Suchpfad stellt.
 fn fake_claude(name: &str) -> String {
-    fake_claude_running(name, "echo claude-args: %*")
+    fake_claude_running(name, &format!("echo {FAKE_CLAUDE_MARK}%*"))
 }
 
 /// Wie `fake_claude`, der Test-Ersatz führt aber `script` aus (Batch-Befehle).
@@ -349,6 +371,38 @@ fn claude_im_terminal_bekommt_die_konfigurationsdatei_des_terminals() {
     );
 }
 
+#[test]
+fn nur_aufrufe_mit_sitzung_bekommen_die_konfigurationsdatei() {
+    let path = fake_claude("ohne-sitzung");
+    let mut terminal = open_powershell("claude-ohne-sitzung", &path, None);
+    let settings = format!("--settings \"{}\"", terminal_settings().display());
+    let cases = [
+        ("-p \"x\"", "-p x".to_owned()),
+        ("--print x", "--print x".to_owned()),
+        ("--version", "--version".to_owned()),
+        ("-v", "-v".to_owned()),
+        ("--help", "--help".to_owned()),
+        ("-h", "-h".to_owned()),
+        ("mcp list", "mcp list".to_owned()),
+        ("--model x -p y", "--model x -p y".to_owned()),
+        ("", settings.clone()),
+        ("--model x", format!("{settings} --model x")),
+        ("-c", format!("{settings} -c")),
+        ("\"zwei Worte\"", format!("{settings} \"zwei Worte\"")),
+    ];
+
+    let line = cases
+        .iter()
+        .map(|(args, _)| format!("claude {args}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    terminal.send_line(&line);
+
+    let calls = terminal.next_claude_calls(cases.len());
+    let expected: Vec<String> = cases.into_iter().map(|(_, passed)| passed).collect();
+    assert_eq!(calls, expected);
+}
+
 /// Prüft, dass `claude` trotz `definition` aus dem Profil beim installierten
 /// Programm ankommt.
 fn assert_profile_overridden(name: &str, definition: &str) {
@@ -376,7 +430,7 @@ fn funktion_claude_aus_dem_profil_wird_uebergangen() {
 fn eingabe_aus_der_pipeline_kommt_bei_claude_an() {
     let path = fake_claude_running(
         "pipeline",
-        "set /p line=\r\necho claude-args: %* mit %line%",
+        &format!("set /p line=\r\necho {FAKE_CLAUDE_MARK}%* mit %line%"),
     );
     let mut terminal = open_powershell("claude-pipeline", &path, None);
 
