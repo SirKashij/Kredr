@@ -43,6 +43,24 @@ test("eine unter vollem Pfad weitergeführte Datei bleibt dieselbe und folgt ihr
   expect(reads).toEqual(["src/a.ts"]);
 });
 
+test("eine Datei aus einem weiteren Projekt des Workspace folgt dessen Änderungen", () => {
+  // Im Workspace benennt die Oberfläche Dateien relativ zum ersten Projekt;
+  // eine Datei aus dem zweiten Projekt hat deshalb ihren vollen Pfad.
+  const files = openFiles("C:/zweites/src/a.ts", "C:/zweites/README.md");
+
+  files.projectChanged("c:\\ZWEITES\\", { paths: ["src"], rescan: false });
+
+  expect(reads).toEqual(["C:/zweites/src/a.ts"]);
+});
+
+test("eine Datei aus einem weiteren Projekt bleibt bei Änderungen im ersten Projekt unberührt", () => {
+  const files = openFiles("C:/zweites/src/a.ts");
+
+  files.projectChanged("C:/projekt", { paths: ["src/a.ts"], rescan: true });
+
+  expect(reads).toEqual([]);
+});
+
 test("das Projekt der Änderungen gilt auch in anderer Schreibweise", () => {
   const files = openFiles("README.md");
 

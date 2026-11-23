@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { editor } from "monaco-editor/editor/editor.api";
-import { fullPath, pathKey, samePath } from "./filePath";
+import { fullPath, isOutsideProject, pathKey, toProjectPath } from "./filePath";
 import {
   edited,
   loadingFile,
@@ -45,7 +45,11 @@ export class OpenFile {
   private disposed = false;
 
   constructor(
-    /** Der Ordner des Projekts, zu dem die Datei gehört. */
+    /**
+     * Der Ordner des Projekts, relativ zu dem `path` gemeint ist und mit dem
+     * der Kern die Datei liest. Im Workspace ist das das erste Projekt, auch
+     * wenn die Datei in einem anderen liegt.
+     */
     readonly project: string,
     /** Relativ zum Projektordner; außerhalb des Projekts der volle Pfad. */
     readonly path: string,
@@ -246,13 +250,18 @@ export class OpenFiles {
     }
   }
 
-  /** Der Ereignisstrom eines Projekts: Betroffene offene Dateien dieses Projekts lesen sich neu. */
+  /**
+   * Der Ereignisstrom eines Projekts: Betroffene offene Dateien, die in
+   * diesem Projekt liegen, lesen sich neu. Eine Datei gehört zu dem Projekt,
+   * in dessen Ordner sie liegt, auch wenn sie im Workspace mit vollem Pfad
+   * relativ zum ersten Projekt geöffnet wurde.
+   */
   projectChanged(project: string, changes: ProjectChanges) {
     const paths = changes.paths.map(pathKey);
     for (const file of this.files.values()) {
-      if (!samePath(file.project, project)) continue;
-      // Der eigene Pfad der Datei, nicht der des Tabs: Er ist relativ zu ihrem Projekt.
-      const key = pathKey(file.path);
+      const inProject = toProjectPath(project, fullPath(file.project, file.path));
+      if (isOutsideProject(inProject)) continue;
+      const key = pathKey(inProject);
       // Auch ein umbenannter oder gelöschter Ordner über der Datei betrifft sie.
       const affected = paths.some((path) => key === path || key.startsWith(`${path}/`));
       if (changes.rescan || affected) file.read();
