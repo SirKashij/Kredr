@@ -283,11 +283,16 @@ fn nach_dem_ende_des_abonnements_kommt_nichts_mehr() {
     // Ein zweiter Abonnent zeigt, wann die Änderung verarbeitet ist.
     let other = Subscriber::of(&watch);
     other.wait_for_files("der erste Zustand", &[]);
-    while states.try_recv().is_ok() {}
 
     drop(subscription);
+    // Die Abonnenten werden in keiner festen Reihenfolge benachrichtigt: Der
+    // erste Zustand kann hier noch nach `other` eintreffen. Nach dem Ende des
+    // Abonnements ist alles Frühere zugestellt.
+    while states.try_recv().is_ok() {}
     project.write("a.txt", "zwei\n");
     other.wait_for_files("die Änderung", &["a.txt"]);
+    // Ein weiteres Abonnieren wartet, bis alle Abonnenten die Änderung haben.
+    drop(watch.subscribe(|_| {}));
 
     assert!(states.try_recv().is_err());
 }

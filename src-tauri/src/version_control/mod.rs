@@ -346,6 +346,8 @@ impl VersionControl {
                 if state.last.as_ref() == Some(&read) {
                     continue;
                 }
+                // Unter der Sperre: So kommt nach dem Ende eines Abonnements
+                // kein Aufruf mehr (siehe `StateSubscription`).
                 for listener in state.listeners.values() {
                     listener(&read);
                 }
@@ -538,7 +540,8 @@ impl StateWatch {
     /// Abonniert den Zustand. `on_state` erhält sofort den aktuellen
     /// Zustand, sofern er schon gelesen ist, und danach jeden, der sich vom
     /// vorigen unterscheidet. Die Aufrufe kommen der Reihe nach aus einem
-    /// Hintergrund-Thread und sollten schnell zurückkehren. Das Abonnement
+    /// Hintergrund-Thread und sollten schnell zurückkehren; aus ihnen heraus
+    /// darf weder abonniert noch ein Abonnement verworfen werden. Das Abonnement
     /// endet, sobald der Rückgabewert verworfen wird.
     pub fn subscribe(&self, on_state: impl Fn(&StateResult) + Send + 'static) -> StateSubscription {
         let mut shared = lock(&self.shared);
@@ -555,7 +558,8 @@ impl StateWatch {
     }
 }
 
-/// Ein Abonnement des Zustands; es endet, wenn es verworfen wird.
+/// Ein Abonnement des Zustands; es endet, wenn es verworfen wird. Danach
+/// kommt kein Aufruf mehr, und ein laufender ist abgeschlossen.
 pub struct StateSubscription {
     id: u64,
     shared: Weak<Mutex<Shared>>,
