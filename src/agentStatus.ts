@@ -87,8 +87,12 @@ export interface StatusUpdate {
   assignment: string | null;
   /** Die Kennung des laufenden Gesprächs; `null`, sobald der Agent sich beendet hat. */
   conversation: string | null;
-  /** Ob sich das Gespräch, mit dem der Agent startete, nicht fortsetzen ließ. */
-  resumeFailed: boolean;
+  /**
+   * Ob die Sitzung des Agenten beendet ist, nicht nur sein Gespräch geleert
+   * (`/clear`) oder gewechselt (`/resume`): Das Terminal ist wieder ein gewöhnliches. Auch, wenn sich das
+   * Gespräch, mit dem der Agent startete, nicht fortsetzen ließ.
+   */
+  sessionEnded: boolean;
   /** Die laufenden und die seit dem letzten Prompt der Person fertigen Subagenten. */
   subagents: readonly SubagentUpdate[];
   /** Die laufenden Hintergrundaufgaben des Agenten. */

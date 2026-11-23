@@ -134,9 +134,12 @@ export class WindowAgents<T> {
     const tabId = tab.id;
     return this.terminals.open(tabId, start, {
       onStatus: (update) => {
-        // Claude Code fand das Gespräch nicht; die Shell läuft ohne Agenten weiter.
-        if (update.resumeFailed) return this.endAgent(tabId);
+        // Zuerst der Status: Mit dem Ende der Sitzung ist er „unbekannt“ und
+        // verschwindet aus der Agenten-Ansicht.
         this.statuses.report(tabId, update);
+        // Die Sitzung ist vorbei, etwa nach `/exit` oder weil Claude Code das
+        // Gespräch nicht fand; die Shell läuft ohne Agenten weiter.
+        if (update.sessionEnded) return this.endAgent(tabId);
         const conversation = conversationOf(update);
         // Läuft in einem gewöhnlichen Terminal ein Gespräch, wurde dort von
         // Hand `claude` gestartet: Der Tab ist ab jetzt ein Agent. Das

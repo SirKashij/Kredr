@@ -1187,17 +1187,15 @@ fn nach_dem_leeren_wartet_der_agent_mit_dem_neuen_gespraech() {
 }
 
 #[test]
-fn ein_fortgesetzter_agent_gilt_mit_sessionstart_als_gestartet() {
+fn ein_fortgesetzter_agent_wartet_mit_sessionstart_im_alten_gespraech() {
     let agent = resumed();
 
     agent.report("SessionStart", json!({ "source": "resume" }));
+
     let update = agent.next();
     assert_eq!(update.state, AgentState::Waiting);
     assert_eq!(update.conversation.as_deref(), Some("abc123"));
     assert_eq!(update.assignment.as_deref(), Some("Baue Ticket 24"));
-    agent.report("SessionEnd", json!({ "reason": "prompt_input_exit" }));
-
-    assert!(!agent.next().resume_failed);
 }
 
 // Ohne `SessionStart`, etwa wenn der Befehls-Hook nicht laufen kann, ist das
@@ -1274,40 +1272,101 @@ fn ein_fortgesetzter_agent_behaelt_gespraech_und_auftrag() {
 }
 
 #[test]
-fn endet_ein_fortgesetzter_agent_ohne_sich_zu_melden_ist_das_fortsetzen_gescheitert() {
+fn jedes_ende_ausser_dem_leeren_beendet_die_sitzung() {
+    for reason in [
+        "prompt_input_exit",
+        "logout",
+        "other",
+        "bypass_permissions_disabled",
+    ] {
+        let agent = TestAgent::start();
+        agent.report(
+            "UserPromptSubmit",
+            json!({ "session_id": "laufend", "prompt": "Los" }),
+        );
+        agent.next();
+
+        agent.report("SessionEnd", json!({ "reason": reason }));
+
+        let update = agent.next();
+        assert!(update.session_ended, "{reason}");
+        assert_eq!(update.state, AgentState::Unknown);
+        assert_eq!(update.conversation, None);
+        assert_eq!(update.assignment, None);
+    }
+}
+
+#[test]
+fn leeren_oder_wechseln_des_gespraechs_beendet_die_sitzung_nicht() {
+    // `/clear` leert das Gespräch, `/resume` wechselt es; Claude Code läuft weiter.
+    for reason in ["clear", "resume"] {
+        let agent = TestAgent::start();
+        agent.report(
+            "UserPromptSubmit",
+            json!({ "session_id": "alt", "prompt": "Baue Ticket 24" }),
+        );
+        agent.next();
+
+        agent.report(
+            "SessionEnd",
+            json!({ "session_id": "alt", "reason": reason }),
+        );
+
+        let update = agent.next();
+        assert!(!update.session_ended, "{reason}");
+        assert_eq!(update.state, AgentState::Unknown);
+        assert_eq!(update.conversation, None);
+        assert_eq!(update.assignment, None);
+    }
+}
+
+#[test]
+fn das_ende_einer_sitzung_kommt_auch_ohne_vorherige_meldung_an() {
+    // Etwa `claude` und gleich `/exit`, bevor `SessionStart` ankam: Der Tab
+    // ist vielleicht schon Agent, und nur diese Meldung macht ihn wieder zum
+    // Terminal.
+    let agent = TestAgent::start();
+
+    agent.report("SessionEnd", json!({ "reason": "prompt_input_exit" }));
+
+    assert!(agent.next().session_ended);
+}
+
+#[test]
+fn laesst_sich_das_gespraech_nicht_fortsetzen_ist_die_sitzung_beendet() {
     let agent = resumed();
 
     // So meldet Claude Code ein Gespräch, das es nicht mehr gibt.
     agent.report("SessionEnd", json!({ "reason": "other" }));
 
     let update = agent.next();
-    assert!(update.resume_failed);
+    assert!(update.session_ended);
     assert_eq!(update.conversation, None);
     assert_eq!(update.assignment, None);
 }
 
 #[test]
-fn endet_ein_fortgesetzter_agent_nach_einer_meldung_ist_das_fortsetzen_gelungen() {
-    let agent = resumed();
+fn nach_dem_ende_entsteht_im_selben_terminal_ein_neuer_agent() {
+    let agent = TestAgent::start();
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "session_id": "erste", "prompt": "Los" }),
+    );
+    agent.report(
+        "SessionEnd",
+        json!({ "session_id": "erste", "reason": "prompt_input_exit" }),
+    );
+    settle(&agent);
 
-    agent.report("UserPromptSubmit", json!({ "prompt": "Mach weiter" }));
-    agent.next();
-    agent.report("SessionEnd", json!({ "reason": "prompt_input_exit" }));
+    agent.report(
+        "SessionStart",
+        json!({ "session_id": "zweite", "source": "startup" }),
+    );
 
     let update = agent.next();
-    assert!(!update.resume_failed);
-    assert_eq!(update.conversation, None);
-}
-
-#[test]
-fn ein_neuer_agent_scheitert_nie_am_fortsetzen() {
-    let agent = TestAgent::start();
-
-    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
-    agent.next();
-    agent.report("SessionEnd", json!({ "reason": "other" }));
-
-    assert!(!agent.next().resume_failed);
+    assert!(!update.session_ended);
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(update.conversation.as_deref(), Some("zweite"));
 }
 
 #[test]

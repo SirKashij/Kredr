@@ -75,7 +75,7 @@ describe("Agenten-Ansicht mit Subagenten", () => {
       stateChanged: true,
       assignment: null,
       conversation: null,
-      resumeFailed: false,
+      sessionEnded: false,
       backgroundTasks: [],
       subagents: ["a", "b", "c", "d"].map(sub),
     });
@@ -161,7 +161,7 @@ describe("Agenten-Ansicht mit Subagenten", () => {
       stateChanged: true,
       assignment: null,
       conversation: null,
-      resumeFailed: false,
+      sessionEnded: false,
       backgroundTasks: [
         { id: "b1", kind: "shell", description: "CI beobachten", command: "gh run watch" },
       ],
@@ -217,7 +217,7 @@ describe("Agenten-Ansicht nach Projekten", () => {
         stateChanged: true,
         assignment: null,
         conversation: null,
-        resumeFailed: false,
+        sessionEnded: false,
         backgroundTasks: [],
         subagents: [],
       });
@@ -296,7 +296,7 @@ describe("Agenten-Ansicht nach Projekten", () => {
       stateChanged: true,
       assignment: null,
       conversation: null,
-      resumeFailed: false,
+      sessionEnded: false,
       backgroundTasks: [],
       subagents: [],
     });

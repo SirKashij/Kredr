@@ -267,7 +267,7 @@ describe("Agenten im Hintergrund", () => {
       stateChanged: true,
       assignment: null,
       conversation: null,
-      resumeFailed: false,
+      sessionEnded: false,
       subagents: [],
       backgroundTasks: [],
     };

@@ -52,7 +52,7 @@ function update(change: Partial<StatusUpdate> = {}): StatusUpdate {
     stateChanged: true,
     assignment: null,
     conversation: null,
-    resumeFailed: false,
+    sessionEnded: false,
     backgroundTasks: [],
     subagents: [],
     ...change,
@@ -160,6 +160,68 @@ describe("Agenten des Fensters", () => {
     expect(agents.returning(state.arrangement)).toEqual([tab.id]);
   });
 
+  it("macht den Tab mit dem Ende der Sitzung wieder zum Terminal, das beim nächsten Öffnen keinen Agenten fortsetzt", () => {
+    for (const startedByKredr of [true, false]) {
+      const shown = openTab(emptyArrangement, startedByKredr);
+      const [tab] = tabsOf(shown);
+      const { terminals, statuses, state, agents } = windowWith(shown);
+      agents.terminal(tab, project);
+      const signals = terminals.find(tab.id)!.signals;
+      signals.onStatus(update({ conversation: "abc-123", assignment: "Baue 24" }));
+
+      signals.onStatus(update({ state: "unknown", sessionEnded: true }));
+
+      const [after] = tabsOf(state.arrangement);
+      expect(after.agent).toBeUndefined();
+      expect(after.conversation).toBeUndefined();
+      expect({ name: after.name, cwd: after.cwd, shell: after.shell }).toEqual({
+        name: tab.name,
+        cwd: tab.cwd,
+        shell: tab.shell,
+      });
+      expect(statuses.snapshot().has(tab.id)).toBe(false);
+      expect(agents.returning(state.arrangement)).toEqual([]);
+    }
+  });
+
+  it("lässt den Tab beim Leeren des Gesprächs (/clear) einen Agenten", () => {
+    const shown = openTab(emptyArrangement, false);
+    const [tab] = tabsOf(shown);
+    const { terminals, statuses, state, agents } = windowWith(shown);
+    agents.terminal(tab, project);
+    const signals = terminals.find(tab.id)!.signals;
+    signals.onStatus(update({ conversation: "alt", assignment: "Baue 24" }));
+
+    signals.onStatus(update({ state: "unknown", conversation: null }));
+
+    const [after] = tabsOf(state.arrangement);
+    expect(after.agent).toBe(true);
+    expect(after.conversation).toBeUndefined();
+    expect(statuses.snapshot().has(tab.id)).toBe(false);
+
+    signals.onStatus(update({ state: "waiting", conversation: "neu" }));
+    expect(tabsOf(state.arrangement)[0].conversation?.id).toBe("neu");
+  });
+
+  it("macht dasselbe Terminal nach dem Ende einer Sitzung mit der nächsten wieder zum Agenten", () => {
+    const shown = openTab(emptyArrangement, false);
+    const [tab] = tabsOf(shown);
+    const { terminals, statuses, state, agents } = windowWith(shown);
+    const terminal = agents.terminal(tab, project);
+    const signals = terminal.signals;
+    signals.onStatus(update({ conversation: "erste" }));
+    signals.onStatus(update({ state: "unknown", sessionEnded: true }));
+
+    signals.onStatus(update({ state: "waiting", conversation: "zweite" }));
+
+    const [after] = tabsOf(state.arrangement);
+    expect(after.agent).toBe(true);
+    expect(after.conversation?.id).toBe("zweite");
+    expect(statuses.snapshot().get(tab.id)?.state).toBe("waiting");
+    expect(agents.terminal(after, project)).toBe(terminal);
+    expect(terminals.opens.get(tab.id)).toBe(1);
+  });
+
   it("fragt beim Schließen nach einem selbst gestarteten Agenten und setzt ihn beim nächsten Öffnen fort", () => {
     const shown = openTab(emptyArrangement, false);
     const [tab] = tabsOf(shown);
@@ -214,7 +276,7 @@ describe("Agenten des Fensters", () => {
     const { terminals, statuses, state, agents } = windowWith(stored);
 
     agents.resumeAll(stored, project);
-    terminals.find(resumed.id)!.signals.onStatus(update({ state: "unknown", resumeFailed: true }));
+    terminals.find(resumed.id)!.signals.onStatus(update({ state: "unknown", sessionEnded: true }));
 
     const [tab] = tabsOf(state.arrangement);
     expect(tab.agent).toBeUndefined();

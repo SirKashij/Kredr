@@ -410,8 +410,8 @@ export function becomeAgent(arrangement: Arrangement, tabId: string): Arrangemen
 
 /**
  * Macht aus dem Agenten im Terminal ein gewöhnliches Terminal am selben Platz,
- * etwa weil sich sein Gespräch nicht fortsetzen ließ. Name, Shell und
- * Startordner bleiben.
+ * etwa weil seine Sitzung endete oder sich sein Gespräch nicht fortsetzen
+ * ließ. Name, Shell und Startordner bleiben.
  */
 export function endAgent(arrangement: Arrangement, tabId: string): Arrangement {
   const group = groupOfTab(arrangement, tabId);

@@ -37,7 +37,7 @@ export interface TerminalStart {
 
 /** Was ein Terminal über seinen Agenten meldet, so wie der Kern es schickt. */
 export interface AgentSignals {
-  /** Jede Meldung des Agentenstatus, auch die über ein Gespräch, das sich nicht fortsetzen ließ. */
+  /** Jede Meldung des Agentenstatus, auch die über das Ende der Sitzung. */
   onStatus(update: StatusUpdate): void;
   /** Die Shell läuft; `agentStarted` sagt, ob mit ihr ein Agent gestartet ist. */
   onOpened(agentStarted: boolean): void;

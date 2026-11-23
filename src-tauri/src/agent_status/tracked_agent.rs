@@ -34,6 +34,10 @@ pub(super) const WAITING_NOTIFICATIONS: [&str; 4] = [
 /// Die Meldung, dass Claude Code seit einer Weile auf die nächste Eingabe wartet.
 pub(super) const IDLE_NOTIFICATION: &str = "idle_prompt";
 
+/// Die Gründe eines `SessionEnd`, mit denen Claude Code nur das Gespräch
+/// leert (`/clear`) oder wechselt (`/resume`) und weiterläuft.
+const CONVERSATION_CHANGES: [&str; 2] = ["clear", "resume"];
+
 /// Der Typ, den Claude Code einem Subagenten ohne Angabe gibt.
 const DEFAULT_SUBAGENT_TYPE: &str = "general-purpose";
 
@@ -67,9 +71,12 @@ pub struct StatusUpdate {
     /// Die Kennung des Gesprächs, das gerade im Terminal läuft; `None`,
     /// sobald der Agent sich beendet hat.
     pub conversation: Option<String>,
-    /// Ob sich das Gespräch, mit dem der Agent startete, nicht fortsetzen
-    /// ließ. Die Fehlermeldung des Agenten steht dann in der Shell.
-    pub resume_failed: bool,
+    /// Ob die Sitzung beendet ist, nicht nur ihr Gespräch geleert (`/clear`)
+    /// oder gewechselt (`/resume`):
+    /// Das Terminal ist wieder ein gewöhnliches. So endet auch ein Agent,
+    /// dessen Gespräch sich nicht fortsetzen ließ; seine Fehlermeldung steht
+    /// dann in der Shell.
+    pub session_ended: bool,
     /// Die Subagenten des Agenten in der Reihenfolge ihres Starts: die
     /// laufenden und die seit dem letzten Prompt der Person fertigen.
     pub subagents: Vec<Subagent>,
@@ -155,10 +162,6 @@ pub struct TrackedAgent {
     assignment: Option<String>,
     /// Die Kennung des laufenden Gesprächs.
     conversation: Option<String>,
-    /// Ob der Agent gestartet ist. Ein fortgesetzter Agent ist es erst mit
-    /// seiner ersten Meldung, in der Regel `SessionStart`; findet Claude Code
-    /// das Gespräch nicht, meldet es nur `SessionEnd`.
-    started: bool,
     /// Die Sitzung, die zuletzt endete: die Kennung ihres Gesprächs und wann.
     ended: Option<(String, Instant)>,
 }
@@ -182,7 +185,6 @@ impl TrackedAgent {
     /// fort (`resumed`), gelten dessen Kennung und Auftrag von Anfang an.
     pub fn new(resumed: Option<Resumed>) -> TrackedAgent {
         TrackedAgent {
-            started: resumed.is_none(),
             assignment: resumed.as_ref().and_then(|r| r.assignment.clone()),
             conversation: resumed.map(|r| r.conversation),
             ..TrackedAgent::default()
@@ -199,16 +201,18 @@ impl TrackedAgent {
                 self.ended = event["session_id"]
                     .as_str()
                     .map(|id| (id.to_owned(), Instant::now()));
+                // Außer beim Leeren oder Wechseln des Gesprächs ist die
+                // Sitzung vorbei, auch wenn sich das Gespräch nicht fortsetzen
+                // ließ. Das wird immer gemeldet, auch ohne sichtbare Änderung
+                // des Status: Erst damit wird der Tab wieder ein gewöhnliches
+                // Terminal.
+                let reason = event["reason"].as_str().unwrap_or_default();
+                if !CONVERSATION_CHANGES.contains(&reason) {
+                    let next = self.forgotten();
+                    return Some(self.report(next, true));
+                }
             }
             _ => {}
-        }
-        if event["hook_event_name"] != "SessionEnd" {
-            self.started = true;
-        } else if !self.started {
-            // Das Gespräch ließ sich nicht fortsetzen: Kredr vergisst es und
-            // meldet das.
-            let next = self.forgotten();
-            return Some(self.report(next, true));
         }
         let next = self.next(event);
         self.apply(next)
@@ -253,11 +257,10 @@ impl TrackedAgent {
         self.apply(next)
     }
 
-    /// Ein Stand, in dem alles über das Gespräch vergessen ist. Ob der Agent
-    /// gestartet ist und welche Sitzung zuletzt endete, bleibt.
+    /// Ein Stand, in dem alles über das Gespräch vergessen ist. Welche
+    /// Sitzung zuletzt endete, bleibt.
     fn forgotten(&self) -> TrackedAgent {
         TrackedAgent {
-            started: self.started,
             ended: self.ended.clone(),
             ..TrackedAgent::default()
         }
@@ -297,7 +300,7 @@ impl TrackedAgent {
         Some(self.report(next, false))
     }
 
-    fn report(&mut self, next: TrackedAgent, resume_failed: bool) -> StatusUpdate {
+    fn report(&mut self, next: TrackedAgent, session_ended: bool) -> StatusUpdate {
         let (before, _) = self.displayed_status();
         *self = next;
         let (state, last_action) = self.displayed_status();
@@ -307,7 +310,7 @@ impl TrackedAgent {
             state_changed: state != before,
             assignment: self.assignment.clone(),
             conversation: self.conversation.clone(),
-            resume_failed,
+            session_ended,
             subagents: self.subagents.clone(),
             background_tasks: self.background_tasks.clone(),
         }
@@ -316,7 +319,7 @@ impl TrackedAgent {
     /// Was Kredr nach dem Ereignis `event` über den Agenten weiß.
     fn next(&self, event: &Value) -> TrackedAgent {
         let name = event["hook_event_name"].as_str().unwrap_or_default();
-        // Mit dem Ende der Sitzung, auch durch `/clear`, ist alles vergessen:
+        // Mit dem Leeren oder Wechseln des Gesprächs ist alles vergessen:
         // Status, Rückfragen, Subagenten, Auftrag und Gespräch.
         if name == "SessionEnd" {
             return self.forgotten();
