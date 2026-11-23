@@ -111,6 +111,8 @@ pub struct Terminal {
     shell_pid: Option<u32>,
     /// Ob sich die Shell beendet hat; ihre Prozesskennung kann dann neu vergeben sein.
     exited: Arc<AtomicBool>,
+    /// Verschwindet erst nach `drop`, also nachdem die Shell beendet wurde.
+    _start_file: Option<BashStartFile>,
 }
 
 impl Terminal {
@@ -128,7 +130,9 @@ impl Terminal {
             .openpty(size(options.cols, options.rows))
             .map_err(error)?;
 
-        let mut command = shell_command(options.shell, options.start_command.as_deref())?;
+        // Scheitert der Start, verschwindet die Startdatei mit `start_file`.
+        let (mut command, start_file) =
+            shell_command(options.shell, options.start_command.as_deref())?;
         command.cwd(&options.cwd);
         // Daran erkennen Programme wie Claude Code, dass 24-Bit-Farben gehen.
         command.env("COLORTERM", "truecolor");
@@ -199,6 +203,7 @@ impl Terminal {
             killer: Mutex::new(killer),
             shell_pid,
             exited,
+            _start_file: start_file,
         })
     }
 
@@ -271,11 +276,12 @@ fn has_child(parent: u32) -> bool {
 }
 
 /// Der Aufruf der Shell. Mit `start_command` führt sie zuerst diesen Befehl
-/// aus und bleibt danach offen.
+/// aus und bleibt danach offen. Dazu kommt die Startdatei, die der Aufruf
+/// braucht; sie muss leben, bis die Shell endet.
 fn shell_command(
     shell: Shell,
     start_command: Option<&str>,
-) -> Result<CommandBuilder, TerminalError> {
+) -> Result<(CommandBuilder, Option<BashStartFile>), TerminalError> {
     match shell {
         Shell::Powershell => {
             let mut command = CommandBuilder::new(powershell());
@@ -283,56 +289,72 @@ fn shell_command(
             if let Some(start_command) = start_command {
                 command.args(["-NoExit", "-Command", start_command]);
             }
-            Ok(command)
+            Ok((command, None))
         }
         Shell::GitBash => {
             let bash = git_bash().ok_or_else(|| error("Git Bash not found"))?;
             let mut command = CommandBuilder::new(bash);
+            let mut start_file = None;
             match start_command {
                 // Als Anmelde-Shell lädt Bash das Profil von Git für Windows,
                 // das unter anderem den Suchpfad für die Unix-Werkzeuge setzt.
                 None => command.args(["--login", "-i"]),
                 Some(start_command) => {
-                    let start_file = write_bash_start_file(start_command)?;
+                    let file = BashStartFile::write(start_command)?;
                     command.arg("--rcfile");
-                    command.arg(start_file);
+                    command.arg(&file.bash_path);
                     command.arg("-i");
+                    start_file = Some(file);
                 }
             }
             // Ohne diese Angabe wechselt das Profil in den Benutzerordner.
             command.env("CHERE_INVOKING", "1");
             command.env("TERM", "xterm-256color");
-            Ok(command)
+            Ok((command, start_file))
         }
     }
 }
 
-/// Schreibt die Startdatei einer interaktiven Git Bash, die `start_command`
-/// ausführt, und liefert ihren Pfad.
+/// Die Startdatei einer interaktiven Git Bash mit Startbefehl.
 ///
 /// Sie lädt zuerst die Profile wie eine Anmelde-Shell und führt danach den
 /// Befehl in derselben Shell aus, die anschließend auf Eingaben wartet. So
 /// gilt, was der Befehl festlegt, etwa eine Funktion `claude`, auch nach der
 /// `.bashrc` der Person. Bash liest die Datei beim Start ganz ein; ihre erste
-/// Zeile löscht sie deshalb gleich wieder.
-fn write_bash_start_file(start_command: &str) -> Result<String, TerminalError> {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let number = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let file = std::env::temp_dir().join(format!("kredr-bash-{}-{number}.sh", std::process::id()));
-    // Bash versteht Windows-Pfade mit Schrägstrichen.
-    let path = file.to_string_lossy().replace('\\', "/");
-    let script = format!(
-        "/usr/bin/rm -f -- {}\n\
-         if [ -f /etc/profile ]; then . /etc/profile; fi\n\
-         if [ -f ~/.bash_profile ]; then . ~/.bash_profile\n\
-         elif [ -f ~/.bash_login ]; then . ~/.bash_login\n\
-         elif [ -f ~/.profile ]; then . ~/.profile\n\
-         fi\n\
-         {start_command}\n",
-        Shell::GitBash.quote(&path)
-    );
-    std::fs::write(&file, script).map_err(error)?;
-    Ok(path)
+/// Zeile löscht sie deshalb gleich wieder. Kommt Bash nicht so weit, löscht
+/// sie das Verwerfen dieses Werts.
+struct BashStartFile {
+    file: PathBuf,
+    /// Der Pfad, wie Bash ihn versteht: mit Schrägstrichen.
+    bash_path: String,
+}
+
+impl BashStartFile {
+    fn write(start_command: &str) -> Result<BashStartFile, TerminalError> {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let number = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let file =
+            std::env::temp_dir().join(format!("kredr-bash-{}-{number}.sh", std::process::id()));
+        let bash_path = file.to_string_lossy().replace('\\', "/");
+        let script = format!(
+            "/usr/bin/rm -f -- {}\n\
+             if [ -f /etc/profile ]; then . /etc/profile; fi\n\
+             if [ -f ~/.bash_profile ]; then . ~/.bash_profile\n\
+             elif [ -f ~/.bash_login ]; then . ~/.bash_login\n\
+             elif [ -f ~/.profile ]; then . ~/.profile\n\
+             fi\n\
+             {start_command}\n",
+            Shell::GitBash.quote(&bash_path)
+        );
+        std::fs::write(&file, script).map_err(error)?;
+        Ok(BashStartFile { file, bash_path })
+    }
+}
+
+impl Drop for BashStartFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.file);
+    }
 }
 
 /// Die Bash aus Git für Windows, wenn es installiert ist. Ein `bash.exe` aus

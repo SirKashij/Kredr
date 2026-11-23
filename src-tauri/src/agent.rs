@@ -133,6 +133,10 @@ fn bash_exit_report(url: &str) -> String {
 /// Funktion und wird deshalb entfernt; `command` überspringt Funktionen und
 /// ruft das Programm aus dem Suchpfad. Gibt es keines, meldet Bash selbst,
 /// dass `claude` nicht gefunden wurde, und es gibt keine Rückkehr zu melden.
+///
+/// Die Prüfung auf einen Unterbefehl unterscheidet Groß- und Kleinschreibung
+/// wie in PowerShell, auch wenn die `.bashrc` `nocasematch` einschaltet; die
+/// Einstellung gilt danach wieder.
 fn bash_claude_function(hooks: &TerminalHooks) -> String {
     let settings = quoted(&hooks.settings, Shell::GitBash);
     let sessionless_options = SESSIONLESS_OPTIONS.join("|");
@@ -144,7 +148,10 @@ fn bash_claude_function(hooks: &TerminalHooks) -> String {
     format!(
         "unalias claude 2>/dev/null\n\
          function claude {{\n\
-         if [[ $# -gt 0 && $1 =~ {SUBCOMMAND_PATTERN} ]] || ! type -P claude >/dev/null; then command claude \"$@\"; return; fi\n\
+         local nocase= subcommand=; if shopt -q nocasematch; then nocase=1; shopt -u nocasematch; fi\n\
+         if [[ $# -gt 0 && $1 =~ {SUBCOMMAND_PATTERN} ]]; then subcommand=1; fi\n\
+         if [[ -n $nocase ]]; then shopt -s nocasematch; fi\n\
+         if [[ -n $subcommand ]] || ! type -P claude >/dev/null; then command claude \"$@\"; return; fi\n\
          local arg; for arg in \"$@\"; do case $arg in {sessionless_options}) command claude \"$@\"; return;; esac; done\n\
          {session}\n\
          }}"

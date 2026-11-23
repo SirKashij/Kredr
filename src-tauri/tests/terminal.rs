@@ -562,6 +562,29 @@ fn in_git_bash_bekommen_nur_aufrufe_mit_sitzung_die_konfigurationsdatei() {
 }
 
 #[test]
+fn ein_prompt_mit_grossbuchstaben_startet_auch_mit_nocasematch_eine_sitzung() {
+    if !git_bash_found() {
+        return;
+    }
+    // `nocasematch` aus der `.bashrc` darf `Hilfe` nicht zum Unterbefehl machen.
+    let profile = format!(
+        "{}\nshopt -s nocasematch",
+        fake_claude_for_bash("nocasematch")
+    );
+    let mut terminal = open_git_bash("bash-claude-nocasematch", &profile, None);
+
+    terminal.send_line("claude Hilfe; shopt -q nocasematch && echo \"noch-$((6*7))\"");
+
+    let settings = terminal_settings().display().to_string();
+    assert_eq!(
+        terminal.claude_args(),
+        bracketed(&["--settings", &settings, "Hilfe"])
+    );
+    // Die Einstellung der Person bleibt, wie sie war.
+    terminal.wait_for_output("noch-42");
+}
+
+#[test]
 fn claude_aus_der_bashrc_wird_uebergangen() {
     if !git_bash_found() {
         return;
