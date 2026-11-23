@@ -1,6 +1,6 @@
 ---
 name: kredr-steuern
-description: Kredr per Skript starten und bedienen (echte App, CDP). Use when ein Fehler in der Oberfläche nachgestellt werden muss, eine Feedback-Schleife gegen die laufende App gebraucht wird, oder für Screenshots und Konsolenfehler.
+description: Kredr per Skript starten und bedienen (echte App, CDP). Use when eine Änderung an der Oberfläche fertig ist und vor der Fertigmeldung in der laufenden App abgenommen werden muss, ein Fehler in der Oberfläche nachgestellt werden muss, oder für Screenshots und Konsolenfehler.
 ---
 
 # Kredr steuern
