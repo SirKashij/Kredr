@@ -225,6 +225,17 @@ export class OpenFiles {
     return [...this.files.values()].some((file) => file.state.dirty);
   }
 
+  /**
+   * Die offene Datei heißt im Tab jetzt `to` statt `from`, etwa mit vollem
+   * statt relativem Pfad. Sie bleibt dieselbe, samt ungespeicherten Änderungen.
+   */
+  rekey(from: string, to: string) {
+    const file = this.files.get(pathKey(from));
+    if (!file || this.files.has(pathKey(to))) return;
+    this.files.delete(pathKey(from));
+    this.files.set(pathKey(to), file);
+  }
+
   /** Schließt alle Dateien, deren Tab es nicht mehr gibt. */
   retain(paths: Iterable<string>) {
     const kept = new Set([...paths].map(pathKey));
@@ -238,8 +249,10 @@ export class OpenFiles {
   /** Der Ereignisstrom eines Projekts: Betroffene offene Dateien dieses Projekts lesen sich neu. */
   projectChanged(project: string, changes: ProjectChanges) {
     const paths = changes.paths.map(pathKey);
-    for (const [key, file] of this.files) {
+    for (const file of this.files.values()) {
       if (!samePath(file.project, project)) continue;
+      // Der eigene Pfad der Datei, nicht der des Tabs: Er ist relativ zu ihrem Projekt.
+      const key = pathKey(file.path);
       // Auch ein umbenannter oder gelöschter Ordner über der Datei betrifft sie.
       const affected = paths.some((path) => key === path || key.startsWith(`${path}/`));
       if (changes.rescan || affected) file.read();

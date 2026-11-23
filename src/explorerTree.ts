@@ -26,6 +26,28 @@ export interface Row {
 
 export const emptyTree: ExplorerTree = { listings: new Map(), expanded: new Set() };
 
+/** Wo eine gezogene Wurzel landet. */
+export interface RootDrop {
+  /** Die Stelle unter den Wurzeln: 0 vor der ersten, ihre Anzahl hinter der letzten. */
+  index: number;
+  /** Die Zeile, über der die Einfügemarke steht; die Anzahl der Zeilen für ganz unten. */
+  line: number;
+}
+
+/**
+ * Wo eine gezogene Wurzel landet, wenn sie über der Zeile `pointed` losgelassen
+ * wird, in deren oberer Hälfte bei `upperHalf`. Wurzeln sind die Zeilen der
+ * Tiefe 0. In der oberen Hälfte einer Wurzel landet sie davor, sonst hinter
+ * der Wurzel, zu der die Zeile gehört.
+ */
+export function rootDrop(rows: readonly Row[], pointed: number, upperHalf: boolean): RootDrop {
+  const roots = rows.flatMap((row, index) => (row.depth === 0 ? [index] : []));
+  const owner = roots.filter((index) => index <= pointed).length - 1;
+  if (owner < 0) return { index: 0, line: roots[0] ?? 0 };
+  if (roots[owner] === pointed && upperHalf) return { index: owner, line: pointed };
+  return { index: owner + 1, line: roots[owner + 1] ?? rows.length };
+}
+
 /** Der Pfad eines Eintrags in einem Ordner. */
 export function childPath(folder: string, name: string): string {
   return folder === "" ? name : `${folder}/${name}`;

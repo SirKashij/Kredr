@@ -68,6 +68,11 @@ describe("Agenten-Ansicht mit Subagenten", () => {
             content={startPage}
             onAddProject={() => {}}
             onRemoveProject={() => {}}
+            onMoveProject={() => {}}
+            onRenameWorkspace={() => {}}
+            renameRequest={0}
+            onCloseWorkspace={() => {}}
+            folderDrop={false}
             onOpenTerminalIn={() => {}}
             activeFile={null}
             onOpenFile={() => {}}

@@ -81,6 +81,16 @@ interface SidebarProps extends AgentsViewProps {
   onAddProject: () => void;
   /** Nimmt das Projekt mit diesem Ordner aus dem Workspace. */
   onRemoveProject: (folder: string) => void;
+  /** Setzt das Projekt im Workspace an die Stelle `index` (gezählt vor dem Verschieben). */
+  onMoveProject: (folder: string, index: number) => void;
+  /** Gibt dem Workspace einen neuen Namen. */
+  onRenameWorkspace: (name: string) => void;
+  /** Steigt, wenn der Name des Workspace bearbeitet werden soll. */
+  renameRequest: number;
+  /** „Workspace schließen“: Das Fenster zeigt danach die Startseite. */
+  onCloseWorkspace: () => void;
+  /** Ob gerade ein Ordner aus dem Windows-Explorer über der Seitenleiste schwebt. */
+  folderDrop: boolean;
   /** Öffnet ein Terminal in diesem Ordner, mit `agent` samt einem Agenten. */
   onOpenTerminalIn: (folder: string, agent: boolean) => void;
   /** Die Datei des sichtbaren Tabs der fokussierten Gruppe. */
@@ -102,6 +112,11 @@ export function Sidebar({
   content,
   onAddProject,
   onRemoveProject,
+  onMoveProject,
+  onRenameWorkspace,
+  renameRequest,
+  onCloseWorkspace,
+  folderDrop,
   onOpenTerminalIn,
   activeFile,
   onOpenFile,
@@ -129,7 +144,13 @@ export function Sidebar({
   }
 
   return (
-    <aside className="sidebar" ref={sidebar} hidden={!visible} style={{ width }}>
+    <aside
+      className={folderDrop ? "sidebar folder-drop" : "sidebar"}
+      data-drop-label={t("workspace.dropFolder")}
+      ref={sidebar}
+      hidden={!visible}
+      style={{ width }}
+    >
       <div className="side-title">{t(title)}</div>
       <div className="side-body" hidden={showsExplorer || showsSearch}>
         {view === "agents" ? (
@@ -149,6 +170,10 @@ export function Sidebar({
           workspace={content.kind === "workspace" ? content.name : null}
           onAddProject={onAddProject}
           onRemoveProject={onRemoveProject}
+          onMoveProject={onMoveProject}
+          onRenameWorkspace={onRenameWorkspace}
+          renameRequest={renameRequest}
+          onCloseWorkspace={onCloseWorkspace}
           hidden={!showsExplorer}
           onOpenTerminalIn={onOpenTerminalIn}
           activeFile={activeFile}

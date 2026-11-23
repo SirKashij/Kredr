@@ -411,6 +411,16 @@ export function assignShell(arrangement: Arrangement, shell: Shell): Arrangement
   return { ...arrangement, root: assign(arrangement.root) };
 }
 
+/** Die Aufteilung mit jedem Tab, wie `change` ihn liefert; Gruppen und Fokus bleiben. */
+export function mapTabs(arrangement: Arrangement, change: (tab: Tab) => Tab): Arrangement {
+  if (!arrangement.root) return arrangement;
+  const map = (node: TreeNode): TreeNode =>
+    node.kind === "group"
+      ? { ...node, tabs: node.tabs.map(change) }
+      : { ...node, children: node.children.map(map) };
+  return { ...arrangement, root: map(arrangement.root) };
+}
+
 /** Wohin ein Tab verschoben wird. */
 export type TabTarget =
   | {

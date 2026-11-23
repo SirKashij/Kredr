@@ -291,6 +291,53 @@ button {
   display: none;
 }
 
+.tree-head.editing {
+  padding: 0 8px;
+  text-transform: none;
+  font-weight: 400;
+}
+
+/* Die Projekte eines Workspace lassen sich als Wurzeln umsortieren. */
+.tree-rows {
+  position: relative;
+}
+
+.tree.dragging-root,
+.tree.dragging-root .tree-row {
+  cursor: grabbing;
+}
+
+.tree-row.dragged {
+  opacity: 0.5;
+}
+
+.tree-drop-line {
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  right: 0;
+  height: 2px;
+  margin-top: -1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+/* Ein Ordner aus dem Windows-Explorer schwebt über der Seitenleiste. */
+.sidebar.folder-drop::after {
+  content: attr(data-drop-label);
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  color: #fff;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border: 2px dashed var(--accent);
+  pointer-events: none;
+}
+
 .tree-row.root .tree-name {
   font-weight: 700;
 }

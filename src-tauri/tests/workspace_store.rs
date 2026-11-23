@@ -238,6 +238,53 @@ fn ein_umbenannter_workspace_bleibt_ein_eintrag_mit_neuem_namen() {
 }
 
 #[test]
+fn umbenennen_und_umsortieren_aendern_den_workspace_ohne_neuen_eintrag() {
+    let root = temp_dir("aendern");
+    let alpha = project(&root, "alpha");
+    let beta = project(&root, "beta");
+    let store = ArrangementStore::new(root.join("daten"));
+    store
+        .save_workspace_state("ws-1", &workspace("Unbenannt", &[&alpha, &beta], "t1"))
+        .unwrap();
+    store.remember_project(&alpha).unwrap();
+    store.remember_workspace("ws-1").unwrap();
+
+    store
+        .change_workspace("ws-1", |state| {
+            state.name = "Kunden".to_string();
+            state.projects.reverse();
+        })
+        .unwrap();
+
+    // Aufteilung und Fenstergeometrie bleiben, die Liste behält ihre Reihenfolge.
+    assert_eq!(
+        store.workspace_state("ws-1"),
+        Some(workspace("Kunden", &[&beta, &alpha], "t1"))
+    );
+    assert_eq!(
+        store.recent(),
+        vec![
+            recent_workspace("ws-1", "Kunden", &[(&beta, true), (&alpha, true)]),
+            recent_project(&alpha),
+        ]
+    );
+}
+
+#[test]
+fn ein_nicht_gespeicherter_workspace_laesst_sich_nicht_aendern() {
+    let root = temp_dir("aendern-fehlt");
+    let store = ArrangementStore::new(root.join("daten"));
+
+    let error = store
+        .change_workspace("ws-9", |state| state.name = "Kunden".to_string())
+        .unwrap_err();
+
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    assert_eq!(store.workspace_state("ws-9"), None);
+    assert_eq!(store.recent(), vec![]);
+}
+
+#[test]
 fn ein_vergessener_workspace_verschwindet_samt_aufteilung() {
     let root = temp_dir("vergessen");
     let alpha = project(&root, "alpha");

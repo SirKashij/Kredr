@@ -297,6 +297,30 @@ impl ArrangementStore {
     /// Merkt sich den Workspace unter seiner Kennung.
     pub fn save_workspace_state(&self, id: &str, state: &WorkspaceState) -> io::Result<()> {
         let _guard = self.lock.lock();
+        self.write_workspace(id, state)
+    }
+
+    /// Ändert den gespeicherten Workspace in einem Schritt, etwa Name oder
+    /// Reihenfolge seiner Projekte. Er bleibt derselbe Eintrag der
+    /// Zuletzt-Liste. Ist unter der Kennung nichts Lesbares gespeichert,
+    /// ändert sich nichts, und das Ergebnis ist `NotFound`.
+    pub fn change_workspace(
+        &self,
+        id: &str,
+        change: impl FnOnce(&mut WorkspaceState),
+    ) -> io::Result<()> {
+        let _guard = self.lock.lock();
+        let mut state = self.read_workspace(id).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("workspace {id} is not stored"),
+            )
+        })?;
+        change(&mut state);
+        self.write_workspace(id, &state)
+    }
+
+    fn write_workspace(&self, id: &str, state: &WorkspaceState) -> io::Result<()> {
         let stored = StoredWorkspace {
             version: VERSION,
             id: id.to_string(),

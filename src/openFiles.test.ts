@@ -30,6 +30,19 @@ test("eine geänderte Datei und alles unter einem geänderten Ordner liest sich 
   expect(reads).toEqual(["src/ui/b.ts", "README.md"]);
 });
 
+test("eine unter vollem Pfad weitergeführte Datei bleibt dieselbe und folgt ihrem Projekt", () => {
+  const files = openFiles("src/a.ts");
+  const file = files.find("src/a.ts");
+
+  files.rekey("src/a.ts", "C:/projekt/src/a.ts");
+  files.retain(["C:/projekt/src/a.ts"]);
+  files.projectChanged("C:/projekt", { paths: ["src/a.ts"], rescan: false });
+
+  expect(files.find("c:/PROJEKT/src/a.ts")).toBe(file);
+  expect(files.find("src/a.ts")).toBeUndefined();
+  expect(reads).toEqual(["src/a.ts"]);
+});
+
 test("das Projekt der Änderungen gilt auch in anderer Schreibweise", () => {
   const files = openFiles("README.md");
 

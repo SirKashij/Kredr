@@ -9,7 +9,9 @@ import {
   closeTab,
   filePathOf,
   isTerminal,
+  mapTabs,
   recordConversation,
+  showsFile,
   tabsOf,
   type Arrangement,
   type Tab,
@@ -185,4 +187,58 @@ export function removalInterrupts(closing: readonly Tab[], statuses: Statuses): 
     const state = statuses.get(tab.id)?.state;
     return state === "working" || state === "waiting";
   });
+}
+
+/**
+ * Der Workspace unter neuem Namen; Kennung und Projekte bleiben, es entsteht
+ * kein neuer Workspace. Leerraum am Rand zählt nicht. `null`, wenn sich
+ * nichts ändert: bei leerem oder gleichem Namen und ohne Workspace.
+ */
+export function renameWorkspace(content: WindowContent, name: string): WindowContent | null {
+  const trimmed = name.trim();
+  if (content.kind !== "workspace" || trimmed === "" || trimmed === content.name) return null;
+  return { ...content, name: trimmed };
+}
+
+/** Was aus dem Umsortieren der Projekte eines Workspace wird. */
+export interface Move {
+  content: WindowContent;
+  arrangement: Arrangement;
+}
+
+/**
+ * Setzt das Projekt im Workspace an die Stelle `index`, gezählt in der
+ * Reihenfolge vor dem Verschieben: 0 vor das erste Projekt, die Anzahl der
+ * Projekte hinter das letzte. `null`, wenn sich nichts ändert.
+ */
+export function moveProject(
+  content: WindowContent,
+  arrangement: Arrangement,
+  folder: string,
+  index: number,
+): Move | null {
+  if (content.kind !== "workspace") return null;
+  const key = folderKey(folder);
+  const from = content.projects.findIndex((project) => folderKey(project) === key);
+  if (from < 0 || index === from || index === from + 1) return null;
+  const projects = content.projects.filter((_, position) => position !== from);
+  projects.splice(index > from ? index - 1 : index, 0, content.projects[from]);
+  const previous = content.projects[0];
+  const kept = previous === projects[0] ? arrangement : mapTabs(arrangement, anchorIn(previous));
+  return { content: { ...content, projects }, arrangement: kept };
+}
+
+/**
+ * Bindet einen Tab, der dem ersten Projekt folgt, fest an `project`: ein
+ * Terminal ohne Startordner bekommt dessen Ordner, eine Datei mit relativem
+ * Pfad ihren vollen Pfad. So bleibt er bei seinem Projekt, wenn ein anderes
+ * an die erste Stelle rückt.
+ */
+function anchorIn(project: string): (tab: Tab) => Tab {
+  const root = project.replaceAll("\\", "/").replace(/\/+$/, "");
+  return (tab) => {
+    if (isTerminal(tab)) return tab.cwd === undefined ? { ...tab, cwd: project } : tab;
+    if (!showsFile(tab.content) || isOutsideProject(tab.content.path)) return tab;
+    return { ...tab, content: { ...tab.content, path: `${root}/${tab.content.path}` } };
+  };
 }

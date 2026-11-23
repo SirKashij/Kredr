@@ -9,6 +9,7 @@ import {
   revealPath,
   renameInTree,
   rowsOf,
+  rootDrop,
   rowsWithEdit,
   toggleFolder,
   type Edit,
@@ -334,4 +335,32 @@ test("Umbenennen lässt Ordner mit ähnlich beginnendem Namen unberührt", () =>
   tree = renameInTree(tree, "src", "app");
 
   expect([...tree.expanded].sort()).toEqual(["app", "src-tauri"]);
+});
+
+test("eine gezogene Wurzel landet vor oder hinter der Wurzel, über der sie losgelassen wird", () => {
+  // Drei Projekte als Wurzeln, das erste und das dritte aufgeklappt.
+  const row = (path: string, depth: number) => ({
+    path,
+    name: path,
+    kind: "folder" as const,
+    depth,
+    expanded: true,
+  });
+  const rows = [
+    row("web", 0),
+    row("web/src", 1),
+    row("kern", 0),
+    row("notizen", 0),
+    row("notizen/a", 1),
+  ];
+
+  // Obere Hälfte einer Wurzel: davor; untere Hälfte: dahinter.
+  expect(rootDrop(rows, 2, true)).toEqual({ index: 1, line: 2 });
+  expect(rootDrop(rows, 2, false)).toEqual({ index: 2, line: 3 });
+  // Über einem Eintrag einer Wurzel: hinter diese Wurzel.
+  expect(rootDrop(rows, 1, true)).toEqual({ index: 1, line: 2 });
+  expect(rootDrop(rows, 0, true)).toEqual({ index: 0, line: 0 });
+  // Unter der letzten Zeile und im Inhalt der letzten Wurzel: ans Ende.
+  expect(rootDrop(rows, 4, true)).toEqual({ index: 3, line: 5 });
+  expect(rootDrop(rows, 9, true)).toEqual({ index: 3, line: 5 });
 });

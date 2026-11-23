@@ -7,6 +7,7 @@ import {
   useState,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
 } from "react";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { gitMarks, markOf, type GitMark, type GitMarks } from "./explorerGit";
@@ -20,12 +21,14 @@ import {
   receiveListing,
   revealPath,
   renameInTree,
+  rootDrop,
   rowsOf,
   rowsWithEdit,
   toggleFolder,
   type Edit,
   type ExplorerTree,
   type Row,
+  type RootDrop,
 } from "./explorerTree";
 import { fileIcon } from "./fileIcons";
 import {
@@ -57,6 +60,8 @@ import { projectOf } from "./workspace";
 const ROW_HEIGHT = 22;
 /** So viele Zeilen werden über und unter dem sichtbaren Ausschnitt mitgezeichnet. */
 const OVERSCAN = 10;
+/** Erst ab dieser Strecke gilt eine gedrückte Wurzel als gezogen (in Pixeln). */
+const DRAG_THRESHOLD = 5;
 
 interface ExplorerProps {
   /** Die Projekte des Fensters in Reihenfolge. */
@@ -70,6 +75,14 @@ interface ExplorerProps {
   onAddProject: () => void;
   /** Nimmt das Projekt mit diesem Ordner aus dem Workspace. */
   onRemoveProject: (folder: string) => void;
+  /** Setzt das Projekt an die Stelle `index` (gezählt vor dem Verschieben). */
+  onMoveProject: (folder: string, index: number) => void;
+  /** Gibt dem Workspace einen neuen Namen; schon bereinigt und nicht leer. */
+  onRenameWorkspace: (name: string) => void;
+  /** Steigt, wenn der Name des Workspace bearbeitet werden soll. */
+  renameRequest: number;
+  /** „Workspace schließen“: Das Fenster zeigt danach die Startseite. */
+  onCloseWorkspace: () => void;
   hidden: boolean;
   /** Öffnet ein Terminal im Ordner mit diesem vollen Pfad, mit `agent` samt einem Agenten. */
   onOpenTerminalIn: (folder: string, agent: boolean) => void;
@@ -104,6 +117,10 @@ export function Explorer({
   workspace,
   onAddProject,
   onRemoveProject,
+  onMoveProject,
+  onRenameWorkspace,
+  renameRequest,
+  onCloseWorkspace,
   hidden,
   onOpenTerminalIn,
   activeFile,
@@ -145,6 +162,25 @@ export function Explorer({
   currentTree.current = tree;
   /** Die Namenseingabe, über die gerade entschieden wird; schützt vor doppeltem Abschicken. */
   const pendingEdit = useRef<Edit | null>(null);
+  /** Ob der Name des Workspace gerade bearbeitet wird. */
+  const [renaming, setRenaming] = useState(false);
+  /** Die Anforderung, die schon bearbeitet ist; eine ältere zählt nach dem Neuaufbau nicht. */
+  const handledRename = useRef(renameRequest);
+  useEffect(() => {
+    if (renameRequest === handledRename.current) return;
+    handledRename.current = renameRequest;
+    if (roots) setRenaming(true);
+  }, [renameRequest]);
+  // Wer die Ansicht wechselt, lässt den Namen, wie er war.
+  useEffect(() => {
+    if (hidden) setRenaming(false);
+  }, [hidden]);
+  /** Die gezogene Wurzel und wo sie landen würde. */
+  const [rootDrag, setRootDrag] = useState<{ folder: string; drop: RootDrop | null } | null>(null);
+  /** Wo eine Wurzel gedrückt wurde; erst ab einer kleinen Strecke gilt sie als gezogen. */
+  const pressedRoot = useRef<{ folder: string; x: number; y: number } | null>(null);
+  /** Gesetzt, bis der Klick ankommt, der nur das Loslassen nach dem Ziehen ist. */
+  const justDragged = useRef(false);
   /** Die laufenden Leseaufträge: je Ordner die Nummer des jüngsten. */
   const requests = useRef(new Map<string, number>());
   const requestCount = useRef(0);
@@ -271,6 +307,10 @@ export function Explorer({
   }, [rows, hidden, activeFile]);
 
   function select(row: Row) {
+    if (justDragged.current) {
+      justDragged.current = false;
+      return;
+    }
     setSelected(row.path);
     if (row.kind === "folder") setTree((current) => toggleFolder(current, row.path));
     else onOpenFile(openPath(row.path), true);
@@ -433,6 +473,64 @@ export function Explorer({
     setMenu({ x: event.clientX, y: event.clientY, row });
   }
 
+  /** Wo die gezogene Wurzel unter dem Zeiger landen würde. */
+  function dropUnder(clientY: number): RootDrop {
+    const element = viewport.current!;
+    const offset = clientY - element.getBoundingClientRect().top + element.scrollTop;
+    const pointed = Math.floor(offset / ROW_HEIGHT);
+    return rootDrop(rows, pointed, offset - pointed * ROW_HEIGHT < ROW_HEIGHT / 2);
+  }
+
+  /** Merkt sich die mit der linken Taste gedrückte Wurzel; gezogen ist sie damit noch nicht. */
+  function pressRoot(event: PointerEvent<HTMLElement>, row: Row) {
+    if (event.button !== 0 || !isRoot(row)) return;
+    const folder = locate(row.path)?.project;
+    if (folder) pressedRoot.current = { folder, x: event.clientX, y: event.clientY };
+  }
+
+  /** Bricht das Ziehen einer Wurzel ab; die Reihenfolge bleibt. */
+  function cancelRootDrag() {
+    pressedRoot.current = null;
+    setRootDrag(null);
+  }
+
+  /** Zieht die gedrückte Wurzel, sobald der Zeiger sich weit genug bewegt hat. */
+  function dragRoot(event: PointerEvent<HTMLElement>) {
+    const pressed = pressedRoot.current;
+    if (!pressed) return;
+    // Wurde die Taste außerhalb des Baums losgelassen, ist nichts mehr gedrückt.
+    if ((event.buttons & 1) === 0) return cancelRootDrag();
+    if (!rootDrag) {
+      const distance = Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y);
+      if (distance < DRAG_THRESHOLD) return;
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    setRootDrag({ folder: pressed.folder, drop: dropUnder(event.clientY) });
+  }
+
+  /** Lässt die gezogene Wurzel an der markierten Stelle los. */
+  function dropRoot() {
+    pressedRoot.current = null;
+    if (!rootDrag) return;
+    justDragged.current = true;
+    // Kommt kein Klick mehr, gilt der nächste wieder.
+    setTimeout(() => (justDragged.current = false));
+    setRootDrag(null);
+    if (rootDrag.drop) onMoveProject(rootDrag.folder, rootDrag.drop.index);
+  }
+
+  // Escape bricht das Ziehen einer Wurzel ab.
+  useEffect(() => {
+    if (!rootDrag) return;
+    const cancel = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      cancelRootDrag();
+    };
+    window.addEventListener("keydown", cancel, true);
+    return () => window.removeEventListener("keydown", cancel, true);
+  }, [rootDrag !== null]);
+
   function onKeyDown(event: KeyboardEvent) {
     const row = rows.find((row) => row.path === selected);
     if (!row || edit || isRoot(row)) return;
@@ -478,12 +576,25 @@ export function Explorer({
         </button>
       </div>
       {roots && (
-        <div className="tree-head" hidden={hidden}>
-          {t("workspace.label", { name: workspace })}
-        </div>
+        <WorkspaceHead
+          name={workspace}
+          hidden={hidden}
+          editing={renaming}
+          onEdit={() => setRenaming(true)}
+          onSubmit={(name) => {
+            setRenaming(false);
+            viewport.current?.focus();
+            const trimmed = name.trim();
+            if (trimmed !== "" && trimmed !== workspace) onRenameWorkspace(trimmed);
+          }}
+          onCancel={() => {
+            setRenaming(false);
+            viewport.current?.focus();
+          }}
+        />
       )}
       <div
-        className="tree"
+        className={rootDrag ? "tree dragging-root" : "tree"}
         role="tree"
         tabIndex={0}
         hidden={hidden}
@@ -491,6 +602,9 @@ export function Explorer({
         onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
         onKeyDown={onKeyDown}
         onContextMenu={(event) => openMenu(event, null)}
+        onPointerMove={dragRoot}
+        onPointerUp={dropRoot}
+        onLostPointerCapture={cancelRootDrag}
       >
         {roots && projects.length === 0 ? (
           <div className="empty-workspace">
@@ -503,7 +617,13 @@ export function Explorer({
           rows.length === 0 &&
           tree.listings.has("") && <p className="hint">{t("explorer.empty")}</p>
         )}
-        <div style={{ height: rows.length * ROW_HEIGHT, paddingTop: first * ROW_HEIGHT }}>
+        <div
+          className="tree-rows"
+          style={{ height: rows.length * ROW_HEIGHT, paddingTop: first * ROW_HEIGHT }}
+        >
+          {rootDrag?.drop && (
+            <div className="tree-drop-line" style={{ top: rootDrag.drop.line * ROW_HEIGHT }} />
+          )}
           {rows.slice(first, last).map((row) =>
             row.edit ? (
               <div
@@ -529,10 +649,17 @@ export function Explorer({
                 role="treeitem"
                 aria-expanded={row.kind === "folder" ? row.expanded : undefined}
                 aria-selected={row.path === selected}
-                className={["tree-row", row.path === selected && "sel", isRoot(row) && "root"]
+                className={[
+                  "tree-row",
+                  row.path === selected && "sel",
+                  isRoot(row) && "root",
+                  rootDrag && locate(row.path)?.project === rootDrag.folder && "dragged",
+                ]
                   .filter(Boolean)
                   .join(" ")}
                 style={{ paddingLeft: 8 + row.depth * 12 }}
+                title={isRoot(row) ? t("workspace.dragToReorder") : undefined}
+                onPointerDown={(event) => pressRoot(event, row)}
                 onClick={() => select(row)}
                 onDoubleClick={() => row.kind === "file" && onOpenFile(openPath(row.path), false)}
                 onContextMenu={(event) => openMenu(event, row)}
@@ -548,7 +675,15 @@ export function Explorer({
       {moreMenu && (
         <ContextMenu
           {...moreMenu}
-          items={[{ label: t("workspace.addProject"), onSelect: onAddProject }]}
+          items={[
+            { label: t("workspace.addProject"), onSelect: onAddProject },
+            ...(roots
+              ? [
+                  { label: t("workspace.renameMenu"), onSelect: () => setRenaming(true) },
+                  { label: t("workspace.close"), separator: true, onSelect: onCloseWorkspace },
+                ]
+              : []),
+          ]}
           onClose={() => setMoreMenu(null)}
         />
       )}
@@ -612,6 +747,74 @@ function NameInput({
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Der Kopf eines Workspace mit seinem Namen. Ein Doppelklick macht daraus ein
+ * Eingabefeld: Eingabe und Verlassen übernehmen den Namen, Esc verwirft ihn.
+ */
+function WorkspaceHead({
+  name,
+  hidden,
+  editing,
+  onEdit,
+  onSubmit,
+  onCancel,
+}: {
+  name: string;
+  hidden: boolean;
+  editing: boolean;
+  onEdit: () => void;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  const input = useRef<HTMLInputElement>(null);
+  /** Esc verwirft; das anschließende Verlassen des Felds übernimmt dann nichts. */
+  const done = useRef(false);
+
+  useLayoutEffect(() => {
+    if (!editing) return;
+    done.current = false;
+    input.current?.focus();
+    input.current?.select();
+  }, [editing, hidden]);
+
+  if (!editing || hidden) {
+    return (
+      <div
+        className="tree-head"
+        hidden={hidden}
+        title={t("workspace.renameHint")}
+        onDoubleClick={onEdit}
+      >
+        {t("workspace.label", { name })}
+      </div>
+    );
+  }
+  const finish = (submit: boolean, value: string) => {
+    if (done.current) return;
+    done.current = true;
+    if (submit) onSubmit(value);
+    else onCancel();
+  };
+  return (
+    <div className="tree-head editing">
+      <input
+        ref={input}
+        className="tree-input"
+        defaultValue={name}
+        aria-label={t("workspace.nameInput")}
+        spellCheck={false}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === "Enter") finish(true, event.currentTarget.value);
+          else if (event.key === "Escape") finish(false, "");
+        }}
+        onBlur={(event) => finish(true, event.currentTarget.value)}
+      />
+    </div>
   );
 }
 

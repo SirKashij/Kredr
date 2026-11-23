@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -64,9 +65,11 @@ import {
   addProject,
   firstProject,
   keepConversations,
+  moveProject,
   projectsOf,
   removalInterrupts,
   removeProject,
+  renameWorkspace,
   startPage,
   type WindowContent,
 } from "./workspace";
@@ -144,6 +147,10 @@ export function App() {
   /** Der Hinweis, der gerade unten rechts steht. */
   const [notice, setNotice] = useState<NoticeContent | null>(null);
   const closeNotice = useCallback(() => setNotice(null), []);
+  /** Steigt, wenn der Name des Workspace im Explorer-Kopf bearbeitet werden soll. */
+  const [renameRequest, setRenameRequest] = useState(0);
+  /** Ob gerade ein Ordner aus dem Windows-Explorer über der Seitenleiste schwebt. */
+  const [folderDrop, setFolderDrop] = useState(false);
   /** Warum sich das Fenster zuletzt nicht schließen ließ. */
   const [closeError, setCloseError] = useState<string | null>(null);
   /** Die in diesem Fenster zuletzt geöffneten Dateien, die jüngste zuerst. */
@@ -183,8 +190,10 @@ export function App() {
     const title =
       content.kind === "workspace"
         ? t("window.titleWorkspace", { name: content.name })
-        : project && t("window.title", { project: projectName(project) });
-    if (title) getCurrentWindow().setTitle(title);
+        : project
+          ? t("window.title", { project: projectName(project) })
+          : "Kredr";
+    getCurrentWindow().setTitle(title);
   }, [content, project, t]);
 
   // Ein Projekt öffnet sich mit seiner gespeicherten Aufteilung; ohne sie
@@ -265,40 +274,54 @@ export function App() {
     if (project) return versionControl.watch(project);
   }, [project, versionControl]);
 
+  /**
+   * Fragt wie beim Schließen des Fensters nach, ob dabei etwas verloren ginge,
+   * und speichert danach die Aufteilung; `true` heißt: schließen. Nutzt nur
+   * Objekte, die für die Lebensdauer des Fensters dieselben bleiben.
+   */
+  function confirmClosing(
+    texts: Record<CloseQuestion, [title: MessageKey, message: MessageKey]>,
+    ok: MessageKey,
+  ): Promise<boolean> {
+    const t = translate.current;
+    setCloseError(null);
+    const { arrangement } = latest.current;
+    // Agenten, die beim nächsten Öffnen zurückkommen, zählen nicht als laufender Prozess.
+    const resumed = new Set(agents.returning(arrangement));
+    return mayCloseWindow({
+      hasUnsavedFiles: () => files.anyDirty(),
+      hasRunningProcess: () => terminals.anyHasChildProcess(resumed),
+      hasWorkingAgent: () => agents.closingInterrupts(arrangement),
+      confirm: (question) => {
+        const [title, message] = texts[question];
+        return confirm(t(message), {
+          title: t(title),
+          kind: "warning",
+          okLabel: t(ok),
+          cancelLabel: t("dialog.cancel"),
+        });
+      },
+      // Was an der Aufteilung noch nicht gespeichert ist, geht dabei nicht verloren.
+      saveArrangement: () => saver.flush(),
+      showError: setCloseError,
+    });
+  }
+
   // Das Fenster schließt mit ungespeicherten Änderungen oder einem laufenden
   // Prozess in einem Terminal erst nach Rückfrage.
   useEffect(() => {
     const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
-      const t = translate.current;
-      setCloseError(null);
-      const { arrangement } = latest.current;
-      // Agenten, die beim nächsten Öffnen zurückkommen, zählen nicht als laufender Prozess.
-      const resumed = new Set(agents.returning(arrangement));
-      const close = await mayCloseWindow({
-        hasUnsavedFiles: () => files.anyDirty(),
-        hasRunningProcess: () => terminals.anyHasChildProcess(resumed),
-        hasWorkingAgent: () => agents.closingInterrupts(arrangement),
-        confirm: (question) => {
-          const text: Record<CloseQuestion, [title: MessageKey, message: MessageKey]> = {
-            unsavedFiles: ["file.closeConfirm.title", "file.closeWindowConfirm.message"],
-            runningProcess: [
-              "terminal.closeWindowConfirm.title",
-              "terminal.closeWindowConfirm.message",
-            ],
-            workingAgent: ["agent.closeWindowConfirm.title", "agent.closeWindowConfirm.message"],
-          };
-          const [title, message] = text[question];
-          return confirm(t(message), {
-            title: t(title),
-            kind: "warning",
-            okLabel: t("file.closeWindowConfirm.ok"),
-            cancelLabel: t("dialog.cancel"),
-          });
+      const close = await confirmClosing(
+        {
+          unsavedFiles: ["file.closeConfirm.title", "file.closeWindowConfirm.message"],
+          runningProcess: [
+            "terminal.closeWindowConfirm.title",
+            "terminal.closeWindowConfirm.message",
+          ],
+          workingAgent: ["agent.closeWindowConfirm.title", "agent.closeWindowConfirm.message"],
         },
-        // Was an der Aufteilung noch nicht gespeichert ist, geht mit dem Fenster nicht verloren.
-        saveArrangement: () => saver.flush(),
-        showError: setCloseError,
-      });
+        "file.closeWindowConfirm.ok",
+      );
       if (!close) event.preventDefault();
     });
     return () => {
@@ -309,6 +332,32 @@ export function App() {
   useEffect(() => {
     terminals.setFont(settings.fontFamily, settings.fontSize);
   }, [terminals, settings.fontFamily, settings.fontSize]);
+
+  // Ordner aus dem Windows-Explorer: Über der Seitenleiste erscheint eine
+  // Ablagefläche, dort losgelassen kommen sie als Projekte hinzu.
+  const dropFolders = useRef(dropOnSidebar);
+  dropFolders.current = dropOnSidebar;
+  useEffect(() => {
+    /** Ob die Stelle (in physischen Pixeln des Fensters) über der Seitenleiste liegt. */
+    const overSidebar = ({ x, y }: { x: number; y: number }) => {
+      const sidebar = document.querySelector(".sidebar");
+      if (!sidebar || latest.current.content.kind === "startPage") return false;
+      const scale = window.devicePixelRatio;
+      const box = sidebar.getBoundingClientRect();
+      const [left, top] = [x / scale, y / scale];
+      return left >= box.left && left <= box.right && top >= box.top && top <= box.bottom;
+    };
+    const unlisten = getCurrentWebview().onDragDropEvent(({ payload }) => {
+      if (payload.type === "leave") return setFolderDrop(false);
+      const over = overSidebar(payload.position);
+      if (payload.type !== "drop") return setFolderDrop(over);
+      setFolderDrop(false);
+      if (over) dropFolders.current(payload.paths);
+    });
+    return () => {
+      unlisten.then((stop) => stop());
+    };
+  }, []);
 
   /** Gibt dem sichtbaren Terminal der fokussierten Gruppe die Tastatureingaben zurück. */
   function refocusTerminal() {
@@ -559,21 +608,31 @@ export function App() {
    */
   async function addProjectToWindow() {
     const folder = await chooseFolder(t("workspace.addProjectTitle"));
-    if (!folder) return;
+    if (folder) await addFolder(folder, latest.current.content);
+  }
+
+  /**
+   * Fügt dem Fenster mit dem Inhalt `content` den Ordner als Projekt hinzu,
+   * mit Hinweis, und liefert, was das Fenster danach zeigt. Der eine Weg für
+   * den Ordnerdialog und aus dem Windows-Explorer gezogene Ordner.
+   */
+  async function addFolder(folder: string, content: WindowContent): Promise<WindowContent> {
     const added = projectName(folder);
     const result = addProject(content, folder, {
       id: crypto.randomUUID(),
       name: t("workspace.untitled"),
     });
     if (result.kind === "refused") {
-      return setNotice({ text: t("workspace.alreadyContained", { project: added }) });
+      setNotice({ text: t("workspace.alreadyContained", { project: added }) });
+      return content;
     }
     // Was an der Aufteilung noch aussteht, gehört zum Projekt, bevor der Workspace sie übernimmt.
     await saver.flush();
     try {
       const outcome = await invoke<AddProjectOutcome>("add_project", { content: result.content });
       if (outcome.kind === "openElsewhere") {
-        return setNotice({ text: t("workspace.openElsewhere", { project: added }) });
+        setNotice({ text: t("workspace.openElsewhere", { project: added }) });
+        return content;
       }
       const becameWorkspace = content.kind === "project";
       const next = outcome.content;
@@ -584,21 +643,104 @@ export function App() {
         const from = projectName(content.path);
         setNotice({
           text: t("workspace.created", { project: from, name: next.name, added }),
-          // Das Umbenennen selbst folgt; bis dahin führt der Link zum Explorer-Kopf.
-          action: {
-            label: t("workspace.rename"),
-            run: () => {
-              setView("explorer");
-              setSidebarVisible(true);
-            },
-          },
+          action: { label: t("workspace.rename"), run: startRenaming },
         });
       } else {
         setNotice({ text: t("workspace.added", { project: added }) });
       }
+      return next;
     } catch (reason) {
       setNotice({ text: t("workspace.addFailed", { project: added, details: String(reason) }) });
+      return content;
     }
+  }
+
+  /** Aus dem Windows-Explorer auf die Seitenleiste gezogen: Ordner kommen hinzu, Dateien nicht. */
+  async function dropOnSidebar(paths: string[]) {
+    if (latest.current.content.kind === "startPage") return;
+    const folders = await invoke<string[]>("folders_among", { paths });
+    let current: WindowContent = latest.current.content;
+    for (const folder of folders) current = await addFolder(folder, current);
+  }
+
+  /** Zeigt den Explorer mit dem Namen des Workspace als Eingabefeld. */
+  function startRenaming() {
+    setView("explorer");
+    setSidebarVisible(true);
+    setSettingsOpen(false);
+    setRenameRequest((count) => count + 1);
+  }
+
+  /** Gibt dem Workspace den neuen Namen; ein leerer oder gleicher Name ändert nichts. */
+  async function renameWorkspaceTo(name: string) {
+    if (!renameWorkspace(latest.current.content, name)) return;
+    // Was noch aussteht, darf den neuen Namen nicht mit dem alten überschreiben.
+    await saver.flush();
+    try {
+      setContent(await invoke<WindowContent>("rename_workspace", { name }));
+    } catch (reason) {
+      setNotice({ text: t("workspace.renameFailed", { details: String(reason) }) });
+    }
+  }
+
+  /**
+   * Setzt das Projekt an die Stelle `index` unter den Projekten. Rückt dabei
+   * ein anderes Projekt an die erste Stelle, bleiben die Tabs des bisherigen
+   * ersten Projekts bei diesem, offene Dateien samt ungespeicherten Änderungen.
+   */
+  async function moveProjectTo(folder: string, index: number) {
+    const move = moveProject(latest.current.content, latest.current.arrangement, folder, index);
+    if (!move) return;
+    await saver.flush();
+    try {
+      const next = await invoke<WindowContent>("reorder_projects", {
+        projects: projectsOf(move.content),
+      });
+      const before = latest.current.arrangement;
+      const moved = moveProject(latest.current.content, before, folder, index);
+      if (moved) {
+        const paths = (arrangement: Arrangement) => tabsOf(arrangement).map(filePathOf);
+        const after = paths(moved.arrangement);
+        paths(before).forEach((path, position) => {
+          if (path !== undefined && after[position] !== undefined) {
+            files.rekey(path, after[position]);
+          }
+        });
+        setArrangement(moved.arrangement);
+      }
+      setContent(next);
+    } catch (reason) {
+      setNotice({ text: t("workspace.moveFailed", { details: String(reason) }) });
+    }
+  }
+
+  /**
+   * „Workspace schließen“: Das Fenster zeigt danach die Startseite. Ginge
+   * dabei etwas verloren, fragt Kredr wie beim Schließen eines Fensters. Die
+   * Aufteilung ist gespeichert; beim nächsten Öffnen kommt der Workspace mit
+   * seinen Agenten zurück.
+   */
+  async function closeWorkspace() {
+    const close = await confirmClosing(
+      {
+        unsavedFiles: ["file.closeConfirm.title", "workspace.closeConfirm.unsavedFiles"],
+        runningProcess: ["workspace.closeConfirm.title", "workspace.closeConfirm.runningProcess"],
+        workingAgent: ["workspace.closeConfirm.title", "workspace.closeConfirm.workingAgent"],
+      },
+      "workspace.close",
+    );
+    if (!close) return refocusTerminal();
+    try {
+      await invoke("close_workspace");
+    } catch (reason) {
+      return setNotice({ text: t("workspace.closeFailed", { details: String(reason) }) });
+    }
+    // Ab hier speichert das Fenster nichts mehr; die Tabs schließen, ihre Terminals enden.
+    loadedFor.current = null;
+    setRestored(false);
+    setArrangement(emptyArrangement);
+    setContent(startPage);
+    setNotice(null);
   }
 
   /**
@@ -676,6 +818,11 @@ export function App() {
           content={content}
           onAddProject={addProjectToWindow}
           onRemoveProject={removeProjectFromWindow}
+          onMoveProject={moveProjectTo}
+          onRenameWorkspace={renameWorkspaceTo}
+          renameRequest={renameRequest}
+          onCloseWorkspace={closeWorkspace}
+          folderDrop={folderDrop}
           arrangement={arrangement}
           activeFile={activeFile}
           onOpenFile={(path, preview) => openFile({ path, preview })}

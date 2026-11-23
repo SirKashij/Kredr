@@ -5,10 +5,13 @@ import {
   addProject,
   firstProject,
   keepConversations,
+  moveProject,
   projectOf,
+  projectOfTab,
   projectsOf,
   removalInterrupts,
   removeProject,
+  renameWorkspace,
   startPage,
   type WindowContent,
 } from "./workspace";
@@ -269,4 +272,54 @@ test("ein leerer Workspace nimmt sein erstes Projekt auf", () => {
     kind: "added",
     content: { ...empty, projects: ["C:\\Projekte\\Web"] },
   });
+});
+
+test("ein Workspace bekommt den neuen Namen ohne Leerraum am Rand und bleibt derselbe", () => {
+  expect(renameWorkspace(workspace, "  Kunden  ")).toEqual({ ...workspace, name: "Kunden" });
+});
+
+test("ein leerer, unveränderter oder fremder Name wird nicht übernommen", () => {
+  expect(renameWorkspace(workspace, "   ")).toBeNull();
+  expect(renameWorkspace(workspace, "Unbenannt ")).toBeNull();
+  expect(renameWorkspace(single, "Kunden")).toBeNull();
+  expect(renameWorkspace(startPage, "Kunden")).toBeNull();
+});
+
+test("ein Projekt rückt an die Stelle, an der es abgelegt wird", () => {
+  const moved = moveProject(three, mixed, "c:/projekte/notizen", 1)!;
+
+  expect(moved.content).toEqual({
+    ...three,
+    projects: ["C:\\Projekte\\Web", "C:\\Projekte\\Notizen", "C:\\Projekte\\Kern"],
+  });
+  // Das erste Projekt bleibt; die Tabs bleiben, wie sie sind.
+  expect(moved.arrangement).toBe(mixed);
+  // Hinter das letzte Projekt abgelegt, steht es am Ende.
+  expect(moveProject(three, mixed, "C:\\Projekte\\Kern", 3)!.content).toEqual({
+    ...three,
+    projects: ["C:\\Projekte\\Web", "C:\\Projekte\\Notizen", "C:\\Projekte\\Kern"],
+  });
+});
+
+test("an der eigenen Stelle abgelegt oder ohne Workspace ändert sich nichts", () => {
+  expect(moveProject(three, mixed, "C:\\Projekte\\Kern", 1)).toBeNull();
+  expect(moveProject(three, mixed, "C:\\Projekte\\Kern", 2)).toBeNull();
+  expect(moveProject(three, mixed, "C:\\Projekte\\Kredr", 0)).toBeNull();
+  expect(moveProject(single, mixed, "C:\\Projekte\\Kredr", 0)).toBeNull();
+});
+
+test("wechselt das erste Projekt, bleiben seine Terminals und Dateien bei ihm", () => {
+  const moved = moveProject(three, mixed, "C:\\Projekte\\Kern", 0)!;
+  const projects = projectsOf(moved.content);
+
+  expect(projects).toEqual(["C:\\Projekte\\Kern", "C:\\Projekte\\Web", "C:\\Projekte\\Notizen"]);
+  const tabs = tabsOf(moved.arrangement);
+  expect(tabs.slice(0, 2)).toEqual([
+    { id: "t1", agent: true, shell: "powershell", cwd: "C:\\Projekte\\Web" },
+    { id: "t2", content: { kind: "file", path: "C:/Projekte/Web/src/index.ts" } },
+  ]);
+  // Jeder Tab gehört danach zum selben Projekt wie vorher.
+  const owners = (list: readonly string[], arrangement: Arrangement) =>
+    tabsOf(arrangement).map((tab) => projectOfTab(list, tab));
+  expect(owners(projects, moved.arrangement)).toEqual(owners(three.projects, mixed));
 });

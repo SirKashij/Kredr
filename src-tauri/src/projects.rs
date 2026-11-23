@@ -416,6 +416,113 @@ pub fn remove_project(
     Ok(content)
 }
 
+/// Gibt dem Workspace des aufrufenden Fensters einen neuen Namen. Er bleibt
+/// derselbe Workspace mit derselben Aufteilung. Liefert, was das Fenster
+/// danach zeigt.
+#[tauri::command]
+pub fn rename_workspace(
+    window: Window,
+    windows: State<'_, ProjectWindows>,
+    store: State<'_, ArrangementStore>,
+    name: String,
+) -> Result<WindowContent, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("a workspace needs a name".to_string());
+    }
+    change_shown_workspace(&window, &windows, &store, |_, current| {
+        *current = name.clone();
+        Ok(())
+    })
+}
+
+/// Bringt die Projekte des Workspace im aufrufenden Fenster in die
+/// Reihenfolge `projects`, die genau dieselben Projekte enthalten muss.
+/// Liefert, was das Fenster danach zeigt.
+#[tauri::command]
+pub fn reorder_projects(
+    window: Window,
+    windows: State<'_, ProjectWindows>,
+    store: State<'_, ArrangementStore>,
+    projects: Vec<PathBuf>,
+) -> Result<WindowContent, String> {
+    change_shown_workspace(&window, &windows, &store, |current, _| {
+        let same = current.len() == projects.len()
+            && projects
+                .iter()
+                .all(|folder| current.iter().any(|open| paths::same(open, folder)));
+        if !same {
+            return Err("the new order must hold the same projects".to_string());
+        }
+        // Die Pfade bleiben in der Schreibweise, in der das Fenster sie kennt.
+        *current = projects
+            .iter()
+            .filter_map(|folder| current.iter().find(|open| paths::same(open, folder)))
+            .cloned()
+            .collect();
+        Ok(())
+    })
+}
+
+/// Ändert Projekte oder Namen des Workspace im aufrufenden Fenster, im
+/// Speicher und in der Zuordnung der Fenster zugleich.
+fn change_shown_workspace(
+    window: &Window,
+    windows: &ProjectWindows,
+    store: &ArrangementStore,
+    change: impl FnOnce(&mut Vec<PathBuf>, &mut String) -> Result<(), String>,
+) -> Result<WindowContent, String> {
+    let _guard = OPENING.lock();
+    let WindowContent::Workspace {
+        id,
+        mut name,
+        mut projects,
+    } = windows.content_of(window.label())
+    else {
+        return Err("this window shows no workspace".to_string());
+    };
+    change(&mut projects, &mut name)?;
+    store
+        .change_workspace(&id, |state| {
+            state.name = name.clone();
+            state.projects = projects.clone();
+        })
+        .map_err(|e| e.to_string())?;
+    let content = WindowContent::Workspace { id, name, projects };
+    windows.assign(window.label(), content.clone());
+    Ok(content)
+}
+
+/// Schließt den Workspace des aufrufenden Fensters: Das Fenster zeigt danach
+/// die Startseite. Die Oberfläche hat seine Aufteilung vorher gespeichert;
+/// beim nächsten Öffnen kommt er so zurück, wie er war.
+#[tauri::command]
+pub fn close_workspace(
+    app: AppHandle,
+    window: Window,
+    windows: State<'_, ProjectWindows>,
+    store: State<'_, ArrangementStore>,
+) -> Result<(), String> {
+    let _guard = OPENING.lock();
+    let WindowContent::Workspace { id, .. } = windows.content_of(window.label()) else {
+        return Err("this window shows no workspace".to_string());
+    };
+    remember_workspace(&store, &id);
+    windows.assign(window.label(), WindowContent::StartPage);
+    remember_open_workspaces(&app);
+    Ok(())
+}
+
+/// Die Ordner unter den Pfaden, etwa aus dem Windows-Explorer gezogen, in
+/// ihrer Reihenfolge; Dateien und fehlende Pfade fallen weg.
+#[tauri::command(async)]
+pub fn folders_among(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    paths
+        .iter()
+        .filter_map(|path| project_folder(path))
+        .collect()
+}
+
 /// Die gespeicherte Aufteilung des Projekts, gleich welches Fenster es
 /// gerade zeigt; nichts, wenn keine lesbare gespeichert ist.
 #[tauri::command(async)]
@@ -559,7 +666,9 @@ pub fn arrangement_save(
     store: State<'_, ArrangementStore>,
     arrangement: serde_json::Value,
 ) -> Result<(), String> {
-    let geometry = |previous: Option<WindowGeometry>| match observe(&window) {
+    // Vor jeder Sperre des Speichers: Das Fenster abzulesen läuft über den Hauptthread.
+    let observed = observe(&window);
+    let geometry = |previous: Option<WindowGeometry>| match observed {
         Some(observed) => WindowGeometry::remember(previous, observed),
         None => previous,
     };
@@ -574,14 +683,25 @@ pub fn arrangement_save(
             store.save_project_state(&project, &state)
         }
         Some(Saved::Workspace { id, name, projects }) => {
-            let previous = store.workspace_state(&id).and_then(|state| state.window);
-            let state = WorkspaceState {
-                name,
-                projects,
-                arrangement: Some(arrangement),
-                window: geometry(previous),
-            };
-            store.save_workspace_state(&id, &state)
+            // Name und Projekte schreiben die Befehle, die sie ändern. Ein
+            // Speichern, das gleichzeitig läuft, brächte sonst den Stand von
+            // vor dem Umbenennen oder Umsortieren zurück.
+            let changed = store.change_workspace(&id, |state| {
+                state.window = geometry(state.window);
+                state.arrangement = Some(arrangement.clone());
+            });
+            match changed {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let state = WorkspaceState {
+                        name,
+                        projects,
+                        arrangement: Some(arrangement),
+                        window: geometry(None),
+                    };
+                    store.save_workspace_state(&id, &state)
+                }
+                other => other,
+            }
         }
     };
     saved.map_err(|e| e.to_string())
