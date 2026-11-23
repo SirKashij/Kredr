@@ -1,5 +1,5 @@
 import { message } from "@tauri-apps/plugin-dialog";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { editor } from "monaco-editor/editor/editor.api";
 import { fileName, fullPath } from "./filePath";
 import { useT } from "./i18n/i18n";
@@ -41,7 +41,9 @@ export function FileView({
   const name = fileName(path);
 
   const edited = useRef(onEdited);
-  edited.current = onEdited;
+  useLayoutEffect(() => {
+    edited.current = onEdited;
+  });
   useEffect(() => {
     if (state.dirty) edited.current();
   }, [state.dirty]);
@@ -157,9 +159,13 @@ function FileEditor({
   const host = useRef<HTMLDivElement>(null);
   const [shown, setShown] = useState<editor.IStandaloneCodeEditor | null>(null);
   const font = useRef(settings);
-  font.current = settings;
+  useLayoutEffect(() => {
+    font.current = settings;
+  });
   const failed = useRef(saveFailed);
-  failed.current = saveFailed;
+  useLayoutEffect(() => {
+    failed.current = saveFailed;
+  });
 
   useEffect(() => {
     let created: editor.IStandaloneCodeEditor | null = null;

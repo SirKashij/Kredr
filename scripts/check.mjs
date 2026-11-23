@@ -16,6 +16,7 @@ const npm = "npm";
 const steps = [
   ["Formatierung der Oberfläche", npm, ["run", "format:check"], root],
   ["Typprüfung der Oberfläche", npm, ["run", "typecheck"], root],
+  ["Lints der Oberfläche", npm, ["run", "lint"], root],
   ["Tests der Oberfläche", npm, ["test"], root],
   // Der Kern bettet die gebaute Oberfläche ein und übersetzt ohne sie nicht.
   ["Oberfläche bauen", npm, ["run", "build"], root],

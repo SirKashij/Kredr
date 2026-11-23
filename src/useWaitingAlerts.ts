@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import type { AgentStatuses } from "./agentStatus";
 import { decide, noAlerts } from "./waitingAlerts";
 
@@ -24,7 +24,9 @@ export function useWaitingAlerts({ statuses, enabled, describe, onSelect }: Wait
   // Bis Windows es anders meldet, gilt das Fenster als im Vordergrund.
   const foreground = useRef(true);
   const latest = useRef({ describe, onSelect });
-  latest.current = { describe, onSelect };
+  useLayoutEffect(() => {
+    latest.current = { describe, onSelect };
+  });
 
   useEffect(() => {
     const appWindow = getCurrentWindow();

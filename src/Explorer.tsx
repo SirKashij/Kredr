@@ -159,7 +159,9 @@ export function Explorer({
   const [height, setHeight] = useState(0);
   const viewport = useRef<HTMLDivElement>(null);
   const currentTree = useRef(tree);
-  currentTree.current = tree;
+  useLayoutEffect(() => {
+    currentTree.current = tree;
+  });
   /** Die Namenseingabe, über die gerade entschieden wird; schützt vor doppeltem Abschicken. */
   const pendingEdit = useRef<Edit | null>(null);
   /** Ob der Name des Workspace gerade bearbeitet wird. */
@@ -203,7 +205,9 @@ export function Explorer({
       });
   }
   const loadFolder = useRef(load);
-  loadFolder.current = load;
+  useLayoutEffect(() => {
+    loadFolder.current = load;
+  });
 
   useEffect(() => {
     for (const folder of foldersToLoad(tree)) {
@@ -415,6 +419,9 @@ export function Explorer({
     }
   }
 
+  // Die Einträge entstehen beim Rendern, ihr onSelect läuft aber erst beim Klick. Dass
+  // startCreate, startRename und trash dort Refs lesen, ist also kein Zugriff beim Rendern.
+  /* eslint-disable react-hooks/refs */
   function menuItems(row: Row | null): MenuItem[] {
     const located = row ? locate(row.path) : project === null ? null : { project, path: "" };
     if (!located) return [];
@@ -465,6 +472,7 @@ export function Explorer({
       { label: t("explorer.trash"), onSelect: () => trash(row) },
     ];
   }
+  /* eslint-enable react-hooks/refs */
 
   function openMenu(event: MouseEvent, row: Row | null) {
     event.preventDefault();
