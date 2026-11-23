@@ -102,9 +102,11 @@ export function SearchView({
       };
       setProgress({ state: "running" });
       const running = searchProjects(projects, query, (project, files) => {
-        setResults((current) => addMatches(first ? emptyResults : current, project, files));
-        if (first) viewport.current?.scrollTo(0, 0);
+        // React führt das Update womöglich erst später aus; bis dahin ist `first` schon falsch.
+        const fresh = first;
         first = false;
+        setResults((current) => addMatches(fresh ? emptyResults : current, project, files));
+        if (fresh) viewport.current?.scrollTo(0, 0);
       });
       search = running;
       running.done.then(
