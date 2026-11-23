@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ActivityBar, type View } from "./ActivityBar";
 import { AgentStatuses } from "./agentStatus";
 import { AgentCounters } from "./AgentStatusViews";
@@ -12,7 +12,6 @@ import {
   assignShell,
   closeTab,
   closesFileText,
-  emptyArrangement,
   filePathOf,
   focusAdjacentGroup,
   focusedGroupOf,
@@ -22,14 +21,12 @@ import {
   openContent,
   openTab,
   openTabIn,
-  restoreArrangement,
   showsFile,
   showVersionControl,
   splitGroup,
   tabsOf,
   type Arrangement,
 } from "./arrangement";
-import { ArrangementSaver, loadArrangement } from "./arrangementStore";
 import { chooseFolder } from "./chooseFolder";
 import { mayCloseWindow, type CloseQuestion } from "./closeWindow";
 import { contentFor } from "./fileKinds";
@@ -62,28 +59,18 @@ import type { ChangedFile } from "./versionControlState";
 import { BranchStatus } from "./VersionControlView";
 import { alertBody } from "./waitingAlerts";
 import { WindowAgents } from "./windowAgents";
+import { tauriWindowCore, WindowStore, type AddOutcome, type ClosingQuestion } from "./windowStore";
 import {
   activeProject,
-  addProject,
   firstProject,
-  keepConversations,
-  moveProject,
   projectsOf,
   removalQuestion,
   type RemovalQuestion,
-  removeProject,
-  renameWorkspace,
-  startPage,
   toggleSection,
   type WindowContent,
 } from "./workspace";
 import { Notice, type NoticeContent } from "./Notice";
 import { ProjectPicker } from "./ProjectPicker";
-
-/** Was der Kern auf „Projekt hinzufügen“ antwortet. */
-type AddProjectOutcome = { kind: "added"; content: WindowContent } | { kind: "openElsewhere" };
-/** Was der Kern auf „Workspace öffnen“ antwortet. */
-type OpenWorkspaceOutcome = { kind: "opened"; content: WindowContent } | { kind: "openElsewhere" };
 
 /** Eine Datei, die als Dateiansicht geöffnet werden soll. */
 export interface FileRequest extends Partial<FilePosition> {
@@ -101,26 +88,14 @@ export function App() {
   const [sidebarVisible, setSidebarVisible] = useState(true);
   /** Steigt mit jedem Aufruf der Suche; danach erhält ihr Suchfeld die Tastatur. */
   const [searchFocus, setSearchFocus] = useState(0);
-  /** Was dieses Fenster zeigt: die Startseite, ein Projekt oder einen Workspace. */
-  const [content, setContent] = useState<WindowContent>(startPage);
-  /** Die Projekte des Fensters in Reihenfolge. */
-  const projects = useMemo(() => projectsOf(content), [content]);
-  /**
-   * Das erste Projekt des Fensters. Ihm folgen bis auf Weiteres die Ansichten
-   * und neue Terminals; für ein Projektfenster ist es das Projekt.
-   */
-  const project = firstProject(content);
-  const [arrangement, setArrangement] = useState(emptyArrangement);
-  /** Ob die gespeicherte Aufteilung des Projekts geladen ist; erst dann wird gezeigt und gespeichert. */
-  const [restored, setRestored] = useState(false);
-  /** Das Projekt oder der Workspace, dessen gespeicherte Aufteilung geladen ist. */
-  const loadedFor = useRef<string | null>(null);
-  const [saver] = useState(() => new ArrangementSaver());
   /** Steigt mit jeder Bedienung der Aufteilung; danach erhält das Terminal wieder den Fokus. */
   const [focusRequest, setFocusRequest] = useState(0);
   // Ein Sprachwechsel soll laufende Terminals nicht neu starten.
   const translate = useRef(t);
   translate.current = t;
+  /** Die Einstellungen für Agenten und Store, die nur bei Bedarf nachsehen. */
+  const latestSettings = useRef(settings);
+  latestSettings.current = settings;
   const [statuses] = useState(() => new AgentStatuses());
   const [terminals] = useState(
     () =>
@@ -131,20 +106,36 @@ export function App() {
         openFile: (target) => openFileRequest.current(target),
       }),
   );
-  /** Aufteilung, Einstellungen und Fensterinhalt für Rückfragen, die auf eine Antwort warten. */
-  const latest = useRef({ arrangement, settings, content });
-  latest.current = { arrangement, settings, content };
-  const [agents] = useState(
-    () =>
-      new WindowAgents({
-        terminals,
-        statuses,
-        change: setArrangement,
-        // Eine geänderte Standard-Shell gilt für das nächste neue Terminal.
-        settings: () => latest.current.settings,
-      }),
-  );
   const [files] = useState(() => new OpenFiles());
+  /** Fensterinhalt und Aufteilung; nur der Store ändert sie. */
+  const [{ store, agents }] = useState(() => {
+    const store = new WindowStore({
+      core: tauriWindowCore,
+      settings: () => latestSettings.current,
+      settle: (arrangement) => settle(arrangement),
+      untitledName: () => translate.current("workspace.untitled"),
+      resume: (stored, project) => agents.resumeAll(stored, project),
+      mayClose: (question) => mayCloseRequest.current(question),
+      // Vor dem Umbenennen der Tabs, sonst schlössen die Dateien mit dem alten Pfad.
+      renameFiles: (renamed) => renamed.forEach(([from, to]) => files.rekey(from, to)),
+    });
+    const agents = new WindowAgents({
+      terminals,
+      statuses,
+      change: store.change,
+      // Eine geänderte Standard-Shell gilt für das nächste neue Terminal.
+      settings: () => latestSettings.current,
+    });
+    return { store, agents };
+  });
+  const { content, arrangement, restored } = useSyncExternalStore(store.subscribe, store.snapshot);
+  /** Die Projekte des Fensters in Reihenfolge. */
+  const projects = useMemo(() => projectsOf(content), [content]);
+  /**
+   * Das erste Projekt des Fensters. Ihm folgen bis auf Weiteres die Ansichten
+   * und neue Terminals; für ein Projektfenster ist es das Projekt.
+   */
+  const project = firstProject(content);
   /** Die Dateilisten aller Projekte für „Datei per Namen öffnen“. */
   const [fileList] = useState(() => new WorkspaceFileList());
   const [quickOpen, setQuickOpen] = useState(false);
@@ -166,9 +157,6 @@ export function App() {
   const [versionControl] = useState(() => new VersionControls());
   /** Die Shells, die es auf diesem Rechner gibt; PowerShell immer. */
   const [shells, setShells] = useState<Shell[]>(["powershell"]);
-  // Eine geänderte Standard-Shell gilt für das nächste neue Terminal.
-  const defaultShell = useRef(settings.defaultShell);
-  defaultShell.current = settings.defaultShell;
 
   useEffect(() => {
     availableShells()
@@ -176,23 +164,24 @@ export function App() {
       .catch(() => {});
   }, []);
 
-  /** Jedes neu entstandene Terminal hält die Standard-Shell fest, wenn keine gewählt wurde. */
+  /**
+   * Jedes neu entstandene Terminal hält die Standard-Shell fest, wenn keine
+   * gewählt wurde. Eine geänderte Standard-Shell gilt für das nächste neue Terminal.
+   */
   function settle(arrangement: Arrangement): Arrangement {
-    return assignShell(arrangement, defaultShell.current);
+    return assignShell(arrangement, latestSettings.current.defaultShell);
   }
 
   useEffect(() => {
-    invoke<WindowContent>("window_content").then((opened) => {
-      setContent((current) => (current.kind === "startPage" ? opened : current));
-    });
+    invoke<WindowContent>("window_content").then((opened) => store.showInitial(opened));
     // Ein weiterer Start von Kredr kann einem Fenster auf der Startseite ein Projekt geben.
     const unlisten = getCurrentWindow().listen<WindowContent>("window-content-opened", (event) =>
-      setContent(event.payload),
+      store.show(event.payload),
     );
     return () => {
       unlisten.then((stop) => stop());
     };
-  }, []);
+  }, [store]);
 
   useEffect(() => {
     const title =
@@ -204,50 +193,15 @@ export function App() {
     getCurrentWindow().setTitle(title);
   }, [content, project, t]);
 
-  // Ein Projekt öffnet sich mit seiner gespeicherten Aufteilung; ohne sie
-  // beginnt es mit einem Terminal. Gemerkte Agenten starten sofort und
-  // gleichzeitig, auch in verdeckten Tabs, und setzen ihr Gespräch fort.
-  // Geladen wird einmal je Projekt bzw. Workspace: Ein Workspace, der aus
-  // dem Projektfenster entsteht, übernimmt die laufende Aufteilung, und wird
-  // sein erstes Projekt entfernt, lädt er nichts neu.
-  const arrangementOwner = content.kind === "workspace" ? content.id : project;
-  const hasProject = project !== null;
-  useEffect(() => {
-    if (!project || loadedFor.current === arrangementOwner) return;
-    loadedFor.current = arrangementOwner;
-    let stale = false;
-    let done = false;
-    const { resumeAgents } = latest.current.settings;
-    loadArrangement(project, { resumeAgents }).then((stored) => {
-      if (stale) return;
-      // Ist schon ein Terminal entstanden, bleibt die gespeicherte Aufteilung ungenutzt.
-      const used = !latest.current.arrangement.root;
-      setArrangement((current) =>
-        current.root ? current : settle(stored.root ? stored : openTab(current)),
-      );
-      if (used) agents.resumeAll(stored, project);
-      setRestored(true);
-      done = true;
-    });
-    return () => {
-      stale = true;
-      // Ein abgebrochenes Laden zählt nicht; der nächste Lauf lädt erneut.
-      if (!done) loadedFor.current = null;
-    };
-  }, [arrangementOwner, hasProject]);
-
-  // Die Aufteilung wird laufend gespeichert, mit ihr Größe und Position des Fensters.
-  useEffect(() => {
-    if (restored) saver.changed(arrangement);
-  }, [arrangement, restored, saver]);
+  // Größe und Position des Fensters werden mit der Aufteilung gespeichert.
   useEffect(() => {
     const window = getCurrentWindow();
     const listening = [
-      window.onMoved(() => saver.windowChanged()),
-      window.onResized(() => saver.windowChanged()),
+      window.onMoved(() => store.windowChanged()),
+      window.onResized(() => store.windowChanged()),
     ];
     return () => listening.forEach((unlisten) => unlisten.then((stop) => stop()));
-  }, [saver]);
+  }, [store]);
 
   // Terminals, deren Tab geschlossen wurde, enden.
   useEffect(() => {
@@ -290,7 +244,7 @@ export function App() {
   ): Promise<boolean> {
     const t = translate.current;
     setCloseError(null);
-    const { arrangement } = latest.current;
+    const { arrangement } = store.snapshot();
     // Agenten, die beim nächsten Öffnen zurückkommen, zählen nicht als laufender Prozess.
     const resumed = new Set(agents.returning(arrangement));
     return mayCloseWindow({
@@ -308,10 +262,57 @@ export function App() {
         });
       },
       // Was an der Aufteilung noch nicht gespeichert ist, geht dabei nicht verloren.
-      saveArrangement: () => saver.flush(),
+      saveArrangement: () => store.flush(),
       showError: setCloseError,
     });
   }
+
+  /**
+   * Die Rückfragen des Stores, bevor Tabs schließen: beim Schließen des
+   * Workspace wie beim Schließen eines Fensters; beim Entfernen eines
+   * Projekts, wenn ungespeicherte Änderungen verloren gingen, ein
+   * arbeitender oder wartender Agent unterbrochen würde oder die
+   * Hintergrundaufgaben eines Agenten endeten.
+   */
+  async function mayClose(question: ClosingQuestion): Promise<boolean> {
+    if (question.kind === "closeWorkspace") {
+      return confirmClosing(
+        {
+          unsavedFiles: ["file.closeConfirm.title", "workspace.closeConfirm.unsavedFiles"],
+          runningProcess: ["workspace.closeConfirm.title", "workspace.closeConfirm.runningProcess"],
+          workingAgent: ["workspace.closeConfirm.title", "workspace.closeConfirm.workingAgent"],
+          backgroundAgent: [
+            "workspace.closeConfirm.title",
+            "workspace.closeConfirm.backgroundAgent",
+          ],
+        },
+        "workspace.close",
+      );
+    }
+    const t = translate.current;
+    const name = projectName(question.project);
+    const dirty = question.closing.some(
+      (tab) => showsFile(tab.content) && files.find(tab.content.path)?.state.dirty,
+    );
+    const ask = (message: MessageKey, title: MessageKey) =>
+      confirm(t(message, { project: name }), {
+        title: t(title),
+        kind: "warning",
+        okLabel: t("workspace.removeConfirm.ok"),
+        cancelLabel: t("dialog.cancel"),
+      });
+    if (dirty && !(await ask("workspace.removeUnsaved.message", "file.closeConfirm.title"))) {
+      return false;
+    }
+    const removal = removalQuestion(question.closing, statuses.snapshot());
+    const messages: Record<RemovalQuestion, MessageKey> = {
+      interruptsAgent: "workspace.removeConfirm.message",
+      endsBackgroundTasks: "workspace.removeConfirm.backgroundMessage",
+    };
+    return !removal || ask(messages[removal], "workspace.removeConfirm.title");
+  }
+  const mayCloseRequest = useRef(mayClose);
+  mayCloseRequest.current = mayClose;
 
   // Das Fenster schließt mit ungespeicherten Änderungen oder einem laufenden
   // Prozess in einem Terminal erst nach Rückfrage.
@@ -337,7 +338,7 @@ export function App() {
     return () => {
       unlisten.then((stop) => stop());
     };
-  }, [files, saver, terminals, agents]);
+  }, [files, store, terminals, agents]);
 
   useEffect(() => {
     terminals.setFont(settings.fontFamily, settings.fontSize);
@@ -351,7 +352,7 @@ export function App() {
     /** Ob die Stelle (in physischen Pixeln des Fensters) über der Seitenleiste liegt. */
     const overSidebar = ({ x, y }: { x: number; y: number }) => {
       const sidebar = document.querySelector(".sidebar");
-      if (!sidebar || latest.current.content.kind === "startPage") return false;
+      if (!sidebar || store.snapshot().content.kind === "startPage") return false;
       const scale = window.devicePixelRatio;
       const box = sidebar.getBoundingClientRect();
       const [left, top] = [x / scale, y / scale];
@@ -376,7 +377,7 @@ export function App() {
 
   /** Ändert die Aufteilung und zeigt sie; die Tastatur bleibt, wo sie ist. */
   function show(change: (arrangement: Arrangement) => Arrangement) {
-    setArrangement((current) => settle(change(current)));
+    store.change((current) => settle(change(current)));
     // Wer die Aufteilung bedient, will sie sehen.
     setSettingsOpen(false);
   }
@@ -623,17 +624,24 @@ export function App() {
     if (folder) await openProject(folder);
   }
 
+  /** Ist das Projekt schon in einem anderen Fenster offen, kommt jenes nach vorn. */
   async function openProject(folder: string) {
-    // Ist das Projekt schon in einem anderen Fenster offen, kommt jenes nach vorn.
-    const opened = await invoke<WindowContent | null>("open_project", { path: folder });
-    if (opened) setContent(opened);
+    const outcome = await store.open(folder);
+    if (outcome.kind === "failed") {
+      setNotice({
+        text: t("window.openFailed", { project: projectName(folder), details: outcome.details }),
+      });
+    }
   }
 
   async function openWorkspace(id: string, name: string) {
-    const outcome = await invoke<OpenWorkspaceOutcome>("open_workspace", { id });
-    if (outcome.kind === "opened") return setContent(outcome.content);
+    const outcome = await store.openWorkspace(id);
     // Ein Projekt des Workspace ist schon anderswo offen; jenes Fenster ist jetzt vorn.
-    setNotice({ text: t("workspace.openElsewhereWorkspace", { name }) });
+    if (outcome.kind === "openElsewhere") {
+      setNotice({ text: t("workspace.openElsewhereWorkspace", { name }) });
+    } else if (outcome.kind === "failed") {
+      setNotice({ text: t("workspace.openFailed", { name, details: outcome.details }) });
+    }
   }
 
   /**
@@ -642,59 +650,36 @@ export function App() {
    */
   async function addProjectToWindow() {
     const folder = await chooseFolder(t("workspace.addProjectTitle"));
-    if (folder) await addFolder(folder, latest.current.content);
-  }
-
-  /**
-   * Fügt dem Fenster mit dem Inhalt `content` den Ordner als Projekt hinzu,
-   * mit Hinweis, und liefert, was das Fenster danach zeigt. Der eine Weg für
-   * den Ordnerdialog und aus dem Windows-Explorer gezogene Ordner.
-   */
-  async function addFolder(folder: string, content: WindowContent): Promise<WindowContent> {
-    const added = projectName(folder);
-    const result = addProject(content, folder, {
-      id: crypto.randomUUID(),
-      name: t("workspace.untitled"),
-    });
-    if (result.kind === "refused") {
-      setNotice({ text: t("workspace.alreadyContained", { project: added }) });
-      return content;
-    }
-    // Was an der Aufteilung noch aussteht, gehört zum Projekt, bevor der Workspace sie übernimmt.
-    await saver.flush();
-    try {
-      const outcome = await invoke<AddProjectOutcome>("add_project", { content: result.content });
-      if (outcome.kind === "openElsewhere") {
-        setNotice({ text: t("workspace.openElsewhere", { project: added }) });
-        return content;
-      }
-      const becameWorkspace = content.kind === "project";
-      const next = outcome.content;
-      // Der neue Workspace übernimmt die laufende Aufteilung, statt seine zu laden.
-      if (becameWorkspace && next.kind === "workspace") loadedFor.current = next.id;
-      setContent(next);
-      if (becameWorkspace && next.kind === "workspace") {
-        const from = projectName(content.path);
-        setNotice({
-          text: t("workspace.created", { project: from, name: next.name, added }),
-          action: { label: t("workspace.rename"), run: startRenaming },
-        });
-      } else {
-        setNotice({ text: t("workspace.added", { project: added }) });
-      }
-      return next;
-    } catch (reason) {
-      setNotice({ text: t("workspace.addFailed", { project: added, details: String(reason) }) });
-      return content;
-    }
+    if (folder) showAdded(folder, await store.add(folder));
   }
 
   /** Aus dem Windows-Explorer auf die Seitenleiste gezogen: Ordner kommen hinzu, Dateien nicht. */
   async function dropOnSidebar(paths: string[]) {
-    if (latest.current.content.kind === "startPage") return;
-    const folders = await invoke<string[]>("folders_among", { paths });
-    let current: WindowContent = latest.current.content;
-    for (const folder of folders) current = await addFolder(folder, current);
+    for (const { folder, outcome } of await store.addFolders(paths)) showAdded(folder, outcome);
+  }
+
+  /** Der Hinweis zum Hinzufügen des Ordners. */
+  function showAdded(folder: string, outcome: AddOutcome) {
+    const project = projectName(folder);
+    switch (outcome.kind) {
+      case "added":
+        return setNotice({ text: t("workspace.added", { project }) });
+      case "becameWorkspace":
+        return setNotice({
+          text: t("workspace.created", {
+            project: projectName(outcome.from),
+            name: outcome.name,
+            added: project,
+          }),
+          action: { label: t("workspace.rename"), run: startRenaming },
+        });
+      case "alreadyContained":
+        return setNotice({ text: t("workspace.alreadyContained", { project }) });
+      case "openElsewhere":
+        return setNotice({ text: t("workspace.openElsewhere", { project }) });
+      case "failed":
+        return setNotice({ text: t("workspace.addFailed", { project, details: outcome.details }) });
+    }
   }
 
   /** Zeigt den Explorer mit dem Namen des Workspace als Eingabefeld. */
@@ -707,135 +692,38 @@ export function App() {
 
   /** Gibt dem Workspace den neuen Namen; ein leerer oder gleicher Name ändert nichts. */
   async function renameWorkspaceTo(name: string) {
-    if (!renameWorkspace(latest.current.content, name)) return;
-    // Was noch aussteht, darf den neuen Namen nicht mit dem alten überschreiben.
-    await saver.flush();
-    try {
-      setContent(await invoke<WindowContent>("rename_workspace", { name }));
-    } catch (reason) {
-      setNotice({ text: t("workspace.renameFailed", { details: String(reason) }) });
+    const outcome = await store.rename(name);
+    if (outcome.kind === "failed") {
+      setNotice({ text: t("workspace.renameFailed", { details: outcome.details }) });
     }
   }
 
-  /**
-   * Setzt das Projekt an die Stelle `index` unter den Projekten. Rückt dabei
-   * ein anderes Projekt an die erste Stelle, bleiben die Tabs des bisherigen
-   * ersten Projekts bei diesem, offene Dateien samt ungespeicherten Änderungen.
-   */
+  /** Setzt das Projekt an die Stelle `index` unter den Projekten. */
   async function moveProjectTo(folder: string, index: number) {
-    const move = moveProject(latest.current.content, latest.current.arrangement, folder, index);
-    if (!move) return;
-    await saver.flush();
-    try {
-      const next = await invoke<WindowContent>("reorder_projects", {
-        projects: projectsOf(move.content),
-      });
-      const before = latest.current.arrangement;
-      const moved = moveProject(latest.current.content, before, folder, index);
-      if (moved) {
-        const paths = (arrangement: Arrangement) => tabsOf(arrangement).map(filePathOf);
-        const after = paths(moved.arrangement);
-        paths(before).forEach((path, position) => {
-          if (path !== undefined && after[position] !== undefined) {
-            files.rekey(path, after[position]);
-          }
-        });
-        setArrangement(moved.arrangement);
-      }
-      setContent(next);
-    } catch (reason) {
-      setNotice({ text: t("workspace.moveFailed", { details: String(reason) }) });
+    const outcome = await store.move(folder, index);
+    if (outcome.kind === "failed") {
+      setNotice({ text: t("workspace.moveFailed", { details: outcome.details }) });
     }
   }
 
-  /**
-   * „Workspace schließen“: Das Fenster zeigt danach die Startseite. Ginge
-   * dabei etwas verloren, fragt Kredr wie beim Schließen eines Fensters. Die
-   * Aufteilung ist gespeichert; beim nächsten Öffnen kommt der Workspace mit
-   * seinen Agenten zurück.
-   */
+  /** „Workspace schließen“: Das Fenster zeigt danach die Startseite. */
   async function closeWorkspace() {
-    const close = await confirmClosing(
-      {
-        unsavedFiles: ["file.closeConfirm.title", "workspace.closeConfirm.unsavedFiles"],
-        runningProcess: ["workspace.closeConfirm.title", "workspace.closeConfirm.runningProcess"],
-        workingAgent: ["workspace.closeConfirm.title", "workspace.closeConfirm.workingAgent"],
-        backgroundAgent: ["workspace.closeConfirm.title", "workspace.closeConfirm.backgroundAgent"],
-      },
-      "workspace.close",
-    );
-    if (!close) return refocusTerminal();
-    try {
-      await invoke("close_workspace");
-    } catch (reason) {
-      return setNotice({ text: t("workspace.closeFailed", { details: String(reason) }) });
+    const outcome = await store.closeWorkspace();
+    if (outcome.kind === "declined") return refocusTerminal();
+    if (outcome.kind === "failed") {
+      return setNotice({ text: t("workspace.closeFailed", { details: outcome.details }) });
     }
-    // Ab hier speichert das Fenster nichts mehr; die Tabs schließen, ihre Terminals enden.
-    loadedFor.current = null;
-    setRestored(false);
-    setArrangement(emptyArrangement);
-    setContent(startPage);
-    setNotice(null);
+    if (outcome.kind === "closed") setNotice(null);
   }
 
-  /**
-   * „Projekt aus Workspace entfernen“: Terminals und Tabs des Projekts
-   * schließen, seine Beobachter enden. Gingen dabei ungespeicherte Änderungen
-   * verloren, würde ein arbeitender oder wartender Agent unterbrochen oder
-   * endeten die Hintergrundaufgaben eines Agenten, fragt Kredr vorher. Die
-   * Gespräche seiner Agenten kommen in die eigene Aufteilung des Projekts und
-   * gehen beim nächsten Öffnen dort weiter.
-   */
+  /** „Projekt aus Workspace entfernen“: Terminals und Tabs des Projekts schließen. */
   async function removeProjectFromWindow(folder: string) {
-    const name = projectName(folder);
-    const removal = removeProject(content, latest.current.arrangement, folder);
-    if (!removal) return;
-    const dirty = removal.closing.some(
-      (tab) => showsFile(tab.content) && files.find(tab.content.path)?.state.dirty,
-    );
-    const ask = (message: MessageKey, title: MessageKey) =>
-      confirm(t(message, { project: name }), {
-        title: t(title),
-        kind: "warning",
-        okLabel: t("workspace.removeConfirm.ok"),
-        cancelLabel: t("dialog.cancel"),
-      });
-    if (dirty && !(await ask("workspace.removeUnsaved.message", "file.closeConfirm.title"))) {
-      return refocusTerminal();
-    }
-    const question = removalQuestion(removal.closing, statuses.snapshot());
-    const messages: Record<RemovalQuestion, MessageKey> = {
-      interruptsAgent: "workspace.removeConfirm.message",
-      endsBackgroundTasks: "workspace.removeConfirm.backgroundMessage",
-    };
-    if (question && !(await ask(messages[question], "workspace.removeConfirm.title"))) {
-      return refocusTerminal();
-    }
-    // Während der Rückfragen können sich Fensterinhalt und Aufteilung geändert haben.
-    const before = latest.current.content;
-    const confirmed = removeProject(before, latest.current.arrangement, folder);
-    if (!confirmed) return;
-    try {
-      const raw = await invoke<unknown>("project_arrangement_load", { project: folder });
-      const stored = restoreArrangement(raw, undefined, { resumeAgents: true });
-      const withConversations = keepConversations(stored, confirmed.closing, folder);
-      if (withConversations !== stored) {
-        await invoke("project_arrangement_save", {
-          project: folder,
-          arrangement: withConversations,
-        });
-      }
-      // Was noch aussteht, darf den Workspace ohne das Projekt nicht überschreiben.
-      await saver.flush();
-      const next = await invoke<WindowContent>("remove_project", {
-        project: folder,
-        arrangement: confirmed.arrangement,
-      });
-      setContent(next);
-      setArrangement((current) => removeProject(before, current, folder)?.arrangement ?? current);
-      setNotice({ text: t("workspace.removed", { project: name }) });
-    } catch (reason) {
-      setNotice({ text: t("workspace.removeFailed", { project: name, details: String(reason) }) });
+    const project = projectName(folder);
+    const outcome = await store.remove(folder);
+    if (outcome.kind === "declined") return refocusTerminal();
+    if (outcome.kind === "removed") setNotice({ text: t("workspace.removed", { project }) });
+    if (outcome.kind === "failed") {
+      setNotice({ text: t("workspace.removeFailed", { project, details: outcome.details }) });
     }
   }
 
@@ -871,10 +759,8 @@ export function App() {
           onSelectTab={(tabId) => update((current) => activateTab(current, tabId))}
           onNewAgent={project ? () => startTerminal(true) : undefined}
           onNewTerminal={project ? () => startTerminal(false) : undefined}
-          onToggleSection={(section) =>
-            setArrangement((current) => toggleSection(current, section))
-          }
-          onArrangeRepositories={setArrangement}
+          onToggleSection={(section) => store.change((current) => toggleSection(current, section))}
+          onArrangeRepositories={store.change}
           onOpenTerminalIn={(folder, agent) =>
             update((current) => openTabIn(current, folder, agent))
           }
