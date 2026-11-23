@@ -1624,7 +1624,7 @@ fn prompt_body() -> String {
 
 #[test]
 fn der_empfang_weist_meldungen_ohne_gueltiges_kennwort_ab() {
-    let status = AgentStatus::start(runtime_folder("kennwort")).unwrap();
+    let status = AgentStatus::start(runtime_folder("kennwort"), no_task_outputs()).unwrap();
     let terminal = Registered::new(&status, 1);
     let url = hook_url(&terminal.settings, "UserPromptSubmit").unwrap();
     let (base, _token) = url.rsplit_once('/').unwrap();
@@ -1638,7 +1638,7 @@ fn der_empfang_weist_meldungen_ohne_gueltiges_kennwort_ab() {
 #[test]
 fn die_konfiguration_nennt_alle_ereignisse_mit_hooks_an_den_eigenen_rechner() {
     let folder = runtime_folder("konfiguration");
-    let status = AgentStatus::start(folder.clone()).unwrap();
+    let status = AgentStatus::start(folder.clone(), no_task_outputs()).unwrap();
     let terminal = Registered::new(&status, 7);
 
     assert!(terminal.settings.starts_with(&folder));
@@ -1680,7 +1680,7 @@ fn die_konfiguration_nennt_alle_ereignisse_mit_hooks_an_den_eigenen_rechner() {
 
 #[test]
 fn nach_dem_vergessen_weist_der_empfang_meldungen_ab() {
-    let status = AgentStatus::start(runtime_folder("terminal-endet")).unwrap();
+    let status = AgentStatus::start(runtime_folder("terminal-endet"), no_task_outputs()).unwrap();
     let terminal = Registered::new(&status, 1);
     let url = hook_url(&terminal.settings, "Stop").unwrap();
     assert_eq!(terminal.post("UserPromptSubmit", &prompt_body()), 200);
@@ -1709,8 +1709,8 @@ fn eine_meldung_erreicht_nur_den_listener_ihres_terminals() {
     // Terminal-Kennungen können sich gleichen. Alle Fenster eines Prozesses
     // teilen sich einen Empfänger, jedes Terminal hat darin seine eigene
     // Adresse.
-    let process_a = AgentStatus::start(runtime_folder("prozess-a")).unwrap();
-    let process_b = AgentStatus::start(runtime_folder("prozess-b")).unwrap();
+    let process_a = AgentStatus::start(runtime_folder("prozess-a"), no_task_outputs()).unwrap();
+    let process_b = AgentStatus::start(runtime_folder("prozess-b"), no_task_outputs()).unwrap();
     let first = Registered::new(&process_a, 1);
     let second = Registered::new(&process_a, 2);
     let other = Registered::new(&process_b, 1);
@@ -1732,6 +1732,173 @@ fn eine_meldung_erreicht_nur_den_listener_ihres_terminals() {
     // derselben Kennung im anderen Prozess erfährt davon.
     first.expect_silence();
     other.expect_silence();
+}
+
+// Die Ausgabedateien der Hintergrundaufgaben: Ein Abbruch über `/tasks`
+// meldet Claude Code nicht. Die Tests legen die Dateien selbst an, so wie
+// Claude Code 2.1.330 sie schreibt.
+
+/// Ein Ordner ohne Ausgabedateien für Tests, die sie nicht brauchen.
+fn no_task_outputs() -> PathBuf {
+    std::env::temp_dir().join("kredr-test-agentenstatus-ohne-ausgabedateien")
+}
+
+/// Die Ausgabedatei der Aufgabe `task` im Ordner `claude` (steht für
+/// `%TEMP%\claude`): darunter ein Ordner je Projekt, darin einer je Gespräch.
+fn task_output(claude: &Path, session: &str, task: &str) -> PathBuf {
+    let tasks = claude.join("cd89d0ef490bcaf1").join(session).join("tasks");
+    std::fs::create_dir_all(&tasks).unwrap();
+    tasks.join(format!("{task}.output"))
+}
+
+/// Ein Empfänger, der die Ausgabedateien in seinem eigenen Ordner `claude`
+/// sucht, mit einem angemeldeten Terminal.
+fn with_task_outputs(name: &str) -> (PathBuf, AgentStatus, Registered) {
+    let folder = runtime_folder(name);
+    let claude = folder.join("claude");
+    let status = AgentStatus::start(folder.join("laufzeit"), claude.clone()).unwrap();
+    let terminal = Registered::new(&status, 1);
+    (claude, status, terminal)
+}
+
+impl Registered {
+    /// Schickt das Ende einer Antwort, nach der die Hintergrundaufgaben
+    /// `tasks` laufen, und liefert die Meldung dazu.
+    fn stop_with(&self, tasks: Value) -> StatusUpdate {
+        let prompt = hook_event("UserPromptSubmit", json!({ "prompt": "Los" }));
+        assert_eq!(self.post("UserPromptSubmit", &prompt.to_string()), 200);
+        let stop = hook_event(
+            "Stop",
+            json!({ "last_assistant_message": "gestartet", "background_tasks": tasks }),
+        );
+        assert_eq!(self.post("Stop", &stop.to_string()), 200);
+        self.updates
+            .try_iter()
+            .last()
+            .expect("Eine Statusmeldung sollte kommen")
+    }
+
+    /// Wartet auf die nächste Meldung.
+    fn wait(&self) -> StatusUpdate {
+        self.updates
+            .recv_timeout(TIMEOUT)
+            .expect("Eine Statusmeldung sollte kommen")
+    }
+
+    /// Erwartet, dass auch nach einer Weile keine Meldung kommt.
+    fn expect_lasting_silence(&self) {
+        if let Ok(update) = self.updates.recv_timeout(Duration::from_secs(2)) {
+            panic!("Unerwartete Statusmeldung: {update:?}");
+        }
+    }
+}
+
+/// Wie Claude Code 2.1.330 die Ausgabedatei einer abgebrochenen Aufgabe
+/// abschließt, gleich ob Shell oder Monitor: eine Leerzeile und `[killed]`.
+const KILLED: &str = "\n[killed]\n";
+
+#[test]
+fn bricht_die_person_eine_hintergrundaufgabe_ab_ist_der_agent_fertig() {
+    let (claude, _status, terminal) = with_task_outputs("abbruch");
+    let output = task_output(&claude, "abc123", "b1");
+    std::fs::write(&output, "Warte auf die CI\n").unwrap();
+    let update = terminal.stop_with(json!([
+        running_shell("b1", "CI beobachten", "gh run watch 4711"),
+        running_shell("b2", "Server", "npm run dev"),
+    ]));
+    assert_eq!(update.state, AgentState::Background);
+    std::fs::write(task_output(&claude, "abc123", "b2"), "bereit\n").unwrap();
+    terminal.expect_lasting_silence();
+
+    std::fs::write(&output, format!("Warte auf die CI\n{KILLED}")).unwrap();
+
+    let update = terminal.wait();
+    assert_eq!(update.state, AgentState::Background);
+    assert_eq!(task_ids(&update), ["b2"]);
+    std::fs::write(
+        task_output(&claude, "abc123", "b2"),
+        format!("bereit\n{KILLED}"),
+    )
+    .unwrap();
+    let update = terminal.wait();
+    assert_eq!(update.state, AgentState::Done);
+    assert!(update.state_changed);
+    assert_eq!(update.last_action.as_deref(), Some("gestartet"));
+    assert!(update.background_tasks.is_empty());
+}
+
+#[test]
+fn verschwindet_die_ausgabedatei_ist_die_hintergrundaufgabe_vorbei() {
+    let (claude, _status, terminal) = with_task_outputs("verschwunden");
+    let output = task_output(&claude, "abc123", "b1");
+    std::fs::write(&output, "läuft\n").unwrap();
+    terminal.stop_with(json!([running_shell("b1", "Server", "npm run dev")]));
+    terminal.expect_lasting_silence();
+
+    std::fs::remove_file(&output).unwrap();
+
+    let update = terminal.wait();
+    assert_eq!(update.state, AgentState::Done);
+    assert!(update.background_tasks.is_empty());
+}
+
+#[test]
+fn ohne_ausgabedatei_oder_mit_unbekanntem_ende_gilt_das_letzte_stop() {
+    let (claude, _status, terminal) = with_task_outputs("unbekannt");
+    // Eine normal beendete Aufgabe meldet Claude Code selbst; bis zum
+    // nächsten `Stop` zählt sie weiter.
+    std::fs::write(
+        task_output(&claude, "abc123", "b1"),
+        "fertig\n\n[exited with code 0]\n",
+    )
+    .unwrap();
+    std::fs::write(task_output(&claude, "abc123", "b2"), "[killed]").unwrap();
+
+    let update = terminal.stop_with(json!([
+        running_shell("b1", "Tests", "npm test"),
+        running_shell("b2", "Server", "npm run dev"),
+        running_shell("b3", "Ohne Datei", "sleep 600"),
+    ]));
+
+    assert_eq!(update.state, AgentState::Background);
+    terminal.expect_lasting_silence();
+}
+
+#[test]
+fn nach_clear_findet_sich_die_ausgabedatei_im_ordner_des_ersten_gespraechs() {
+    // Claude Code benennt den Gesprächsordner nach dem Gespräch, mit dem es
+    // startete; nach `/clear` trägt jede Meldung eine neue `session_id`.
+    let (claude, _status, terminal) = with_task_outputs("nach-clear");
+    task_output(&claude, "abc123", "anderes");
+    let output = task_output(&claude, "erstes-gespraech", "b1");
+    std::fs::write(&output, "läuft\n").unwrap();
+    terminal.stop_with(json!([running_shell("b1", "Server", "npm run dev")]));
+
+    std::fs::write(&output, format!("läuft\n{KILLED}")).unwrap();
+
+    assert_eq!(terminal.wait().state, AgentState::Done);
+}
+
+#[test]
+fn die_beobachtung_endet_mit_sessionend_und_dem_terminal() {
+    for end in ["SessionEnd", "forget"] {
+        let (claude, status, terminal) = with_task_outputs(&format!("ende-{end}"));
+        let output = task_output(&claude, "abc123", "b1");
+        std::fs::write(&output, "läuft\n").unwrap();
+        terminal.stop_with(json!([running_shell("b1", "Server", "npm run dev")]));
+        if end == "forget" {
+            status.forget(1);
+        } else {
+            // Auch `/clear` endet so.
+            let body = hook_event("SessionEnd", json!({ "reason": "clear" }));
+            assert_eq!(terminal.post("SessionEnd", &body.to_string()), 200);
+        }
+        assert_eq!(terminal.wait().state, AgentState::Unknown, "{end}");
+
+        std::fs::write(&output, format!("läuft\n{KILLED}")).unwrap();
+
+        terminal.expect_lasting_silence();
+    }
 }
 
 #[test]
@@ -1822,7 +1989,7 @@ fn der_agent_startet_mit_der_konfiguration_und_das_projekt_bleibt_unberuehrt() {
     )
     .unwrap();
 
-    let status = AgentStatus::start(folder.join("laufzeit")).unwrap();
+    let status = AgentStatus::start(folder.join("laufzeit"), no_task_outputs()).unwrap();
     let settings = status.register(1, None, |_| {}).unwrap();
     let command = with_status_settings(
         programs.join("claude.cmd").to_str().unwrap(),
@@ -1881,7 +2048,11 @@ fn in_git_bash_kommt_die_konfiguration_als_ein_argument_beim_agenten_an() {
 
     // Der Laufzeitordner liegt im Benutzerordner; dessen Name kann
     // Leerzeichen und einen Apostroph enthalten.
-    let status = AgentStatus::start(folder.join("Max O'Neil").join("lauf zeit")).unwrap();
+    let status = AgentStatus::start(
+        folder.join("Max O'Neil").join("lauf zeit"),
+        no_task_outputs(),
+    )
+    .unwrap();
     let settings = status.register(1, None, |_| {}).unwrap();
     let program = programs.join("claude").to_str().unwrap().replace('\\', "/");
     let command = with_status_settings(

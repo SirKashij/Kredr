@@ -98,9 +98,13 @@ pub fn run() {
     // gehört diesem Kredr-Prozess.
     let temp = std::env::temp_dir();
     let runtime_dir = agent_status::runtime_folder_of(&temp, std::process::id());
+    // Dort legt Claude Code die Ausgabedateien seiner Hintergrundaufgaben ab.
+    let claude_temp = temp.join("claude");
     // Was frühere Kredr-Prozesse dort hinterlassen haben, hält den Start nicht auf.
     std::thread::spawn(move || agent_status::remove_orphaned_runtime_folders(&temp));
-    let agent_status: AgentStatusReceiver = AgentStatus::start(runtime_dir).ok().map(Arc::new);
+    let agent_status: AgentStatusReceiver = AgentStatus::start(runtime_dir, claude_temp)
+        .ok()
+        .map(Arc::new);
     let mut builder = tauri::Builder::default();
     // Ein einziger Prozess verwaltet alle Fenster. Die Entwicklungsfassung
     // nimmt daran nicht teil, damit sie neben einem installierten Kredr läuft.

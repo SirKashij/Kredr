@@ -204,6 +204,25 @@ impl TrackedAgent {
         self.apply(next)
     }
 
+    /// Die laufenden Hintergrundaufgaben.
+    pub fn background_tasks(&self) -> &[BackgroundTask] {
+        &self.background_tasks
+    }
+
+    /// Die Kennung des laufenden Gesprächs.
+    pub fn conversation(&self) -> Option<&str> {
+        self.conversation.as_deref()
+    }
+
+    /// Die Hintergrundaufgabe `id` ist vorbei, ohne dass Claude Code es
+    /// meldet, etwa nach einem Abbruch über `/tasks`. Liefert die Meldung,
+    /// wenn sich für die Person etwas ändert.
+    pub fn end_background_task(&mut self, id: &str) -> Option<StatusUpdate> {
+        let mut next = self.clone();
+        next.background_tasks.retain(|task| task.id != id);
+        self.apply(next)
+    }
+
     /// Ein Stand, in dem alles über das Gespräch vergessen ist. Ob der Agent
     /// gestartet ist, bleibt.
     fn forgotten(&self) -> TrackedAgent {

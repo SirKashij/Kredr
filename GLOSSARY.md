@@ -56,6 +56,10 @@ _Vermeiden_: wartet (für einen Agenten, der nur auf eine Hintergrundaufgabe war
 Etwas, das ein Agent gestartet hat und das nach seiner Antwort weiterläuft, etwa eine Shell, die einen CI-Lauf beobachtet. Endet sie, macht der Agent von selbst weiter. Subagenten und geplante Aufgaben zählen nicht dazu.
 _Vermeiden_: Hintergrundprozess, Job, Task
 
+**Ausgabedatei**:
+Die Datei, in die Claude Code die Ausgabe einer Hintergrundaufgabe schreibt. An ihrem Ende erkennt Kredr, dass die Person die Aufgabe abgebrochen hat. Sie liegt im Gesprächsordner, den Claude Code nach dem Gespräch benennt, mit dem der Agent startete.
+_Vermeiden_: Logdatei, Output-Datei
+
 **Agenten-Ansicht**:
 Die Übersicht aller Agenten und Terminals eines Fensters in der Seitenleiste, jeweils mit Agentenstatus und nach Projekten gruppiert. Ein Terminal gehört zu dem Projekt, in dessen Ordner es gestartet wurde. Liegt der Startordner in keinem Projekt, steht es unter „Außerhalb der Projekte“.
 _Vermeiden_: Agentenliste, Agenten-Leiste, Dashboard

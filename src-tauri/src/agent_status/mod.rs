@@ -12,6 +12,7 @@
 //! Was aus den Meldungen folgt, entscheidet der `TrackedAgent` des Terminals;
 //! der Empfang reicht sie nur weiter.
 
+mod task_output;
 mod tracked_agent;
 
 use std::collections::hash_map::RandomState;
@@ -135,20 +136,23 @@ impl Registration {
     }
 }
 
-type Registrations = Arc<Mutex<HashMap<u32, Registration>>>;
+/// Die angemeldeten Terminals mit ihren Agenten.
+type Registrations = Mutex<HashMap<u32, Registration>>;
 
 /// Der Empfänger für Statusmeldungen aller Agenten dieses Kredr-Prozesses.
 pub struct AgentStatus {
     server: Arc<Server>,
     port: u16,
     dir: PathBuf,
-    registrations: Registrations,
+    registrations: Arc<Registrations>,
 }
 
 impl AgentStatus {
     /// Öffnet den Empfänger auf dem eigenen Rechner. In `dir` entstehen die
     /// Konfigurationsdateien der Agenten; der Ordner gehört Kredr allein.
-    pub fn start(dir: PathBuf) -> io::Result<AgentStatus> {
+    /// Unter `claude_temp`, dem Ordner `%TEMP%\claude`, sucht er die
+    /// Ausgabedateien der Hintergrundaufgaben.
+    pub fn start(dir: PathBuf, claude_temp: PathBuf) -> io::Result<AgentStatus> {
         std::fs::create_dir_all(&dir)?;
         let server = Arc::new(Server::http("127.0.0.1:0").map_err(io::Error::other)?);
         let port = server
@@ -156,7 +160,7 @@ impl AgentStatus {
             .to_ip()
             .ok_or_else(|| io::Error::other("no ip address"))?
             .port();
-        let registrations = Registrations::default();
+        let registrations = Arc::<Registrations>::default();
 
         let incoming = server.clone();
         let known = registrations.clone();
@@ -175,6 +179,9 @@ impl AgentStatus {
                 let _ = request.respond(Response::empty(code));
             }
         });
+
+        let watched = Arc::downgrade(&registrations);
+        thread::spawn(move || task_output::watch(&watched, &claude_temp));
 
         Ok(AgentStatus {
             server,
