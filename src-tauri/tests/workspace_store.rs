@@ -3,7 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use kredr_lib::arrangement_store::{ArrangementStore, ProjectState, WorkspaceState};
+use kredr_lib::arrangement_store::{
+    ArrangementStore, ProjectState, RecentEntry, RecentProject, WorkspaceState,
+};
 use kredr_lib::window_geometry::WindowGeometry;
 use serde_json::json;
 
@@ -154,6 +156,168 @@ fn beschaedigte_workspace_datei_ergibt_keinen_workspace() {
     }
 
     assert_eq!(store.workspace_state("ws-1"), None);
+}
+
+fn recent_project(path: &Path) -> RecentEntry {
+    RecentEntry::Project(RecentProject {
+        path: path.to_path_buf(),
+        exists: true,
+    })
+}
+
+fn recent_workspace(id: &str, name: &str, projects: &[(&Path, bool)]) -> RecentEntry {
+    RecentEntry::Workspace {
+        id: id.to_string(),
+        name: name.to_string(),
+        projects: projects
+            .iter()
+            .map(|(path, exists)| RecentProject {
+                path: path.to_path_buf(),
+                exists: *exists,
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn die_zuletzt_liste_mischt_projekte_und_workspaces_nach_letzter_nutzung() {
+    let root = temp_dir("gemischt");
+    let data = root.join("daten");
+    let alpha = project(&root, "alpha");
+    let beta = project(&root, "beta");
+    let store = ArrangementStore::new(&data);
+    store
+        .save_workspace_state("ws-1", &workspace("Unbenannt", &[&alpha, &beta], "t1"))
+        .unwrap();
+
+    store.remember_project(&alpha).unwrap();
+    store.remember_workspace("ws-1").unwrap();
+    store.remember_project(&beta).unwrap();
+
+    let both = [(alpha.as_path(), true), (beta.as_path(), true)];
+    assert_eq!(
+        ArrangementStore::new(&data).recent(),
+        vec![
+            recent_project(&beta),
+            recent_workspace("ws-1", "Unbenannt", &both),
+            recent_project(&alpha),
+        ]
+    );
+
+    // Erneut genutzt, rückt der Workspace nach vorn, ohne doppelt zu erscheinen.
+    store.remember_workspace("ws-1").unwrap();
+    assert_eq!(
+        store.recent(),
+        vec![
+            recent_workspace("ws-1", "Unbenannt", &both),
+            recent_project(&beta),
+            recent_project(&alpha),
+        ]
+    );
+}
+
+#[test]
+fn ein_umbenannter_workspace_bleibt_ein_eintrag_mit_neuem_namen() {
+    let root = temp_dir("umbenannt");
+    let alpha = project(&root, "alpha");
+    let store = ArrangementStore::new(root.join("daten"));
+    store
+        .save_workspace_state("ws-1", &workspace("Unbenannt", &[&alpha], "t1"))
+        .unwrap();
+    store.remember_workspace("ws-1").unwrap();
+
+    store
+        .save_workspace_state("ws-1", &workspace("Kunden", &[&alpha], "t1"))
+        .unwrap();
+    store.remember_workspace("ws-1").unwrap();
+
+    assert_eq!(
+        store.recent(),
+        vec![recent_workspace("ws-1", "Kunden", &[(&alpha, true)])]
+    );
+}
+
+#[test]
+fn ein_vergessener_workspace_verschwindet_samt_aufteilung() {
+    let root = temp_dir("vergessen");
+    let alpha = project(&root, "alpha");
+    let store = ArrangementStore::new(root.join("daten"));
+    store
+        .save_workspace_state("ws-1", &workspace("Unbenannt", &[&alpha], "t1"))
+        .unwrap();
+    store.remember_workspace("ws-1").unwrap();
+    store.remember_project(&alpha).unwrap();
+
+    store.forget_workspace("ws-1").unwrap();
+
+    assert_eq!(store.recent(), vec![recent_project(&alpha)]);
+    assert_eq!(store.workspace_state("ws-1"), None);
+    // Das Projekt selbst bleibt in der Liste.
+    assert_eq!(store.recent_projects().len(), 1);
+}
+
+#[test]
+fn fehlende_projektordner_eines_workspace_sind_gekennzeichnet() {
+    let root = temp_dir("fehlend");
+    let alpha = project(&root, "alpha");
+    let gone = project(&root, "weg");
+    let store = ArrangementStore::new(root.join("daten"));
+    store
+        .save_workspace_state("ws-1", &workspace("Unbenannt", &[&alpha, &gone], "t1"))
+        .unwrap();
+    store.remember_workspace("ws-1").unwrap();
+    store.remember_project(&gone).unwrap();
+
+    std::fs::remove_dir_all(&gone).unwrap();
+
+    assert_eq!(
+        store.recent(),
+        vec![
+            RecentEntry::Project(RecentProject {
+                path: gone.clone(),
+                exists: false,
+            }),
+            recent_workspace("ws-1", "Unbenannt", &[(&alpha, true), (&gone, false)]),
+        ]
+    );
+}
+
+#[test]
+fn ein_workspace_ohne_lesbare_datei_fehlt_in_der_zuletzt_liste() {
+    let root = temp_dir("ohne-datei");
+    let alpha = project(&root, "alpha");
+    let store = ArrangementStore::new(root.join("daten"));
+    store.remember_workspace("ws-unbekannt").unwrap();
+    store.remember_project(&alpha).unwrap();
+
+    assert_eq!(store.recent(), vec![recent_project(&alpha)]);
+}
+
+#[test]
+fn ein_workspace_der_aus_der_liste_faellt_nimmt_seine_aufteilung_mit() {
+    let root = temp_dir("herausgefallen");
+    let data = root.join("daten");
+    let alpha = project(&root, "alpha");
+    let store = ArrangementStore::new(&data);
+    store
+        .save_workspace_state("ws-1", &workspace("Unbenannt", &[&alpha], "t1"))
+        .unwrap();
+    store.remember_workspace("ws-1").unwrap();
+    // Ein Eintrag ohne Datei bleibt nicht unsichtbar in der Liste hängen.
+    store.remember_workspace("ws-unbekannt").unwrap();
+
+    for number in 0..20 {
+        store
+            .remember_project(&project(&root, &format!("p{number}")))
+            .unwrap();
+    }
+
+    assert_eq!(store.recent().len(), 20);
+    assert_eq!(store.workspace_state("ws-1"), None);
+    assert_eq!(
+        std::fs::read_dir(data.join("workspaces")).unwrap().count(),
+        0
+    );
 }
 
 #[test]

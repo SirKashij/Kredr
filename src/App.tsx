@@ -64,6 +64,8 @@ import { Notice, type NoticeContent } from "./Notice";
 
 /** Was der Kern auf „Projekt hinzufügen“ antwortet. */
 type AddProjectOutcome = { kind: "added"; content: WindowContent } | { kind: "openElsewhere" };
+/** Was der Kern auf „Workspace öffnen“ antwortet. */
+type OpenWorkspaceOutcome = { kind: "opened"; content: WindowContent } | { kind: "openElsewhere" };
 
 /** Eine Datei, die als Dateiansicht geöffnet werden soll. */
 export interface FileRequest extends Partial<FilePosition> {
@@ -522,6 +524,13 @@ export function App() {
     if (opened) setContent(opened);
   }
 
+  async function openWorkspace(id: string, name: string) {
+    const outcome = await invoke<OpenWorkspaceOutcome>("open_workspace", { id });
+    if (outcome.kind === "opened") return setContent(outcome.content);
+    // Ein Projekt des Workspace ist schon anderswo offen; jenes Fenster ist jetzt vorn.
+    setNotice({ text: t("workspace.openElsewhereWorkspace", { name }) });
+  }
+
   /**
    * „Projekt zum Workspace hinzufügen…“: Aus einem Projektfenster wird dabei
    * der Workspace „Unbenannt“, der die laufende Aufteilung übernimmt.
@@ -600,7 +609,11 @@ export function App() {
         />
         <main className="main">
           {!project ? (
-            <StartPage onOpen={openProject} onOpenFolder={openFolder} />
+            <StartPage
+              onOpen={openProject}
+              onOpenWorkspace={openWorkspace}
+              onOpenFolder={openFolder}
+            />
           ) : !restored ? null : arrangement.root ? (
             <MainArea
               arrangement={arrangement}

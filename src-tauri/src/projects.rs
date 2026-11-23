@@ -12,7 +12,7 @@ use tauri::{
     WebviewWindowBuilder, Window,
 };
 
-use crate::arrangement_store::{ArrangementStore, ProjectState, RecentProject, WorkspaceState};
+use crate::arrangement_store::{ArrangementStore, ProjectState, RecentEntry, WorkspaceState};
 use crate::project_windows::{project_folder, project_from_args, ProjectWindows, WindowContent};
 use crate::window_geometry::{Observed, Screen, WindowGeometry};
 
@@ -247,6 +247,13 @@ fn remember(app: &AppHandle, folder: &Path) {
     }
 }
 
+/// Setzt den Workspace an den Anfang der Zuletzt-Liste; auch das ist Komfort.
+fn remember_workspace(store: &ArrangementStore, id: &str) {
+    if let Err(error) = store.remember_workspace(id) {
+        eprintln!("Zuletzt-Liste konnte nicht gespeichert werden: {error}");
+    }
+}
+
 /// Vergisst ein geschlossenes Fenster; seine Projekte gelten danach nicht mehr als offen.
 pub fn window_closed(window: &Window) {
     let windows = window.state::<ProjectWindows>();
@@ -362,13 +369,15 @@ pub fn add_project(
         windows.assign(window.label(), previous);
         return Err(error.to_string());
     }
+    remember_workspace(&store, &id);
     remember_open_workspaces(&app);
     Ok(AddProjectOutcome::Added { content })
 }
 
+/// Die zuletzt genutzten Projekte und Workspaces gemischt, das jüngste zuerst.
 #[tauri::command]
-pub fn recent_projects(store: State<'_, ArrangementStore>) -> Vec<RecentProject> {
-    store.recent_projects()
+pub fn recent_entries(store: State<'_, ArrangementStore>) -> Vec<RecentEntry> {
+    store.recent()
 }
 
 /// Entfernt ein Projekt aus der Liste und liefert die Liste danach.
@@ -376,9 +385,60 @@ pub fn recent_projects(store: State<'_, ArrangementStore>) -> Vec<RecentProject>
 pub fn forget_project(
     store: State<'_, ArrangementStore>,
     path: PathBuf,
-) -> Result<Vec<RecentProject>, String> {
+) -> Result<Vec<RecentEntry>, String> {
     store.forget_project(&path).map_err(|e| e.to_string())?;
-    Ok(store.recent_projects())
+    Ok(store.recent())
+}
+
+/// Entfernt einen Workspace aus der Liste und liefert die Liste danach.
+#[tauri::command]
+pub fn forget_workspace(
+    store: State<'_, ArrangementStore>,
+    id: String,
+) -> Result<Vec<RecentEntry>, String> {
+    store.forget_workspace(&id).map_err(|e| e.to_string())?;
+    Ok(store.recent())
+}
+
+/// Was aus dem Öffnen eines Workspace wurde.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum OpenWorkspaceOutcome {
+    /// Das Fenster zeigt jetzt diesen Inhalt.
+    Opened { content: WindowContent },
+    /// Ein Projekt ist schon in einem anderen Fenster offen; jenes ist jetzt vorn.
+    OpenElsewhere,
+}
+
+/// Öffnet den gespeicherten Workspace im aufrufenden Fenster mit seiner
+/// Fenstergeometrie; seine Aufteilung lädt die Oberfläche danach. Ist eines
+/// seiner Projekte schon in einem anderen Fenster offen, kommt jenes nach
+/// vorn, und das Fenster zeigt weiter, was es zeigte.
+#[tauri::command]
+pub fn open_workspace(
+    app: AppHandle,
+    window: Window,
+    windows: State<'_, ProjectWindows>,
+    store: State<'_, ArrangementStore>,
+    id: String,
+) -> Result<OpenWorkspaceOutcome, String> {
+    let _guard = OPENING.lock();
+    let state = store
+        .workspace_state(&id)
+        .ok_or_else(|| format!("workspace {id} is not stored"))?;
+    let content = WindowContent::Workspace {
+        id: id.clone(),
+        name: state.name,
+        projects: state.projects,
+    };
+    if let Err(other) = windows.claim(window.label(), content.clone()) {
+        focus(&app, &other);
+        return Ok(OpenWorkspaceOutcome::OpenElsewhere);
+    }
+    remember_workspace(&store, &id);
+    place(&app, window.label(), state.window);
+    remember_open_workspaces(&app);
+    Ok(OpenWorkspaceOutcome::Opened { content })
 }
 
 /// Öffnet den Ordner als Projekt im aufrufenden Fenster und liefert, was das

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-/** Ein Eintrag der Liste zuletzt geöffneter Projekte, wie der Kern ihn liefert. */
+/** Ein Projekt der Zuletzt-Liste, wie der Kern es liefert. */
 export interface RecentProject {
   /** Der Ordner des Projekts. */
   path: string;
@@ -8,14 +8,24 @@ export interface RecentProject {
   exists: boolean;
 }
 
-/** Die zuletzt geöffneten Projekte, das jüngste zuerst. */
-export function loadRecentProjects(): Promise<RecentProject[]> {
-  return invoke<RecentProject[]>("recent_projects");
+/** Ein Eintrag der Zuletzt-Liste: ein Projekt oder ein Workspace. */
+export type RecentEntry =
+  | ({ kind: "project" } & RecentProject)
+  | { kind: "workspace"; id: string; name: string; projects: RecentProject[] };
+
+/** Die zuletzt genutzten Projekte und Workspaces gemischt, das jüngste zuerst. */
+export function loadRecentEntries(): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("recent_entries");
 }
 
 /** Entfernt das Projekt aus der Liste und liefert die Liste danach. */
-export function forgetProject(folder: string): Promise<RecentProject[]> {
-  return invoke<RecentProject[]>("forget_project", { path: folder });
+export function forgetProject(folder: string): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("forget_project", { path: folder });
+}
+
+/** Entfernt den Workspace aus der Liste und liefert die Liste danach. */
+export function forgetWorkspace(id: string): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("forget_workspace", { id });
 }
 
 /** Der Name eines Projekts ist der Name seines Ordners. */

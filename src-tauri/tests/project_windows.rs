@@ -150,6 +150,35 @@ fn ein_projekt_das_anderswo_offen_ist_kommt_nicht_in_einen_zweiten_workspace() {
 }
 
 #[test]
+fn ein_workspace_oeffnet_nicht_wenn_eines_seiner_projekte_anderswo_offen_ist() {
+    let first = temp_dir("oeffnen-erstes");
+    let second = temp_dir("oeffnen-zweites");
+    let windows = ProjectWindows::default();
+    windows.assign("main", WindowContent::StartPage);
+    windows.assign("window-1", workspace(&[&second]));
+
+    let refused = windows.claim("main", workspace(&[&first, &second]));
+
+    assert_eq!(refused, Err("window-1".to_string()));
+    // Das Fenster bleibt auf der Startseite, und das erste Projekt ist nicht offen.
+    assert_eq!(windows.start_page_window(), Some("main".to_string()));
+    assert_eq!(windows.window_of(&first), None);
+}
+
+#[test]
+fn ein_workspace_oeffnet_auf_der_startseite_wenn_seine_projekte_frei_sind() {
+    let first = temp_dir("frei-erstes");
+    let second = temp_dir("frei-zweites");
+    let windows = ProjectWindows::default();
+    windows.assign("main", WindowContent::StartPage);
+    windows.assign("window-1", single(&temp_dir("frei-anderes")));
+
+    assert_eq!(windows.claim("main", workspace(&[&first, &second])), Ok(()));
+    assert_eq!(windows.window_of(&second), Some("main".to_string()));
+    assert_eq!(windows.start_page_window(), None);
+}
+
+#[test]
 fn ein_fenster_darf_seine_eigenen_projekte_in_einen_workspace_nehmen() {
     let first = temp_dir("eigen-erstes");
     let second = temp_dir("eigen-zweites");

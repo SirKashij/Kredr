@@ -1186,6 +1186,17 @@ button {
   text-decoration: line-through;
 }
 
+.recent-kind {
+  margin-left: 4px;
+  color: var(--dim);
+  font-weight: 400;
+}
+
+/* Ein Projekt eines Workspace, dessen Ordner fehlt. */
+.recent-gone {
+  text-decoration: line-through;
+}
+
 .recent-missing {
   flex: none;
   color: #cca700;
