@@ -13,7 +13,7 @@ Run several agents in terminals, browse your projects' files and commit changes 
 ![Platform](https://img.shields.io/badge/platform-Windows%2011-0078D4)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
 
-[Download](https://github.com/SirKashij/Kredr/releases/latest) · [Features](#features) · [Keyboard shortcuts](#keyboard-shortcuts) · [Development](#development) · [Report a bug](https://github.com/SirKashij/Kredr/issues)
+[Download](https://github.com/SirKashij/Kredr/releases/latest) · [Features](#features) · [Keyboard shortcuts](#keyboard-shortcuts) · [Development](#development) · [Code signing policy](#code-signing-policy) · [Report a bug](https://github.com/SirKashij/Kredr/issues)
 
 </div>
 
@@ -83,8 +83,7 @@ Working with several Claude Code agents at once quickly turns into juggling term
 1. Download the installer `Kredr_<version>_x64-setup.exe` from the [releases page](https://github.com/SirKashij/Kredr/releases/latest).
 2. Run it. Kredr is installed for the current user, no administrator rights required.
 
-> [!NOTE]
-> The installer is not signed yet, so Windows SmartScreen shows a warning on first launch. Click “More info” → “Run anyway” to start it.
+The installer adds “Open with Kredr” to the Explorer context menu and a folder with the `kredr` command to your user `PATH`. Uninstalling Kredr (Windows Settings → Apps) removes both again. See also the [code signing policy](#code-signing-policy).
 
 ### Requirements
 
@@ -152,7 +151,7 @@ Code comments, commit messages, issues and the documents in `docs/` are written 
 
 ## Contributing
 
-Bug reports and feature requests are welcome in the [issues](https://github.com/SirKashij/Kredr/issues). For now I don't accept pull requests, as long as Kredr has no license (see [License](#license)).
+Bug reports and feature requests are welcome in the [issues](https://github.com/SirKashij/Kredr/issues). For now I don't accept pull requests.
 
 ## Acknowledgements
 
@@ -162,6 +161,25 @@ Kredr stands on the shoulders of [Tauri](https://tauri.app), [xterm.js](https://
 
 Please report vulnerabilities privately, not as public issues. See [SECURITY.md](SECURITY.md).
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+Only the installers published on the [releases page](https://github.com/SirKashij/Kredr/releases) are signed. They are built from this repository by the [release workflow](.github/workflows/release.yml) on GitHub-hosted runners, and every signing request is approved manually.
+
+| Role | Members |
+| --- | --- |
+| Committers and reviewers | [Kevin Urmoneit](https://github.com/SirKashij) |
+| Approvers | [Kevin Urmoneit](https://github.com/SirKashij) |
+
+### Privacy policy
+
+This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
+
+Kredr starts the tools you configure, such as Claude Code and Git. They connect to their own services (for example Anthropic or GitHub) under their own privacy policies.
+
 ## License
 
-Kredr is currently not released under an open source license; all rights reserved. You may use the published installers and read the source code. Modifying, redistributing or using the code in your own projects is not permitted without permission.
+Copyright (C) 2026 Kevin Urmoneit
+
+Kredr is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License, version 3](LICENSE), as published by the Free Software Foundation. It is distributed in the hope that it will be useful, but without any warranty; see the license for details.
