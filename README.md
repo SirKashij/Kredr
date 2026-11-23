@@ -39,7 +39,9 @@ Working with several Claude Code agents at once quickly turns into juggling term
 
 - Start new agents with a shortcut (`Ctrl+Shift+A`) or terminals running PowerShell or Git Bash (`` Ctrl+Shift+` ``)
 - Agent status comes from Claude Code hooks – Kredr never reads or changes your Claude Code settings
-- Typing `claude` in a PowerShell terminal turns the tab into an agent. For this, Kredr defines its own `claude` function in its terminals; it always runs the installed program and overrides an alias or function `claude` from your profile
+- Typing `claude` in a terminal (PowerShell or Git Bash) turns the tab into an agent. For this, Kredr defines its own `claude` function in its terminals; it always runs the installed program and overrides an alias or function `claude` from your profile or `.bashrc`. Calls without a session (`-p`, `--version`, `--help`, subcommands) stay a plain terminal
+- When the session ends – by `/exit`, a crash or `Ctrl+C` – the tab becomes a terminal again
+- A new agent shows “waiting” right after it starts, before the first prompt
 - Subagents appear below their agent, their questions right in their row
 - The task (the first prompt) is shown on the tab as long as the terminal has no name of its own
 - Terminal based on [xterm.js](https://xtermjs.org) with WebGL rendering
