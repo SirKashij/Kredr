@@ -3,7 +3,11 @@ import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
 import { ChangeRow } from "./ChangeRow";
 import { fileName } from "./filePath";
 import { plural, useT } from "./i18n/i18n";
-import { useVersionControl, useVersionControlStore } from "./versionControl";
+import {
+  useVersionControl,
+  useVersionControlsSnapshot,
+  useVersionControlStore,
+} from "./versionControl";
 import {
   branchLabel,
   canCommit,
@@ -46,10 +50,11 @@ export function GitError({ error }: { error: VersionControlError }) {
   );
 }
 
-/** Die Zahl der geänderten Dateien am Symbol der Versionskontrolle. */
+/** Die Zahl der geänderten Dateien am Symbol der Versionskontrolle, über alle Repositories. */
 export function ChangesBadge() {
   const t = useT();
-  const count = changedFileCount(useVersionControl().state);
+  const { projects } = useVersionControlsSnapshot();
+  const count = projects.reduce((sum, entry) => sum + changedFileCount(entry.snapshot.state), 0);
   if (count === 0) return null;
   const text = plural(
     t,

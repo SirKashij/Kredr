@@ -153,7 +153,22 @@ export interface Arrangement {
    * Zeichenkette. Siehe `toggleSection` in `workspace.ts`.
    */
   collapsedSections?: string[];
+  /**
+   * Die Repositories, die die Versionskontrolle im Workspace ausblendet, je
+   * als Ordnerschlüssel des Projekts. Siehe `repositories.ts`.
+   */
+  hiddenRepositories?: string[];
+  /** Die zugeklappten Abschnitte der Versionskontrolle im Workspace, ebenso. */
+  collapsedRepositories?: string[];
 }
+
+/** Die Listen von Ordnerschlüsseln, die eine Aufteilung neben Gruppen und Tabs mitführt. */
+export type FolderList = "collapsedSections" | "hiddenRepositories" | "collapsedRepositories";
+const folderLists: readonly FolderList[] = [
+  "collapsedSections",
+  "hiddenRepositories",
+  "collapsedRepositories",
+];
 
 export const emptyArrangement: Arrangement = {
   version: 1,
@@ -875,15 +890,21 @@ export function restoreArrangement(
   exists: (path: string) => boolean = () => true,
   options: RestoreOptions = { resumeAgents: false },
 ): Arrangement {
-  const restored = restoreLayout(stored, exists, options);
-  const collapsed = restoreCollapsed(stored);
-  return collapsed ? { ...restored, collapsedSections: collapsed } : restored;
+  let restored = restoreLayout(stored, exists, options);
+  for (const list of folderLists) {
+    const keys = restoreFolderList(stored, list);
+    if (keys) restored = { ...restored, [list]: keys };
+  }
+  return restored;
 }
 
-/** Die zugeklappten Abschnitte der gespeicherten Aufteilung; fehlen sie oder sind unlesbar, keine. */
-function restoreCollapsed(stored: unknown): string[] | undefined {
+/**
+ * Eine Liste von Ordnerschlüsseln der gespeicherten Aufteilung, etwa die
+ * zugeklappten Abschnitte; fehlt sie oder ist unlesbar, keine.
+ */
+function restoreFolderList(stored: unknown, list: FolderList): string[] | undefined {
   if (typeof stored !== "object" || stored === null) return undefined;
-  const { version, collapsedSections: value } = stored as Raw;
+  const { version, [list]: value } = stored as Raw;
   if (version !== emptyArrangement.version || !Array.isArray(value) || value.length === 0) {
     return undefined;
   }

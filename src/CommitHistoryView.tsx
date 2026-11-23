@@ -10,14 +10,17 @@ import {
   summaryOf,
   type Commit,
   type CommitFile,
+  type ShownCommitFile,
 } from "./commitHistory";
 import { useLanguage, useT } from "./i18n/i18n";
+import { projectName } from "./project";
 import { watchProjectFiles } from "./projectFiles";
+import { historyRepository, repositoriesOf } from "./repositories";
 import {
   loadCommitFiles,
   loadCommits,
-  useVersionControl,
-  useVersionControlStore,
+  useVersionControls,
+  useVersionControlsSnapshot,
 } from "./versionControl";
 import { ChangeRow } from "./ChangeRow";
 import { GitError } from "./VersionControlView";
@@ -25,17 +28,64 @@ import type { VersionControlError } from "./versionControlState";
 
 /**
  * Die Spalte „Verlauf“ rechts im Tab „Versionskontrolle“: die letzten Commits
- * des aktuellen Branches. Ohne Repository erscheint sie nicht.
+ * des aktuellen Branches. Es gibt einen Verlauf für alle Repositories des
+ * Fensters; ab zweien wählt eine Auswahl im Kopf, welches er zeigt. Ohne
+ * eigene Wahl zeigt er das Repository des aktiven Projekts. Ohne Repository
+ * erscheint er nicht.
  */
 export function CommitHistory() {
   const t = useT();
-  const { project, state } = useVersionControl();
-  if (!project || state?.kind !== "repository") return null;
+  const controls = useVersionControls();
+  const { projects, active, historyChoice } = useVersionControlsSnapshot();
+  const repositories = repositoriesOf(projects);
+  const project = historyRepository(
+    repositories.map((entry) => entry.project),
+    historyChoice,
+    active,
+  );
+  const entry = repositories.find((candidate) => candidate.project === project);
+  if (!entry || entry.snapshot.state?.kind !== "repository") return null;
+  const { state, commitFile } = entry.snapshot;
   return (
     <div className="vc-history">
-      <div className="side-title">{t("versionControl.history.title")}</div>
-      {/* Mit dem Projekt beginnt der Verlauf von vorn. */}
-      <CommitList key={project} project={project} head={state.commit} branch={state.branch} />
+      <div className="side-title">
+        <span className="vc-history-title">{t("versionControl.history.title")}</span>
+        {repositories.length > 1 && (
+          <select
+            className="vc-history-repository"
+            aria-label={t("versionControl.history.repository")}
+            value={historyChoice === entry.project ? entry.project : ""}
+            // Die leere Wahl folgt wieder dem aktiven Tab.
+            onChange={(event) => controls.chooseHistory(event.target.value || null)}
+          >
+            <option value="">
+              {t("versionControl.history.followActive", {
+                project: projectName(
+                  historyRepository(
+                    repositories.map((other) => other.project),
+                    null,
+                    active,
+                  )!,
+                ),
+              })}
+            </option>
+            {repositories.map(({ project }) => (
+              <option key={project} value={project} title={project}>
+                {projectName(project)}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+      {/* Mit dem Repository beginnt der Verlauf von vorn. */}
+      <CommitList
+        key={entry.project}
+        project={entry.project}
+        head={state.commit}
+        branch={state.branch}
+        commitFile={commitFile}
+        onShowCommitFile={(shown) => controls.showCommitFile(entry.project, shown)}
+      />
     </div>
   );
 }
@@ -60,15 +110,18 @@ function CommitList({
   project,
   head,
   branch,
+  commitFile,
+  onShowCommitFile,
 }: {
   project: string;
   head: string | null;
   branch: string | null;
+  /** Die Datei eines Commits, deren Diff der Tab gerade zeigt. */
+  commitFile: ShownCommitFile | null;
+  onShowCommitFile: (shown: ShownCommitFile) => void;
 }) {
   const t = useT();
   const language = useLanguage();
-  const store = useVersionControlStore();
-  const { commitFile } = useVersionControl();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<VersionControlError | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -210,7 +263,7 @@ function CommitList({
                       <CommitFiles
                         files={changed}
                         isShown={(file) => sameCommitFile(commitFile, commit, file)}
-                        onShow={(file) => store.showCommitFile({ commit, file })}
+                        onShow={(file) => onShowCommitFile({ commit, file })}
                       />
                     ) : (
                       <GitError error={changed} />

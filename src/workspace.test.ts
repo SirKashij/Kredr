@@ -8,6 +8,7 @@ import {
   type Tab,
 } from "./arrangement";
 import {
+  activeProject,
   addProject,
   agentSections,
   firstProject,
@@ -380,4 +381,26 @@ test("wechselt das erste Projekt, bleiben seine Terminals und Dateien bei ihm", 
   const owners = (list: readonly string[], arrangement: Arrangement) =>
     tabsOf(arrangement).map((tab) => projectOfTab(list, tab));
   expect(owners(projects, moved.arrangement)).toEqual(owners(three.projects, mixed));
+});
+
+test("das aktive Projekt ist das des aktiven Tabs, ohne Projekt das erste", () => {
+  const [web, core] = projectsOf(workspace);
+  const terminal = (cwd: string): Tab => ({ id: "t", cwd });
+  const file = (path: string): Tab => ({ id: "f", content: { kind: "file", path } });
+
+  expect(activeProject([web, core], terminal("c:\\projekte\\kern\\src"), web)).toBe(core);
+  expect(activeProject([web, core], file("C:/Projekte/Kern/README.md"), web)).toBe(core);
+  // Ein Terminal außerhalb aller Projekte und kein Tab: das erste Projekt.
+  expect(activeProject([web, core], terminal("D:\\temp"), core)).toBe(web);
+  expect(activeProject([web, core], undefined, core)).toBe(web);
+  expect(activeProject([], undefined, null)).toBeNull();
+});
+
+test("zeigt der aktive Tab die Versionskontrolle, bleibt das bisher aktive Projekt", () => {
+  const [web, core] = projectsOf(workspace);
+  const versionControl: Tab = { id: "v", content: { kind: "versionControl" } };
+
+  expect(activeProject([web, core], versionControl, core)).toBe(core);
+  // Ist das bisherige Projekt nicht mehr im Fenster, gilt das erste.
+  expect(activeProject([web, core], versionControl, "C:\\Projekte\\Alt")).toBe(web);
 });

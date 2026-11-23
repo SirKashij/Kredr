@@ -7,11 +7,12 @@ import { useT } from "./i18n/i18n";
 import { loadMonaco } from "./monacoLoader";
 import { watchProjectFiles } from "./projectFiles";
 import { useSettings } from "./settings";
+import { repositoriesOf } from "./repositories";
 import {
   loadCommitDiff,
   loadDiff,
-  useVersionControl,
-  useVersionControlStore,
+  useVersionControls,
+  useVersionControlsSnapshot,
   type Diff,
   type Version,
 } from "./versionControl";
@@ -32,8 +33,20 @@ export function VersionControlTab({
   focusRequest: number;
 }) {
   const t = useT();
-  const store = useVersionControlStore();
-  const { project, state, selected, commitFile, sideBySide } = useVersionControl();
+  const controls = useVersionControls();
+  const { projects, shown: shownProject, sideBySide } = useVersionControlsSnapshot();
+  // Der Diff gehört zu dem Repository, in dem zuletzt etwas angeklickt wurde;
+  // bis dahin steht hier der Hinweis des ersten Repositorys.
+  const entry =
+    projects.find(({ project }) => project === shownProject) ??
+    repositoriesOf(projects)[0] ??
+    projects[0];
+  const { project, state, selected, commitFile } = entry?.snapshot ?? {
+    project: null,
+    state: null,
+    selected: null,
+    commitFile: null,
+  };
   // Was zuletzt angeklickt wurde: eine Datei eines Commits oder eine Änderung.
   const shown = commitFile?.file ?? selected;
 
@@ -56,14 +69,14 @@ export function VersionControlTab({
                 <button
                   className={sideBySide ? "on" : ""}
                   aria-pressed={sideBySide}
-                  onClick={() => store.setSideBySide(true)}
+                  onClick={() => controls.setSideBySide(true)}
                 >
                   {t("versionControl.sideBySide")}
                 </button>
                 <button
                   className={sideBySide ? "" : "on"}
                   aria-pressed={!sideBySide}
-                  onClick={() => store.setSideBySide(false)}
+                  onClick={() => controls.setSideBySide(false)}
                 >
                   {t("versionControl.inline")}
                 </button>

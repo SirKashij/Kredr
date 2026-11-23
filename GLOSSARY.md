@@ -52,7 +52,7 @@ Die Übersicht aller Agenten und Terminals eines Fensters in der Seitenleiste, j
 _Vermeiden_: Agentenliste, Agenten-Leiste, Dashboard
 
 **Aufteilung**:
-Die Anordnung der Gruppen und Terminals eines Fensters samt Namen, Startordnern und den Gesprächen der Agenten, dazu welche Abschnitte der Agenten-Ansicht zugeklappt sind; sie wird pro Projekt bzw. pro Workspace gespeichert und beim Öffnen wiederhergestellt. Laufende Prozesse gehören nicht dazu: Ein Agent kommt zurück, indem sein Gespräch fortgesetzt wird.
+Die Anordnung der Gruppen und Terminals eines Fensters samt Namen, Startordnern und den Gesprächen der Agenten, dazu welche Abschnitte der Agenten-Ansicht und der Versionskontrolle zugeklappt und welche Repositories der Versionskontrolle ausgeblendet sind; sie wird pro Projekt bzw. pro Workspace gespeichert und beim Öffnen wiederhergestellt. Laufende Prozesse gehören nicht dazu: Ein Agent kommt zurück, indem sein Gespräch fortgesetzt wird.
 _Vermeiden_: Layout, Sitzungszustand
 
 **Dateiansicht**:

@@ -14,6 +14,7 @@ import {
   showsFile,
   tabsOf,
   type Arrangement,
+  type FolderList,
   type Tab,
 } from "./arrangement";
 import { folderKey, isOutsideProject } from "./filePath";
@@ -110,6 +111,25 @@ export function projectOfTab(projects: readonly string[], tab: Tab): string | nu
   return isOutsideProject(file) ? projectOf(projects, file) : first;
 }
 
+/**
+ * Das aktive Projekt: das Projekt des aktiven Tabs, ohne eines (etwa bei
+ * einem Terminal außerhalb aller Projekte) das erste. Der Tab
+ * „Versionskontrolle“ gehört zu keinem Projekt; zeigt er sich, bleibt das
+ * bisher aktive Projekt `previous`, solange es noch im Fenster ist.
+ */
+export function activeProject(
+  projects: readonly string[],
+  tab: Tab | undefined,
+  previous: string | null,
+): string | null {
+  const first = projects[0] ?? null;
+  if (tab?.content?.kind === "versionControl") {
+    const key = previous === null ? null : folderKey(previous);
+    return projects.find((project) => folderKey(project) === key) ?? first;
+  }
+  return (tab && projectOfTab(projects, tab)) ?? first;
+}
+
 /** Ein Abschnitt der Agenten-Ansicht im Workspace. */
 export interface AgentSection {
   /** Das Projekt des Abschnitts; `null` für „Außerhalb der Projekte“. */
@@ -141,7 +161,7 @@ function sectionKey(project: string | null): string {
 
 /** Ob der Abschnitt des Projekts (`null`: „Außerhalb der Projekte“) zugeklappt ist. */
 export function isSectionCollapsed(arrangement: Arrangement, project: string | null): boolean {
-  return arrangement.collapsedSections?.includes(sectionKey(project)) ?? false;
+  return listsFolder(arrangement, "collapsedSections", project);
 }
 
 /**
@@ -149,11 +169,32 @@ export function isSectionCollapsed(arrangement: Arrangement, project: string | n
  * und wird mit ihr pro Workspace gespeichert.
  */
 export function toggleSection(arrangement: Arrangement, project: string | null): Arrangement {
+  return toggleFolder(arrangement, "collapsedSections", project);
+}
+
+/** Ob die Liste `list` der Aufteilung das Projekt nennt (`null`: „Außerhalb der Projekte“). */
+export function listsFolder(
+  arrangement: Arrangement,
+  list: FolderList,
+  project: string | null,
+): boolean {
+  return arrangement[list]?.includes(sectionKey(project)) ?? false;
+}
+
+/**
+ * Nimmt das Projekt in die Liste `list` der Aufteilung auf oder wieder
+ * heraus. Eine leere Liste fällt weg.
+ */
+export function toggleFolder(
+  arrangement: Arrangement,
+  list: FolderList,
+  project: string | null,
+): Arrangement {
   const key = sectionKey(project);
-  const current = arrangement.collapsedSections ?? [];
+  const current = arrangement[list] ?? [];
   const next = current.includes(key) ? current.filter((other) => other !== key) : [...current, key];
-  const { collapsedSections: _, ...rest } = arrangement;
-  return next.length > 0 ? { ...rest, collapsedSections: next } : rest;
+  const { [list]: _, ...rest } = arrangement;
+  return next.length > 0 ? { ...rest, [list]: next } : rest;
 }
 
 /** Was aus dem Entfernen eines Projekts aus dem Workspace wird. */

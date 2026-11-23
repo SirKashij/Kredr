@@ -47,6 +47,7 @@ import { watchProjectFiles } from "./projectFiles";
 import { ProjectWatches } from "./projectWatches";
 import { BranchPicker } from "./BranchPicker";
 import { QuickOpen } from "./QuickOpen";
+import { repositoriesOf } from "./repositories";
 import { Sidebar } from "./Sidebar";
 import { StartPage } from "./StartPage";
 import { RunningTerminals } from "./runningTerminals";
@@ -56,12 +57,13 @@ import { availableShells, type Shell } from "./settingsStore";
 import { shellLabel, tabLabel } from "./tabLabel";
 import { useWaitingAlerts } from "./useWaitingAlerts";
 import { SyncStatus } from "./SyncStatus";
-import { VersionControlProvider, VersionControlStore } from "./versionControl";
+import { VersionControlProvider, VersionControls } from "./versionControl";
 import type { ChangedFile } from "./versionControlState";
 import { BranchStatus } from "./VersionControlView";
 import { alertBody } from "./waitingAlerts";
 import { WindowAgents } from "./windowAgents";
 import {
+  activeProject,
   addProject,
   firstProject,
   keepConversations,
@@ -159,7 +161,7 @@ export function App() {
   const [closeError, setCloseError] = useState<string | null>(null);
   /** Die in diesem Fenster zuletzt geöffneten Dateien, die jüngste zuerst. */
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
-  const [versionControl] = useState(() => new VersionControlStore());
+  const [versionControl] = useState(() => new VersionControls());
   /** Die Shells, die es auf diesem Rechner gibt; PowerShell immer. */
   const [shells, setShells] = useState<Shell[]>(["powershell"]);
   // Eine geänderte Standard-Shell gilt für das nächste neue Terminal.
@@ -269,14 +271,13 @@ export function App() {
   useEffect(() => fileWatches.follow(projects), [projects, fileWatches]);
   useEffect(() => () => fileWatches.follow([]), [fileWatches]);
 
-  // Dateiliste und Versionskontrolle zeigen bis auf Weiteres das erste Projekt.
+  // Die Dateiliste zeigt bis auf Weiteres das erste Projekt.
   useEffect(() => {
     if (project) return fileList.open(project);
   }, [project, fileList]);
-  // Die Versionskontrolle folgt dem Zustand des Projekts.
-  useEffect(() => {
-    if (project) return versionControl.watch(project);
-  }, [project, versionControl]);
+  // Die Versionskontrolle folgt dem Zustand jedes Projekts, je in seinem Repository.
+  useEffect(() => versionControl.follow(projects), [projects, versionControl]);
+  useEffect(() => () => versionControl.follow([]), [versionControl]);
 
   /**
    * Fragt wie beim Schließen des Fensters nach, ob dabei etwas verloren ginge,
@@ -478,14 +479,14 @@ export function App() {
   function openVersionControl() {
     setView("versionControl");
     setSidebarVisible(true);
-    if (versionControl.snapshot().state?.kind === "repository") {
+    if (repositoriesOf(versionControl.snapshot().projects).length > 0) {
       update((current) => showVersionControl(current, true));
     }
   }
 
   /** Zeigt den Diff einer Änderung im Tab „Versionskontrolle“; die Tastatur bleibt in der Liste. */
-  function showChange(file: ChangedFile) {
-    versionControl.select(file);
+  function showChange(project: string, file: ChangedFile) {
+    versionControl.select(project, file);
     show((current) => showVersionControl(current, false));
   }
 
@@ -604,6 +605,11 @@ export function App() {
   const activeTab = focusedGroup?.tabs.find((tab) => tab.id === focusedGroup.activeTab);
   /** Die Datei des sichtbaren Tabs der fokussierten Gruppe. */
   const activeFile = filePathOf(activeTab) ?? null;
+  // Ohne eigene Wahl zeigt der Verlauf das Repository des aktiven Projekts.
+  useEffect(() => {
+    const previous = versionControl.snapshot().active;
+    versionControl.setActive(activeProject(projects, activeTab, previous));
+  }, [projects, activeTab, versionControl]);
 
   async function openFolder() {
     const folder = await chooseFolder(t("dialog.openFolderTitle"));
@@ -823,7 +829,7 @@ export function App() {
   }
 
   return (
-    <VersionControlProvider store={versionControl}>
+    <VersionControlProvider controls={versionControl}>
       <div className="workbench">
         <ActivityBar
           view={sidebarVisible ? view : null}
@@ -857,6 +863,7 @@ export function App() {
           onToggleSection={(section) =>
             setArrangement((current) => toggleSection(current, section))
           }
+          onArrangeRepositories={setArrangement}
           onOpenTerminalIn={(folder, agent) =>
             update((current) => openTabIn(current, folder, agent))
           }

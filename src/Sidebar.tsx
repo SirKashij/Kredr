@@ -15,11 +15,12 @@ import { Explorer } from "./Explorer";
 import { copyText, errorMessage, revealEntry } from "./fileOperations";
 import { plural, useT } from "./i18n/i18n";
 import { projectName } from "./project";
+import { RepositoriesView } from "./RepositoriesView";
 import { SearchView, type SearchViewProps } from "./SearchView";
+import { moreIcon, SectionButton } from "./SectionButton";
 import { useSettings } from "./settings";
 import { tabLabel, visibleAssignment } from "./tabLabel";
 import type { ChangedFile } from "./versionControlState";
-import { VersionControlView } from "./VersionControlView";
 import { isInterrupted } from "./windowAgents";
 import { agentSections, isSectionCollapsed, projectsOf, type WindowContent } from "./workspace";
 
@@ -121,8 +122,10 @@ interface SidebarProps extends AgentsViewProps {
   onOpenMatch: SearchViewProps["onOpenFile"];
   /** Steigt, wenn die Suche aufgerufen wird. */
   searchFocus: number;
-  /** Zeigt den Diff einer Änderung im Tab „Versionskontrolle“. */
-  onShowChange: (file: ChangedFile) => void;
+  /** Zeigt den Diff einer Änderung des Projekts im Tab „Versionskontrolle“. */
+  onShowChange: (project: string, file: ChangedFile) => void;
+  /** Ändert, welche Repositories ausgeblendet oder zugeklappt sind; das gehört zur Aufteilung. */
+  onArrangeRepositories: (change: (arrangement: Arrangement) => Arrangement) => void;
 }
 
 export function Sidebar({
@@ -143,6 +146,7 @@ export function Sidebar({
   onOpenMatch,
   searchFocus,
   onShowChange,
+  onArrangeRepositories,
   ...agents
 }: SidebarProps) {
   const t = useT();
@@ -184,7 +188,14 @@ export function Sidebar({
             onRemoveProject={onRemoveProject}
           />
         ) : view === "versionControl" && project !== null ? (
-          <VersionControlView onShowChange={onShowChange} />
+          <RepositoriesView
+            content={content}
+            arrangement={agents.arrangement}
+            onShowChange={onShowChange}
+            onArrange={onArrangeRepositories}
+            onAddProject={onAddProject}
+            onRemoveProject={onRemoveProject}
+          />
         ) : (
           <p className="hint">{t("status.noProject")}</p>
         )}
@@ -473,41 +484,12 @@ function AgentSectionView({
               label={t("explorer.more")}
               popup
               onClick={(bounds) => onMenu(bounds.left, bounds.bottom)}
-              path="M3.5 8h.01M8 8h.01M12.5 8h.01"
-              strokeWidth={2.4}
+              {...moreIcon}
             />
           </span>
         )}
       </div>
       {!collapsed && <div className="agent-section-cards">{children}</div>}
     </section>
-  );
-}
-
-/** Ein Symbolknopf im Kopf eines Abschnitts. */
-function SectionButton({
-  label,
-  path,
-  popup = false,
-  strokeWidth,
-  onClick,
-}: {
-  label: string;
-  path: string;
-  popup?: boolean;
-  strokeWidth?: number;
-  onClick: (bounds: DOMRect) => void;
-}) {
-  return (
-    <button
-      title={label}
-      aria-label={label}
-      aria-haspopup={popup ? "menu" : undefined}
-      onClick={(event) => onClick(event.currentTarget.getBoundingClientRect())}
-    >
-      <svg viewBox="0 0 16 16" aria-hidden="true">
-        <path d={path} strokeWidth={strokeWidth} />
-      </svg>
-    </button>
   );
 }

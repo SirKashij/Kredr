@@ -686,6 +686,12 @@ button {
   color: var(--text);
 }
 
+.agent-section-actions button:disabled {
+  opacity: 0.4;
+  background: none;
+  cursor: default;
+}
+
 .agent-section-actions svg {
   width: 16px;
   height: 16px;
@@ -2158,6 +2164,147 @@ button {
 .vc-body > .git-notice pre,
 .vc-diff > .git-notice pre {
   text-align: left;
+}
+
+/* Ab zwei Repositories wählt eine Auswahl im Kopf, welches der Verlauf zeigt. */
+.vc-history-title {
+  flex: 1;
+}
+
+.vc-history-repository {
+  max-width: 160px;
+  height: 20px;
+  font: inherit;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text);
+  background: #313131;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+}
+
+.vc-history-repository:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Versionskontrolle im Workspace: „Repositories“ und ein Abschnitt je Repository (wie VS Code). */
+.repositories-title {
+  padding: 6px 12px 2px 16px;
+}
+
+.repo-list {
+  padding-bottom: 6px;
+}
+
+.repo-row {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 20px;
+  cursor: pointer;
+}
+
+.repo-row:hover {
+  background: #2a2d2e;
+}
+
+.repo-name {
+  min-width: 40px;
+  flex: 0 1 auto;
+  padding: 0;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.repo-branch {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.repo-branch svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.repo-sync {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.repo-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #3a3a3a;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.repo-sync + .repo-count {
+  margin-left: 0;
+}
+
+.repo-branch + .repo-count,
+.repo-name + .repo-count {
+  margin-left: auto;
+}
+
+.repo-eye {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--text);
+}
+
+.repo-row.hidden .repo-eye {
+  color: var(--dim);
+  opacity: 0.6;
+}
+
+.repo-eye:hover {
+  background: #3a3a3a;
+}
+
+.repo-eye svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+
+/* Der Abschnitt eines Repositorys nutzt den Kopf der Abschnitte der Agenten-Ansicht. */
+.repo-section {
+  gap: 0;
+  border-top: 1px solid var(--border);
+}
+
+.repo-section > .agent-section-head {
+  padding: 0 8px 0 6px;
 }
 
 /* Die Spalte „Verlauf“ rechts im Tab „Versionskontrolle“: die letzten Commits. */
