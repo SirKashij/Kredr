@@ -124,6 +124,18 @@ export class VersionControlStore {
     return () => {
       stopped = true;
       id.then((id) => invoke("version_control_unwatch", { id })).catch(() => {});
+      // Folgt keine andere Beobachtung, zeigt nichts mehr den alten Stand.
+      if (this.current.project === project) {
+        this.replace({
+          ...this.current,
+          project: null,
+          state: null,
+          selected: null,
+          commitFile: null,
+          message: "",
+          failure: null,
+        });
+      }
     };
   }
 

@@ -278,9 +278,13 @@ button {
 /* Der Explorer eines Workspace ohne Projekt, wie in VS Code. */
 .empty-workspace {
   display: grid;
-  gap: 10px;
-  padding: 0 4px 12px;
+  gap: 6px;
+  padding-bottom: 12px;
   justify-items: start;
+}
+
+.empty-workspace .btn {
+  margin-left: 16px;
 }
 
 .tree-head[hidden] {
