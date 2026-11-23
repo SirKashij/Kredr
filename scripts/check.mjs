@@ -30,8 +30,17 @@ const steps = [
   ["Tests des Kerns", "cargo", ["test", "--locked"], core],
 ];
 
-for (const [name, command, args, cwd] of steps) {
-  const started = Date.now();
+/**
+ * Woran ein beschädigter Build-Cache des Kerns zu erkennen ist, nicht ein Fehler im Code:
+ * Der Compiler stürzt ab oder findet bereits übersetzte Crates nicht mehr. Ein zweiter
+ * Lauf ist dann meist grün.
+ */
+const brokenCache = [
+  /internal compiler error/,
+  /required to be available in rlib format, but was not found/,
+];
+
+function run(command, args, cwd) {
   const [program, programArgs] =
     command === npm ? [process.execPath, [process.env.npm_execpath, ...args]] : [command, args];
   const result = spawnSync(program, programArgs, {
@@ -39,13 +48,29 @@ for (const [name, command, args, cwd] of steps) {
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
   });
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}${result.error ? String(result.error) : ""}`;
+  return { ok: result.status === 0, output };
+}
+
+for (const [name, command, args, cwd] of steps) {
+  const started = Date.now();
+  let { ok, output } = run(command, args, cwd);
+  const cacheBroken = (text) => command === "cargo" && brokenCache.some((sign) => sign.test(text));
+  if (!ok && cacheBroken(output)) {
+    console.log(`neu   ${name}: Build-Cache des Kerns beschädigt, zweiter Lauf`);
+    ({ ok, output } = run(command, args, cwd));
+  }
   const seconds = ((Date.now() - started) / 1000).toFixed(0);
-  if (result.status === 0) {
+  if (ok) {
     console.log(`ok    ${name} (${seconds} s)`);
     continue;
   }
   console.log(`ROT   ${name} (${seconds} s): ${command} ${args.join(" ")}`);
-  const output = `${result.stdout ?? ""}${result.stderr ?? ""}${result.error ? String(result.error) : ""}`;
   console.log(output.split("\n").slice(-80).join("\n"));
+  if (cacheBroken(output)) {
+    console.log(
+      "Der Build-Cache des Kerns ist beschädigt, nicht der Code. Abhilfe: `cargo clean -p kredr` in src-tauri, dann erneut prüfen.",
+    );
+  }
   process.exit(1);
 }

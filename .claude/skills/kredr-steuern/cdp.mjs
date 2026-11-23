@@ -135,11 +135,74 @@ export async function verbinden({ port = laufenderPort() } = {}) {
     await auswerten(`document.querySelector(${s}).click()`);
   }
 
+  /** Zeigt die Ansicht `n` der Aktivitätsleiste; ein Klick auf die gezeigte blendete sie aus. */
+  async function ansicht(n) {
+    const knopf = `.actbar > button:nth-child(${n})`;
+    await warten(`document.querySelector(${JSON.stringify(knopf)})`);
+    await auswerten(
+      `(() => { const b = document.querySelector(${JSON.stringify(knopf)});
+        if (b.getAttribute("aria-pressed") !== "true") b.click(); })()`,
+    );
+  }
+
+  /**
+   * Die Explorer-Zeile mit diesem Namen als JavaScript-Ausdruck. Der Name steht in
+   * `.tree-name`; der Text der ganzen Zeile enthält auch das Symbol der Datei.
+   */
+  const zeile = (name) =>
+    `[...document.querySelectorAll("[role=treeitem]")].find((e) => e.querySelector(".tree-name")?.textContent.trim() === ${JSON.stringify(name)})`;
+
+  /**
+   * Der Text der Dateiansicht, Zeilen mit `\n` getrennt und mit gewöhnlichen
+   * Leerzeichen; Monaco zeichnet geschützte und ordnet die Zeilen nach `top`.
+   */
+  const editorText = `[...(document.querySelector(".monaco-editor .view-lines")?.querySelectorAll(".view-line") ?? [])]
+    .sort((a, b) => parseFloat(a.style.top) - parseFloat(b.style.top))
+    .map((z) => z.textContent.replace(/\\u00a0/g, " ")).join("\\n")`;
+
   return {
     auswerten,
     warten,
     klicken,
     fehler,
+    ansicht,
+    /** Zeigt den Explorer und klappt den Ordner (auch ein Projekt im Workspace) auf, falls er zu ist. */
+    async ordnerAufklappen(name) {
+      await ansicht(2);
+      await warten(zeile(name));
+      await auswerten(`(() => { const z = ${zeile(name)};
+        if (!z.querySelector(".tree-twist.open")) z.click(); })()`);
+      await warten(`${zeile(name)}.querySelector(".tree-twist.open")`);
+    },
+    /** Öffnet die Datei per Doppelklick im Explorer (keine Vorschau) und wartet auf ihren Tab. */
+    async dateiOeffnen(name) {
+      await ansicht(2);
+      await warten(zeile(name));
+      await auswerten(
+        `${zeile(name)}.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }))`,
+      );
+      await warten(
+        `[...document.querySelectorAll("[role=tab] .tab-label")].some((e) => e.textContent.trim() === ${JSON.stringify(name)})`,
+      );
+    },
+    /**
+     * Fügt dem Fenster ein Projekt hinzu („Weitere Aktionen…“ im Explorer); aus einem
+     * Projektfenster wird ein Workspace. Den Ordner nennt start.ps1 mit `-Ordner`.
+     * `name` ist der Ordnername, auf dessen Zeile gewartet wird.
+     */
+    async projektHinzufuegen(name) {
+      await ansicht(2);
+      if (await auswerten(`!!${zeile(name)}`)) return;
+      await klicken(".tree-actions button[aria-haspopup=menu]");
+      // Der erste Eintrag des Menüs ist „Projekt zum Workspace hinzufügen…“.
+      await klicken("[role=menuitem]");
+      await warten(zeile(name));
+    },
+    /** Der Text der gezeigten Dateiansicht (siehe `editorText`). */
+    editorText: () => auswerten(editorText),
+    /** Wartet, bis die Dateiansicht `teil` zeigt; Leerzeichen gewöhnlich, Zeilen mit `\n`. */
+    editorZeigt: (teil, optionen) =>
+      warten(`(${editorText}).includes(${JSON.stringify(teil)})`, optionen),
     /** Schickt einen rohen CDP-Befehl, etwa `Page.startScreencast`, und liefert sein Ergebnis. */
     senden,
     /** Ruft `f(params)` bei jedem CDP-Ereignis `methode` auf, etwa `Page.screencastFrame`. */
