@@ -1,28 +1,20 @@
 name: Release
 
-# Baut den Installer aus dem Tag, lässt ihn über SignPath signieren und legt ein
-# Release als Entwurf an. Die SignPath Foundation signiert nur Installer, die
-# nachweisbar hier auf GitHub-eigenen Runnern aus dem Quellcode gebaut wurden.
-#
-# Solange die Variable SIGNPATH_ORGANIZATION_ID nicht gesetzt ist, bleibt der
-# Installer unsigniert. Einrichtung: docs/agents/release.md.
+# Baut den Installer aus dem Tag und legt ein Release als Entwurf an.
+# Ablauf: docs/agents/release.md.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
 
-# Bauen und Signieren lesen nur. Schreiben darf allein der Job, der das Release anlegt.
+# Bauen liest nur. Schreiben darf allein der Job, der das Release anlegt.
 permissions:
   contents: read
 
 jobs:
   bauen:
     runs-on: windows-latest
-    permissions:
-      contents: read
-      # SignPath holt das hochgeladene Artefakt mit dem Token dieses Laufs.
-      actions: read
     steps:
       - uses: actions/checkout@v4
 
@@ -51,33 +43,11 @@ jobs:
       - name: Installer bauen
         run: npm run tauri build
 
-      - name: Unsignierten Installer hochladen
-        id: unsigniert
-        uses: actions/upload-artifact@v4
-        with:
-          name: installer-unsigniert
-          path: src-tauri/target/release/bundle/nsis/*-setup.exe
-          if-no-files-found: error
-
-      - name: Installer über SignPath signieren
-        if: vars.SIGNPATH_ORGANIZATION_ID != ''
-        uses: signpath/github-action-submit-signing-request@v3
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: Kredr
-          signing-policy-slug: release-signing
-          github-artifact-id: ${{ steps.unsigniert.outputs.artifact-id }}
-          wait-for-completion: true
-          # Die Freigabe geschieht von Hand in SignPath; dafür bleibt eine Stunde.
-          wait-for-completion-timeout-in-seconds: 3600
-          output-artifact-directory: signiert
-
-      - name: Installer für das Release hochladen
+      - name: Installer hochladen
         uses: actions/upload-artifact@v4
         with:
           name: installer
-          path: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && 'signiert/*-setup.exe' || 'src-tauri/target/release/bundle/nsis/*-setup.exe' }}
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
 
   veroeffentlichen:

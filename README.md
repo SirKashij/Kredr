@@ -13,7 +13,7 @@ Run several agents in terminals, browse your projects' files and commit changes 
 ![Platform](https://img.shields.io/badge/platform-Windows%2011-0078D4)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
 
-[Download](https://github.com/SirKashij/Kredr/releases/latest) · [Features](#features) · [Keyboard shortcuts](#keyboard-shortcuts) · [Development](#development) · [Code signing policy](#code-signing-policy) · [Report a bug](https://github.com/SirKashij/Kredr/issues)
+[Download](https://github.com/SirKashij/Kredr/releases/latest) · [Features](#features) · [Keyboard shortcuts](#keyboard-shortcuts) · [Development](#development) · [Report a bug](https://github.com/SirKashij/Kredr/issues)
 
 </div>
 
@@ -83,7 +83,10 @@ Working with several Claude Code agents at once quickly turns into juggling term
 1. Download the installer `Kredr_<version>_x64-setup.exe` from the [releases page](https://github.com/SirKashij/Kredr/releases/latest).
 2. Run it. Kredr is installed for the current user, no administrator rights required.
 
-The installer adds “Open with Kredr” to the Explorer context menu and a folder with the `kredr` command to your user `PATH`. Uninstalling Kredr (Windows Settings → Apps) removes both again. See also the [code signing policy](#code-signing-policy).
+The installer adds “Open with Kredr” to the Explorer context menu and a folder with the `kredr` command to your user `PATH`. Uninstalling Kredr (Windows Settings → Apps) removes both again.
+
+> [!NOTE]
+> The installer is not signed, so Windows SmartScreen shows a warning on first launch. Click “More info” → “Run anyway” to start it.
 
 ### Requirements
 
@@ -160,23 +163,6 @@ Kredr stands on the shoulders of [Tauri](https://tauri.app), [xterm.js](https://
 ## Security
 
 Please report vulnerabilities privately, not as public issues. See [SECURITY.md](SECURITY.md).
-
-## Code signing policy
-
-Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
-
-Only the installers published on the [releases page](https://github.com/SirKashij/Kredr/releases) are signed. They are built from this repository by the [release workflow](.github/workflows/release.yml) on GitHub-hosted runners, and every signing request is approved manually.
-
-| Role | Members |
-| --- | --- |
-| Committers and reviewers | [Kevin Urmoneit](https://github.com/SirKashij) |
-| Approvers | [Kevin Urmoneit](https://github.com/SirKashij) |
-
-### Privacy policy
-
-This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
-
-Kredr starts the tools you configure, such as Claude Code and Git. They connect to their own services (for example Anthropic or GitHub) under their own privacy policies.
 
 ## License
 

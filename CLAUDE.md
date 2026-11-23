@@ -24,5 +24,5 @@ Build-Cache, Prüfen und Warten auf CI nach jedem Merge: `docs/agents/integratio
 - Formatieren (Oberfläche und Kern): `npm run format`
 - Entwicklung starten: `npm run tauri dev`
 - Installer bauen: `npm run tauri build` (Ergebnis in `src-tauri/target/release/bundle/nsis/`)
-- Release veröffentlichen: Tag `v<version>` pushen, der Workflow baut und signiert. Siehe `docs/agents/release.md`.
+- Release veröffentlichen: Tag `v<version>` pushen, der Workflow baut den Installer. Siehe `docs/agents/release.md`.
 - Bauen und über die eigene Installation installieren: `npm run installieren` (wartet, bis die Person Kredr schließt; nur auf Wunsch starten)
