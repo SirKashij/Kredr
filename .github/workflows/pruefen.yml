@@ -9,6 +9,11 @@ on:
 # Push im Integrationszweig, und jeder braucht ein eigenes Ergebnis. Abgebrochene Läufe haben in
 # Version 1 einen wiederkehrend roten Test drei Stunden lang wie Zufall aussehen lassen.
 
+# Das Prüfen liest nur. Der Token des Laufs darf deshalb nichts schreiben,
+# auch nicht bei Pull Requests aus Forks.
+permissions:
+  contents: read
+
 jobs:
   pruefen:
     # Kredr läuft nur unter Windows; die Tests des Kerns starten echte PowerShell.
