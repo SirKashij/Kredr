@@ -2,7 +2,6 @@
 name = "kredr"
 version = "0.3.0"
 description = "Schlanke Arbeitsfläche für Claude-Code-Agenten"
-license = "MIT"
 edition = "2021"
 
 [lib]

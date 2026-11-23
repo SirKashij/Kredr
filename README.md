@@ -12,7 +12,6 @@ Mehrere Agenten in Terminals steuern, die Dateien des Projekts durchsehen und Ä
 [![Neueste Fassung](https://img.shields.io/github/v/release/SirKashij/Kredr?include_prereleases&label=Fassung)](https://github.com/SirKashij/Kredr/releases)
 ![Plattform](https://img.shields.io/badge/Plattform-Windows%2011-0078D4)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
-[![Lizenz: MIT](https://img.shields.io/badge/Lizenz-MIT-green)](LICENSE)
 
 [Herunterladen](https://github.com/SirKashij/Kredr/releases/latest) · [Funktionen](#funktionen) · [Tastenkürzel](#tastenkürzel) · [Entwickeln](#entwickeln) · [Fehler melden](https://github.com/SirKashij/Kredr/issues)
 
@@ -139,11 +138,7 @@ npm run tauri build   # Installer bauen (src-tauri/target/release/bundle/nsis/)
 
 ## Mitmachen
 
-Fehler und Wünsche gehören in die [Issues](https://github.com/SirKashij/Kredr/issues). Für Pull Requests:
-
-1. Kurz in einem Issue abstimmen, worum es geht.
-2. Die Begriffe aus dem [Glossar](GLOSSARY.md) verwenden.
-3. Vor dem Pull Request `npm run check` laufen lassen – dieselbe Prüfkette läuft in der CI.
+Fehler und Wünsche gehören in die [Issues](https://github.com/SirKashij/Kredr/issues). Pull Requests nehme ich vorerst nicht an, solange Kredr keine Lizenz hat (siehe [Lizenz](#lizenz)).
 
 ## Danksagung
 
@@ -151,4 +146,4 @@ Kredr steht auf den Schultern von [Tauri](https://tauri.app), [xterm.js](https:/
 
 ## Lizenz
 
-Kredr steht unter der [MIT-Lizenz](LICENSE). Name und Logo von Kredr sind davon ausgenommen.
+Kredr steht derzeit unter keiner Open-Source-Lizenz; alle Rechte bleiben vorbehalten. Die veröffentlichten Installer dürfen genutzt und der Quellcode gelesen werden. Den Code zu verändern, weiterzugeben oder in eigenen Projekten zu verwenden, ist ohne Erlaubnis nicht gestattet.
