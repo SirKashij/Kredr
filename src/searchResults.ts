@@ -1,5 +1,6 @@
-import { fileName } from "./filePath";
+import { fileName, folderKey } from "./filePath";
 import type { FilePosition } from "./openFiles";
+import { groupByProject } from "./workspace";
 
 /** Die Stelle eines Fundes in seiner Zeile, in UTF-16-Einheiten ab dem Zeilenanfang. */
 export interface MatchRange {
@@ -24,22 +25,41 @@ export interface FileMatches {
   lines: LineMatches[];
 }
 
-/** Die Trefferliste einer Textsuche. */
+/** Die Treffer einer Datei samt dem Projekt, in dem sie liegt. */
+export interface FoundFile extends FileMatches {
+  project: string;
+}
+
+/** Die Trefferliste einer Textsuche, im Workspace über alle Projekte. */
 export interface SearchResults {
   /** Die Dateien mit Treffern, nach Pfad sortiert. */
-  files: FileMatches[];
+  files: FoundFile[];
   /** Die Zahl aller Funde. */
   matchCount: number;
-  /** Die Dateien, deren Trefferzeilen zugeklappt sind. */
+  /** Die Schlüssel der zugeklappten Projekt- und Dateizeilen. */
   collapsed: ReadonlySet<string>;
 }
 
 export const emptyResults: SearchResults = { files: [], matchCount: 0, collapsed: new Set() };
 
-/** Eine sichtbare Zeile der Trefferliste: eine Datei oder eine ihrer Trefferzeilen. */
+/**
+ * Eine sichtbare Zeile der Trefferliste: im Workspace ein Projekt, sonst
+ * eine Datei oder eine ihrer Trefferzeilen. `key` unterscheidet die Zeile
+ * von allen anderen, auch gleiche Dateien zweier Projekte.
+ */
 export type Row =
   | {
+      kind: "project";
+      key: string;
+      project: string;
+      /** Die Zahl der Funde im Projekt. */
+      count: number;
+      collapsed: boolean;
+    }
+  | {
       kind: "file";
+      key: string;
+      project: string;
       path: string;
       name: string;
       /** Der Ordner der Datei; leer im Projektordner. */
@@ -48,7 +68,7 @@ export type Row =
       count: number;
       collapsed: boolean;
     }
-  | { kind: "line"; path: string; line: LineMatches };
+  | { kind: "line"; key: string; project: string; path: string; line: LineMatches };
 
 const collator = new Intl.Collator("en", { sensitivity: "base", numeric: true });
 
@@ -56,40 +76,74 @@ function matchCountOf(file: FileMatches): number {
   return file.lines.reduce((sum, line) => sum + line.matches.length, 0);
 }
 
-/** Nimmt weitere Dateien mit Treffern auf; sie kommen vom Kern in beliebiger Reihenfolge. */
-export function addMatches(results: SearchResults, files: FileMatches[]): SearchResults {
+/**
+ * Nimmt weitere Dateien des Projekts mit Treffern auf; sie kommen vom Kern
+ * in beliebiger Reihenfolge.
+ */
+export function addMatches(
+  results: SearchResults,
+  project: string,
+  files: FileMatches[],
+): SearchResults {
+  const found = files.map((file) => ({ ...file, project }));
   return {
     ...results,
-    files: [...results.files, ...files].sort((a, b) => collator.compare(a.path, b.path)),
+    files: [...results.files, ...found].sort((a, b) => collator.compare(a.path, b.path)),
     matchCount: files.reduce((sum, file) => sum + matchCountOf(file), results.matchCount),
   };
 }
 
-/** Klappt die Trefferzeilen einer Datei zu oder wieder auf. */
-export function toggleFile(results: SearchResults, path: string): SearchResults {
+/** Klappt eine Projekt- oder Dateizeile zu oder wieder auf. */
+export function toggleRow(results: SearchResults, key: string): SearchResults {
   const collapsed = new Set(results.collapsed);
-  if (!collapsed.delete(path)) collapsed.add(path);
+  if (!collapsed.delete(key)) collapsed.add(key);
   return { ...results, collapsed };
 }
 
-/** Die sichtbaren Zeilen der Trefferliste von oben nach unten. */
-export function rowsOf(results: SearchResults): Row[] {
+/**
+ * Die sichtbaren Zeilen der Trefferliste von oben nach unten. Mit `grouped`
+ * stehen die Dateien unter ihrem Projekt, in der Reihenfolge von `projects`.
+ */
+export function rowsOf(
+  results: SearchResults,
+  projects: readonly string[],
+  grouped: boolean,
+): Row[] {
   const rows: Row[] = [];
-  for (const file of results.files) {
-    const collapsed = results.collapsed.has(file.path);
-    const name = fileName(file.path);
-    rows.push({
-      kind: "file",
-      path: file.path,
-      name,
-      folder: file.path.slice(0, Math.max(0, file.path.length - name.length - 1)),
-      count: matchCountOf(file),
-      collapsed,
-    });
-    if (!collapsed)
-      for (const line of file.lines) rows.push({ kind: "line", path: file.path, line });
+  for (const { project, items } of groupByProject(projects, results.files)) {
+    const projectKey = folderKey(project);
+    if (grouped) {
+      const collapsed = results.collapsed.has(projectKey);
+      const count = items.reduce((sum, file) => sum + matchCountOf(file), 0);
+      rows.push({ kind: "project", key: projectKey, project, count, collapsed });
+      if (collapsed) continue;
+    }
+    for (const file of items) {
+      const key = `${projectKey}\n${file.path}`;
+      const collapsed = results.collapsed.has(key);
+      const name = fileName(file.path);
+      rows.push({
+        kind: "file",
+        key,
+        project,
+        path: file.path,
+        name,
+        folder: file.path.slice(0, Math.max(0, file.path.length - name.length - 1)),
+        count: matchCountOf(file),
+        collapsed,
+      });
+      if (collapsed) continue;
+      for (const line of file.lines) {
+        rows.push({ kind: "line", key: `${key}:${line.line}`, project, path: file.path, line });
+      }
+    }
   }
   return rows;
+}
+
+/** Aus wie vielen Projekten die Treffer stammen. */
+export function projectCount(results: SearchResults, projects: readonly string[]): number {
+  return groupByProject(projects, results.files).length;
 }
 
 /** Zerlegt den Text einer Trefferzeile in Stücke mit und ohne Fund. */

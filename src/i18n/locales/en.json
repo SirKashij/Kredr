@@ -35,6 +35,8 @@
   "search.summary.oneInOne": "1 result in 1 file",
   "search.summary.manyInOne": "{matches} results in 1 file",
   "search.summary.manyInMany": "{matches} results in {files} files",
+  "search.summary.fromOneProject": "{summary} in 1 project",
+  "search.summary.fromProjects": "{summary} in {projects} projects",
   "search.limitReached": "There are more results; the first {matches} are shown. Narrow your search.",
   "search.invalidPattern": "Invalid regular expression: {details}",
   "search.invalidGlob": "Invalid file pattern: {details}",

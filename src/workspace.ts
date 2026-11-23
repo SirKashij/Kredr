@@ -154,6 +154,60 @@ export function agentSections(projects: readonly string[], tabs: readonly Tab[])
   return outside.tabs.length > 0 ? [...sections, outside] : sections;
 }
 
+/** Die Einträge eines Projekts, etwa seine Suchtreffer. */
+export interface ProjectGroup<T> {
+  project: string;
+  items: T[];
+}
+
+/**
+ * Gruppiert Einträge nach ihrem Projekt: eine Gruppe je Projekt mit
+ * Einträgen, in der Reihenfolge des Workspace. Innerhalb einer Gruppe bleibt
+ * die Reihenfolge der Einträge; Einträge eines Projekts, das nicht mehr im
+ * Workspace ist, fallen weg.
+ */
+export function groupByProject<T extends { project: string }>(
+  projects: readonly string[],
+  entries: readonly T[],
+): ProjectGroup<T>[] {
+  const groups = new Map(
+    projects.map((project) => [folderKey(project), { project, items: [] as T[] }]),
+  );
+  for (const entry of entries) groups.get(folderKey(entry.project))?.items.push(entry);
+  return [...groups.values()].filter((group) => group.items.length > 0);
+}
+
+/** Eine Datei für „Datei per Namen öffnen“. */
+export interface WorkspaceFile {
+  project: string;
+  /** Relativ zum Projektordner und mit `/` getrennt. */
+  path: string;
+  /**
+   * Der Pfad, unter dem die Datei öffnet und unter den zuletzt geöffneten
+   * Dateien steht: im ersten Projekt relativ, sonst voll.
+   */
+  key: string;
+}
+
+/**
+ * Die Dateien aller Projekte für „Datei per Namen öffnen“, in der Reihenfolge
+ * des Workspace; `filesOf` liefert die Dateiliste eines Projekts.
+ */
+export function workspaceFiles(
+  projects: readonly string[],
+  filesOf: (project: string) => readonly string[],
+): WorkspaceFile[] {
+  return projects.flatMap((project, index) => {
+    const root = project.replaceAll("\\", "/").replace(/\/+$/, "");
+    // Voll auch dann, wenn das Projekt im ersten liegt: So bleibt jeder Schlüssel eindeutig.
+    return filesOf(project).map((path) => ({
+      project,
+      path,
+      key: index === 0 ? path : `${root}/${path}`,
+    }));
+  });
+}
+
 /** Der Schlüssel des Abschnitts in `collapsedSections`. */
 function sectionKey(project: string | null): string {
   return project === null ? "" : folderKey(project);

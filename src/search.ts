@@ -61,3 +61,42 @@ export function searchText(
     },
   };
 }
+
+/**
+ * Durchsucht die Dateien aller Projekte, eines nach dem anderen in der
+ * Reihenfolge des Workspace: Der Kern bricht die vorige Suche eines
+ * Fensters ab, sobald eine neue beginnt. `onMatches` erhält die Dateien mit
+ * Treffern samt ihrem Projekt. Erreicht ein Projekt die Obergrenze der Funde,
+ * geht es mit dem nächsten weiter; die Suche meldet sie am Ende. Bricht der
+ * Kern ein Projekt ab, endet die ganze Suche. `searchOne` durchsucht ein
+ * Projekt; in Tests ist er nachgestellt.
+ */
+export function searchProjects(
+  projects: readonly string[],
+  query: TextQuery,
+  onMatches: (project: string, files: FileMatches[]) => void,
+  searchOne: typeof searchText = searchText,
+): TextSearch {
+  let cancelled = false;
+  let current: TextSearch | null = null;
+  const run = async (): Promise<SearchOutcome> => {
+    let limitReached = false;
+    for (const project of projects) {
+      if (cancelled) break;
+      current = searchOne(project, query, (files) => {
+        if (!cancelled) onMatches(project, files);
+      });
+      const outcome = await current.done;
+      if (outcome.cancelled) return { cancelled: true, limitReached };
+      limitReached ||= outcome.limitReached;
+    }
+    return { cancelled, limitReached };
+  };
+  return {
+    done: run(),
+    cancel: () => {
+      cancelled = true;
+      current?.cancel();
+    },
+  };
+}

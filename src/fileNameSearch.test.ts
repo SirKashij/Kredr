@@ -133,3 +133,14 @@ test("50 000 Dateien werden durchsucht; die Zeiten je Tastendruck stehen in der 
   expect(timings.find(({ query }) => query === "zzzz")!.found).toBe(0);
   expect(timings.find(({ query }) => query === "user")!.found).toBe(50);
 });
+
+test("gleiche Pfade in zwei Projekten bleiben über ihre Schlüssel unterscheidbar", () => {
+  const index = indexFiles(["README.md", "README.md"], ["README.md", "C:/Kern/README.md"]);
+
+  expect(searchFiles(index, "read")).toEqual(["README.md", "C:/Kern/README.md"]);
+  // Zuletzt geöffnet ist eine Datei unter ihrem Schlüssel.
+  expect(searchFiles(index, "read", ["C:/Kern/README.md"])).toEqual([
+    "C:/Kern/README.md",
+    "README.md",
+  ]);
+});

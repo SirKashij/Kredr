@@ -42,7 +42,7 @@ import { MainArea } from "./MainArea";
 import { OpenFiles, type FilePosition } from "./openFiles";
 import { openFileExternally, openUrl } from "./openExternally";
 import { projectName } from "./project";
-import { ProjectFileList } from "./projectFileList";
+import { WorkspaceFileList } from "./projectFileList";
 import { watchProjectFiles } from "./projectFiles";
 import { ProjectWatches } from "./projectWatches";
 import { BranchPicker } from "./BranchPicker";
@@ -144,8 +144,8 @@ export function App() {
       }),
   );
   const [files] = useState(() => new OpenFiles());
-  /** Die Dateiliste des Projekts für „Datei per Namen öffnen“. */
-  const [fileList] = useState(() => new ProjectFileList());
+  /** Die Dateilisten aller Projekte für „Datei per Namen öffnen“. */
+  const [fileList] = useState(() => new WorkspaceFileList());
   const [quickOpen, setQuickOpen] = useState(false);
   const [branchPicker, setBranchPicker] = useState(false);
   /** Die offene Frage nach dem Projekt für einen neuen Agenten oder ein neues Terminal. */
@@ -271,10 +271,8 @@ export function App() {
   useEffect(() => fileWatches.follow(projects), [projects, fileWatches]);
   useEffect(() => () => fileWatches.follow([]), [fileWatches]);
 
-  // Die Dateiliste zeigt bis auf Weiteres das erste Projekt.
-  useEffect(() => {
-    if (project) return fileList.open(project);
-  }, [project, fileList]);
+  useEffect(() => fileList.follow(projects), [projects, fileList]);
+  useEffect(() => () => fileList.follow([]), [fileList]);
   // Die Versionskontrolle folgt dem Zustand jedes Projekts, je in seinem Repository.
   useEffect(() => versionControl.follow(projects), [projects, versionControl]);
   useEffect(() => () => versionControl.follow([]), [versionControl]);
@@ -914,6 +912,7 @@ export function App() {
       {quickOpen && project && (
         <QuickOpen
           files={fileList}
+          showProjects={content.kind === "workspace"}
           recent={recentFiles}
           onOpen={(path) => openFile({ path })}
           onClose={closeQuickPick}

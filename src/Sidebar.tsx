@@ -1,5 +1,13 @@
 import { message } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import { views, type View } from "./ActivityBar";
 import {
   countStates,
@@ -157,6 +165,8 @@ export function Sidebar({
   const showingAll = useTabSet(agents.arrangement);
   const sidebar = useRef<HTMLElement>(null);
   const title = views.find(({ id }) => id === view)!.label;
+  // Dieselbe Liste, solange sich der Fensterinhalt nicht ändert: Die Suche beginnt sonst neu.
+  const projects = useMemo(() => projectsOf(content), [content]);
   const showsExplorer = view === "explorer" && content.kind !== "startPage";
   const showsSearch = view === "search" && project !== null;
 
@@ -205,7 +215,7 @@ export function Sidebar({
         <Explorer
           // Wird aus dem Projekt ein Workspace, beginnt der Baum mit Wurzeln neu.
           key={content.kind === "workspace" ? content.id : content.path}
-          projects={projectsOf(content)}
+          projects={projects}
           workspace={content.kind === "workspace" ? content.name : null}
           onAddProject={onAddProject}
           onRemoveProject={onRemoveProject}
@@ -223,7 +233,8 @@ export function Sidebar({
       {project !== null && (
         <SearchView
           key={`search:${project}`}
-          project={project}
+          projects={projects}
+          grouped={content.kind === "workspace"}
           hidden={!showsSearch}
           focusRequest={searchFocus}
           onOpenFile={onOpenMatch}

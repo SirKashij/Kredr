@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { ProjectChanges } from "./projectFiles";
-import { ProjectFileList } from "./projectFileList";
+import { ProjectFileList, WorkspaceFileList } from "./projectFileList";
 
 /** Ein Projektordner im Speicher anstelle des Kerns. */
 function fakeProject(initial: string[]) {
@@ -131,4 +131,80 @@ test("nach dem Schließen des Projekts ist die Dateiliste leer", async () => {
   close();
 
   expect(project.list.index.paths).toEqual([]);
+});
+
+/** Mehrere Projektordner im Speicher anstelle des Kerns. */
+function fakeWorkspace(initial: Record<string, string[]>) {
+  const listeners = new Map<string, (changes: ProjectChanges) => void>();
+  const state = {
+    files: { ...initial },
+    change(project: string, paths: string[]) {
+      listeners.get(project)?.({ paths, rescan: false });
+    },
+  };
+  const list = new WorkspaceFileList({
+    list: async (project) => [...(state.files[project] ?? [])],
+    watch: (project, listener) => {
+      listeners.set(project, listener);
+      return () => listeners.delete(project);
+    },
+  });
+  return Object.assign(state, { list, listeners });
+}
+
+/** Die Dateien des Fensters als `Projekt: Pfad`. */
+function shownFiles(list: WorkspaceFileList): string[] {
+  return list.snapshot.files.map((file) => `${file.project}: ${file.path}`);
+}
+
+test("im Workspace stehen die Dateien aller Projekte in seiner Reihenfolge", async () => {
+  const workspace = fakeWorkspace({ "C:/web": ["index.ts"], "C:/kern": ["lib.rs"] });
+
+  workspace.list.follow(["C:/web", "C:/kern"]);
+  await settled();
+
+  expect(shownFiles(workspace.list)).toEqual(["C:/web: index.ts", "C:/kern: lib.rs"]);
+  expect(workspace.list.snapshot.index.keys).toEqual(["index.ts", "C:/kern/lib.rs"]);
+});
+
+test("solange jemand zusieht, folgt die Dateiliste jedem Projekt", async () => {
+  const workspace = fakeWorkspace({ "C:/web": ["index.ts"], "C:/kern": ["lib.rs"] });
+  workspace.list.follow(["C:/web", "C:/kern"]);
+  let notified = 0;
+  workspace.list.subscribe(() => (notified += 1));
+  await settled();
+  notified = 0;
+
+  workspace.files["C:/kern"] = ["lib.rs", "main.rs"];
+  workspace.change("C:/kern", ["main.rs"]);
+  await settled();
+
+  expect(shownFiles(workspace.list)).toEqual([
+    "C:/web: index.ts",
+    "C:/kern: lib.rs",
+    "C:/kern: main.rs",
+  ]);
+  expect(notified).toBe(1);
+});
+
+test("ein entferntes Projekt verschwindet samt Beobachtung, die übrigen bleiben", async () => {
+  const workspace = fakeWorkspace({ "C:/web": ["index.ts"], "C:/kern": ["lib.rs"] });
+  workspace.list.follow(["C:/web", "C:/kern"]);
+  await settled();
+
+  workspace.list.follow(["C:/kern"]);
+  await settled();
+
+  expect(shownFiles(workspace.list)).toEqual(["C:/kern: lib.rs"]);
+  expect([...workspace.listeners.keys()]).toEqual(["C:/kern"]);
+  // Das jetzt erste Projekt nennt seine Dateien relativ.
+  expect(workspace.list.snapshot.index.keys).toEqual(["lib.rs"]);
+});
+
+test("ohne Änderung bleibt der Stand derselbe", async () => {
+  const workspace = fakeWorkspace({ "C:/web": ["index.ts"] });
+  workspace.list.follow(["C:/web"]);
+  await settled();
+
+  expect(workspace.list.snapshot).toBe(workspace.list.snapshot);
 });

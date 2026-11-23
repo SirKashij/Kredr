@@ -11,12 +11,17 @@ export interface FileIndex {
   paths: string[];
   /** Dieselben Pfade kleingeschrieben, damit nicht jeder Tastendruck sie neu umwandelt. */
   lower: string[];
+  /**
+   * Woran die Suche jede Datei nennt und unter den zuletzt geöffneten
+   * erkennt; ohne Workspace der Pfad selbst.
+   */
+  keys: string[];
 }
 
-export const emptyIndex: FileIndex = { paths: [], lower: [] };
+export const emptyIndex: FileIndex = { paths: [], lower: [], keys: [] };
 
-export function indexFiles(paths: string[]): FileIndex {
-  return { paths, lower: paths.map((path) => path.toLowerCase()) };
+export function indexFiles(paths: string[], keys: string[] = paths): FileIndex {
+  return { paths, lower: paths.map((path) => path.toLowerCase()), keys };
 }
 
 /** So viele Treffer zeigt die Liste höchstens. */
@@ -129,8 +134,8 @@ function ranksBefore(a: Hit, b: Hit): boolean {
 }
 
 /**
- * Die Trefferliste zu einer Eingabe: Pfade, auf die die Eingabe unscharf
- * passt, nach Güte sortiert. Zuletzt geöffnete Dateien (`recent`, die jüngste
+ * Die Trefferliste zu einer Eingabe: die Schlüssel der Pfade, auf die die
+ * Eingabe unscharf passt, nach Güte sortiert. Zuletzt geöffnete Dateien (`recent`, die jüngste
  * zuerst) stehen oben. Eine leere Eingabe trifft alle Dateien.
  */
 export function searchFiles(
@@ -141,7 +146,7 @@ export function searchFiles(
 ): string[] {
   const wanted = query.replace(/\s+/g, "").replaceAll("\\", "/").toLowerCase();
   const recency = new Map(recent.map((path, place) => [path, place] as const));
-  const { paths, lower } = index;
+  const { paths, lower, keys } = index;
   /** Die bisher besten Treffer, der beste zuerst; nie mehr als `limit`. */
   const top: Hit[] = [];
 
@@ -151,7 +156,7 @@ export function searchFiles(
     const hit: Hit = {
       index: i,
       score: value,
-      recency: recency.size > 0 ? (recency.get(paths[i]) ?? NONE) : NONE,
+      recency: recency.size > 0 ? (recency.get(keys[i]) ?? NONE) : NONE,
       length: paths[i].length,
     };
     if (top.length === limit && !ranksBefore(hit, top[limit - 1])) continue;
@@ -166,7 +171,7 @@ export function searchFiles(
     top.splice(low, 0, hit);
     if (top.length > limit) top.pop();
   }
-  return top.map((hit) => paths[hit.index]);
+  return top.map((hit) => keys[hit.index]);
 }
 
 /** So viele zuletzt geöffnete Dateien merkt sich ein Fenster. */

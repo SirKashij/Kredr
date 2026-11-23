@@ -6,7 +6,7 @@ import {
   positionOf,
   rowsOf,
   textParts,
-  toggleFile,
+  toggleRow,
   type FileMatches,
   type LineMatches,
   type SearchResults,
@@ -25,17 +25,83 @@ function file(path: string, ...lines: LineMatches[]): FileMatches {
   return { path, lines };
 }
 
-/** Die sichtbaren Zeilen der Trefferliste als Text. */
-function shown(results: SearchResults): string[] {
-  return rowsOf(results).map((row) =>
-    row.kind === "file"
-      ? `${row.name} [${row.folder}] ${row.count}`
-      : `  ${row.line.line}: ${row.line.text}`,
+/** Das Projekt eines Fensters ohne Workspace. */
+const P = "C:\\Projekte\\Kredr";
+const web = "C:\\Projekte\\Web";
+const core = "C:\\Projekte\\Kern";
+
+/** Die sichtbaren Zeilen der Trefferliste als Text; im Workspace mit Projektzeilen. */
+function shown(results: SearchResults, workspace?: string[]): string[] {
+  return rowsOf(results, workspace ?? [P], workspace !== undefined).map((row) =>
+    row.kind === "project"
+      ? `${row.project} ${row.count}`
+      : row.kind === "file"
+        ? `${row.name} [${row.folder}] ${row.count}`
+        : `  ${row.line.line}: ${row.line.text}`,
   );
 }
 
+/** Der Schlüssel der Datei- oder Projektzeile mit diesem Namen, zum Zuklappen. */
+function keyOf(results: SearchResults, name: string, workspace?: string[]): string {
+  const rows = rowsOf(results, workspace ?? [P], workspace !== undefined);
+  const row = rows.find(
+    (row) => (row.kind === "project" ? row.project : row.kind === "file" ? row.name : "") === name,
+  );
+  return row!.key;
+}
+
+test("im Workspace stehen die Treffer unter ihrem Projekt, mit seiner Zahl", () => {
+  let results = addMatches(emptyResults, core, [file("lib.rs", line(1, "x x", "x"))]);
+  results = addMatches(results, web, [
+    file("index.ts", line(2, "x", "x")),
+    file("app.ts", line(5, "x", "x")),
+  ]);
+
+  expect(shown(results, [web, core])).toEqual([
+    `${web} 2`,
+    "app.ts [] 1",
+    "  5: x",
+    "index.ts [] 1",
+    "  2: x",
+    `${core} 2`,
+    "lib.rs [] 2",
+    "  1: x x",
+  ]);
+});
+
+test("gleiche Dateien zweier Projekte klappen getrennt, ein Projekt klappt ganz zu", () => {
+  let results = addMatches(emptyResults, web, [file("README.md", line(1, "x", "x"))]);
+  results = addMatches(results, core, [file("README.md", line(3, "x", "x"))]);
+  const projects = [web, core];
+
+  const withoutCore = toggleRow(results, keyOf(results, core, projects));
+  expect(shown(withoutCore, projects)).toEqual([
+    `${web} 1`,
+    "README.md [] 1",
+    "  1: x",
+    `${core} 1`,
+  ]);
+
+  const fileOfWeb = keyOf(results, "README.md", projects);
+  expect(shown(toggleRow(results, fileOfWeb), projects)).toEqual([
+    `${web} 1`,
+    "README.md [] 1",
+    `${core} 1`,
+    "README.md [] 1",
+    "  3: x",
+  ]);
+});
+
+test("eine Trefferzeile kennt ihr Projekt", () => {
+  const results = addMatches(emptyResults, core, [file("src/lib.rs", line(1, "x", "x"))]);
+
+  const row = rowsOf(results, [web, core], true).find((row) => row.kind === "line");
+
+  expect(row).toMatchObject({ project: core, path: "src/lib.rs" });
+});
+
 test("Treffer erscheinen nach Datei gruppiert mit ihren Trefferzeilen", () => {
-  const results = addMatches(emptyResults, [
+  const results = addMatches(emptyResults, P, [
     file("src/ui/App.tsx", line(3, "const a = b;", "a"), line(9, "a + a", "a")),
     file("README.md", line(1, "a", "a")),
   ]);
@@ -50,16 +116,16 @@ test("Treffer erscheinen nach Datei gruppiert mit ihren Trefferzeilen", () => {
 });
 
 test("die Gesamtzahl zählt Funde und Dateien", () => {
-  let results = addMatches(emptyResults, [file("a.txt", line(1, "x x", "x"))]);
-  results = addMatches(results, [file("b.txt", line(4, "x", "x"), line(5, "x", "x"))]);
+  let results = addMatches(emptyResults, P, [file("a.txt", line(1, "x x", "x"))]);
+  results = addMatches(results, P, [file("b.txt", line(4, "x", "x"), line(5, "x", "x"))]);
 
   expect(results.matchCount).toBe(4);
   expect(results.files.length).toBe(2);
 });
 
 test("später eintreffende Dateien reihen sich nach Pfad ein", () => {
-  let results = addMatches(emptyResults, [file("src/b.ts", line(1, "x", "x"))]);
-  results = addMatches(results, [
+  let results = addMatches(emptyResults, P, [file("src/b.ts", line(1, "x", "x"))]);
+  results = addMatches(results, P, [
     file("src/a.ts", line(1, "x", "x")),
     file("Zebra.md", line(1, "x", "x")),
     file("docs/a.md", line(1, "x", "x")),
@@ -74,14 +140,14 @@ test("später eintreffende Dateien reihen sich nach Pfad ein", () => {
 });
 
 test("eine zugeklappte Datei zeigt ihre Trefferzeilen nicht", () => {
-  const results = addMatches(emptyResults, [
+  const results = addMatches(emptyResults, P, [
     file("a.txt", line(1, "x", "x")),
     file("b.txt", line(2, "x", "x")),
   ]);
 
-  const collapsed = toggleFile(results, "a.txt");
+  const collapsed = toggleRow(results, keyOf(results, "a.txt"));
   expect(shown(collapsed)).toEqual(["a.txt [] 1", "b.txt [] 1", "  2: x"]);
-  expect(shown(toggleFile(collapsed, "a.txt"))).toEqual(shown(results));
+  expect(shown(toggleRow(collapsed, keyOf(results, "a.txt")))).toEqual(shown(results));
 });
 
 test("der Fund ist im Text der Trefferzeile hervorgehoben", () => {

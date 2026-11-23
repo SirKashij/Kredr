@@ -12,6 +12,7 @@ import {
   addProject,
   agentSections,
   firstProject,
+  groupByProject,
   isSectionCollapsed,
   keepConversations,
   moveProject,
@@ -23,6 +24,7 @@ import {
   renameWorkspace,
   startPage,
   toggleSection,
+  workspaceFiles,
   type WindowContent,
 } from "./workspace";
 
@@ -403,4 +405,61 @@ test("zeigt der aktive Tab die Versionskontrolle, bleibt das bisher aktive Proje
   expect(activeProject([web, core], versionControl, core)).toBe(core);
   // Ist das bisherige Projekt nicht mehr im Fenster, gilt das erste.
   expect(activeProject([web, core], versionControl, "C:\\Projekte\\Alt")).toBe(web);
+});
+
+test("Suchtreffer stehen unter ihrem Projekt in der Reihenfolge des Workspace", () => {
+  const [web, core] = projectsOf(workspace);
+  const hit = (project: string, path: string) => ({ project, path });
+
+  const groups = groupByProject(
+    [web, core],
+    [hit(core, "a.rs"), hit(web, "index.ts"), hit("c:\\projekte\\kern", "b.rs")],
+  );
+
+  // Projekte ohne Treffer fehlen; innerhalb eines Projekts bleibt die Reihenfolge.
+  expect(groups).toEqual([
+    { project: web, items: [hit(web, "index.ts")] },
+    { project: core, items: [hit(core, "a.rs"), hit("c:\\projekte\\kern", "b.rs")] },
+  ]);
+  // Treffer eines Projekts, das nicht mehr im Workspace ist, fallen weg.
+  expect(groupByProject([web], [hit(core, "a.rs")])).toEqual([]);
+});
+
+test("Quick Open kennt die Dateien aller Projekte in der Reihenfolge des Workspace", () => {
+  const [web, core] = projectsOf(workspace);
+  const lists = new Map([
+    [web, ["index.ts", "src/app.ts"]],
+    [core, ["src/lib.rs"]],
+  ]);
+
+  const files = workspaceFiles([web, core], (project) => lists.get(project) ?? []);
+
+  // Der Schlüssel ist der Pfad, unter dem die Datei öffnet: im ersten Projekt
+  // relativ, sonst voll.
+  expect(files).toEqual([
+    { project: web, path: "index.ts", key: "index.ts" },
+    { project: web, path: "src/app.ts", key: "src/app.ts" },
+    { project: core, path: "src/lib.rs", key: "C:/Projekte/Kern/src/lib.rs" },
+  ]);
+});
+
+test("auch verschachtelte Projekte nennen jede Datei unter eigenem Schlüssel", () => {
+  const outer = "C:\\Projekte";
+  const inner = "C:\\Projekte\\Kern";
+  const lists = new Map([
+    [outer, ["Kern/x.ts"]],
+    [inner, ["x.ts"]],
+  ]);
+
+  const keys = (projects: string[]) =>
+    workspaceFiles(projects, (project) => lists.get(project) ?? []).map((file) => file.key);
+
+  expect(keys([outer, inner])).toEqual(["Kern/x.ts", "C:/Projekte/Kern/x.ts"]);
+  expect(keys([inner, outer])).toEqual(["x.ts", "C:/Projekte/Kern/x.ts"]);
+});
+
+test("ein einzelnes Projekt nennt seine Dateien wie bisher", () => {
+  const files = workspaceFiles(projectsOf(single), () => ["a.ts", "src/b.ts"]);
+
+  expect(files.map((file) => file.key)).toEqual(["a.ts", "src/b.ts"]);
 });

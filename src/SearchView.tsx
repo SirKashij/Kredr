@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { fileIcon } from "./fileIcons";
 import { useT, type MessageKey } from "./i18n/i18n";
+import { fullPath } from "./filePath";
 import type { FilePosition } from "./openFiles";
-import { searchText, type SearchError } from "./search";
+import { projectName } from "./project";
+import { searchProjects, type SearchError } from "./search";
 import {
   addMatches,
   emptyResults,
   parsePatterns,
   positionOf,
+  projectCount,
   rowsOf,
   textParts,
-  toggleFile,
+  toggleRow,
   type Row,
 } from "./searchResults";
 
@@ -22,7 +25,13 @@ const OVERSCAN = 10;
 const INPUT_DELAY = 200;
 
 export interface SearchViewProps {
-  project: string;
+  /**
+   * Die Projekte des Fensters in Reihenfolge; durchsucht werden alle. Eine
+   * neue Liste beginnt die Suche neu.
+   */
+  projects: readonly string[];
+  /** Ob die Treffer unter ihrem Projekt stehen: im Workspace. */
+  grouped: boolean;
   hidden: boolean;
   /** Steigt, wenn die Suche aufgerufen wird; dann erhält das Suchfeld die Tastatur. */
   focusRequest: number;
@@ -36,11 +45,18 @@ type Progress =
   | { state: "failed"; message: MessageKey; details: string };
 
 /**
- * Die Ansicht Suche: Textsuche über die Dateien des Projekts. Gesucht wird
- * beim Tippen; die Treffer erscheinen nach Datei gruppiert, sobald der Kern
- * sie findet. Gezeichnet wird nur der sichtbare Ausschnitt der Trefferliste.
+ * Die Ansicht Suche: Textsuche über die Dateien aller Projekte des
+ * Fensters. Gesucht wird beim Tippen; die Treffer erscheinen nach Datei
+ * gruppiert, im Workspace unter ihrem Projekt, sobald der Kern sie findet.
+ * Gezeichnet wird nur der sichtbare Ausschnitt der Trefferliste.
  */
-export function SearchView({ project, hidden, focusRequest, onOpenFile }: SearchViewProps) {
+export function SearchView({
+  projects,
+  grouped,
+  hidden,
+  focusRequest,
+  onOpenFile,
+}: SearchViewProps) {
   const t = useT();
   const [text, setText] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -72,7 +88,7 @@ export function SearchView({ project, hidden, focusRequest, onOpenFile }: Search
       setProgress({ state: "idle" });
       return;
     }
-    let search: ReturnType<typeof searchText> | undefined;
+    let search: ReturnType<typeof searchProjects> | undefined;
     const timer = setTimeout(() => {
       // Die alte Trefferliste bleibt stehen, bis die neue Suche etwas liefert.
       let first = true;
@@ -85,8 +101,8 @@ export function SearchView({ project, hidden, focusRequest, onOpenFile }: Search
         exclude: parsePatterns(exclude),
       };
       setProgress({ state: "running" });
-      const running = searchText(project, query, (files) => {
-        setResults((current) => addMatches(first ? emptyResults : current, files));
+      const running = searchProjects(projects, query, (project, files) => {
+        setResults((current) => addMatches(first ? emptyResults : current, project, files));
         if (first) viewport.current?.scrollTo(0, 0);
         first = false;
       });
@@ -119,7 +135,7 @@ export function SearchView({ project, hidden, focusRequest, onOpenFile }: Search
       search?.cancel();
       search = undefined;
     };
-  }, [project, text, caseSensitive, wholeWord, regex, include, exclude, submitted]);
+  }, [projects, text, caseSensitive, wholeWord, regex, include, exclude, submitted]);
 
   useEffect(() => {
     const element = viewport.current!;
@@ -128,7 +144,7 @@ export function SearchView({ project, hidden, focusRequest, onOpenFile }: Search
     return () => observer.disconnect();
   }, []);
 
-  const rows = useMemo(() => rowsOf(results), [results]);
+  const rows = useMemo(() => rowsOf(results, projects, grouped), [results, projects, grouped]);
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
   const last = Math.min(rows.length, Math.ceil((scrollTop + height) / ROW_HEIGHT) + OVERSCAN);
 
@@ -139,13 +155,21 @@ export function SearchView({ project, hidden, focusRequest, onOpenFile }: Search
     if (results.matchCount === 0) {
       return t(progress.state === "running" ? "search.running" : "search.none");
     }
-    if (results.matchCount === 1) return t("search.summary.oneInOne");
-    if (results.files.length === 1) return t("search.summary.manyInOne", { matches });
-    return t("search.summary.manyInMany", { matches, files: String(results.files.length) });
+    const files =
+      results.matchCount === 1
+        ? t("search.summary.oneInOne")
+        : results.files.length === 1
+          ? t("search.summary.manyInOne", { matches })
+          : t("search.summary.manyInMany", { matches, files: String(results.files.length) });
+    if (!grouped) return files;
+    const count = projectCount(results, projects);
+    return count === 1
+      ? t("search.summary.fromOneProject", { summary: files })
+      : t("search.summary.fromProjects", { summary: files, projects: String(count) });
   }
 
   function open(row: Row & { kind: "line" }, preview: boolean) {
-    onOpenFile({ path: row.path, preview, ...positionOf(row.line) });
+    onOpenFile({ path: fullPath(row.project, row.path), preview, ...positionOf(row.line) });
   }
 
   const toggle = (
@@ -221,17 +245,39 @@ export function SearchView({ project, hidden, focusRequest, onOpenFile }: Search
       >
         <div style={{ height: rows.length * ROW_HEIGHT, paddingTop: first * ROW_HEIGHT }}>
           {rows.slice(first, last).map((row) => {
+            if (row.kind === "project") {
+              return (
+                <div
+                  key={row.key}
+                  role="treeitem"
+                  aria-expanded={!row.collapsed}
+                  className="tree-row root"
+                  title={row.project}
+                  style={{ paddingLeft: 4 }}
+                  onClick={() => setResults((current) => toggleRow(current, row.key))}
+                >
+                  <svg
+                    className={row.collapsed ? "tree-twist" : "tree-twist open"}
+                    viewBox="0 0 16 16"
+                  >
+                    <path d="m6 4 4 4-4 4" />
+                  </svg>
+                  <span className="tree-name">{projectName(row.project)}</span>
+                  <span className="search-count">{row.count}</span>
+                </div>
+              );
+            }
             if (row.kind === "file") {
               const icon = fileIcon(row.name);
               return (
                 <div
-                  key={row.path}
+                  key={row.key}
                   role="treeitem"
                   aria-expanded={!row.collapsed}
                   className="tree-row"
                   title={row.path}
-                  style={{ paddingLeft: 8 }}
-                  onClick={() => setResults((current) => toggleFile(current, row.path))}
+                  style={{ paddingLeft: grouped ? 20 : 8 }}
+                  onClick={() => setResults((current) => toggleRow(current, row.key))}
                 >
                   <svg
                     className={row.collapsed ? "tree-twist" : "tree-twist open"}
@@ -254,13 +300,14 @@ export function SearchView({ project, hidden, focusRequest, onOpenFile }: Search
                 </div>
               );
             }
-            const key = `${row.path}:${row.line.line}`;
+            const { key } = row;
             return (
               <div
                 key={key}
                 role="treeitem"
                 aria-selected={key === selected}
                 className={key === selected ? "tree-row search-line sel" : "tree-row search-line"}
+                style={grouped ? { paddingLeft: 42 } : undefined}
                 onClick={() => {
                   setSelected(key);
                   open(row, true);
