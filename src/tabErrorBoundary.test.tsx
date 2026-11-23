@@ -36,6 +36,7 @@ function FailingBody({ tab }: { tab: ContentTab }) {
 vi.mock("./tabViews", () => ({
   ContentTabFace: () => <span className="tab-label">Datei</span>,
   ContentTabBody: FailingBody,
+  contentTabLabel: () => "Datei",
 }));
 vi.mock("./settings", () => ({
   useSettings: () => ({ settings: defaultSettings }),
@@ -140,6 +141,7 @@ async function show(arrangement: Arrangement) {
         statuses={terminals.statuses}
         files={{} as OpenFiles}
         cwd="C:/proj"
+        projects={["C:/proj"]}
         shells={[]}
         focusRequest={0}
         update={() => {}}

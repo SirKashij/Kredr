@@ -1168,6 +1168,13 @@ button {
   letter-spacing: 0.4px;
 }
 
+/* Der Projektname hinter gleichnamigen Tabs aus verschiedenen Projekten, wie in VS Code. */
+.tab-description {
+  margin-left: -3px;
+  font-size: 0.9em;
+  color: var(--dim);
+}
+
 .tab-name-input {
   height: 22px;
   padding: 0 4px;
@@ -1711,6 +1718,16 @@ button {
   border: 1px solid var(--accent);
   border-radius: 2px;
   outline: none;
+}
+
+.quick-open-title {
+  padding: 2px 4px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.quick-open-title b {
+  color: var(--text);
 }
 
 .quick-open-list {

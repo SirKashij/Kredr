@@ -37,6 +37,12 @@ export function fileName(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
+/** Der Name eines Projekts ist der Name seines Ordners. */
+export function projectName(folder: string): string {
+  const parts = folder.split(/[\\/]/).filter((part) => part !== "");
+  return parts.at(-1) ?? folder;
+}
+
 /** Der Ordner, in dem die Datei oder der Ordner liegt; leer für einen Eintrag direkt im Projektordner. */
 export function parentOf(path: string): string {
   return path.slice(0, Math.max(0, path.lastIndexOf("/")));

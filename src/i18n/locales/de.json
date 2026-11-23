@@ -130,6 +130,7 @@
   "versionControl.error.invalidBranchName": "So darf ein Branch nicht heißen. Nicht erlaubt sind unter anderem Leerzeichen, „..“, „~“, „^“, „:“ und ein Bindestrich am Anfang.",
   "branches.tooltip": "Aktueller Branch: {branch}. Klicken, um den Branch zu wechseln oder einen neuen anzulegen.",
   "branches.placeholder": "Branch wechseln oder Namen für einen neuen Branch eingeben",
+  "branches.inProject": "Branch wechseln in",
   "branches.create": "Neuen Branch „{name}“ anlegen",
   "branches.current": "aktuell",
   "branches.remote": "GitHub",

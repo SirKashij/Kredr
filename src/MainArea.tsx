@@ -1,6 +1,7 @@
 import {
   Fragment,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type MouseEvent,
@@ -19,6 +20,7 @@ import {
   renameTab,
   restoreGroups,
   splitGroup,
+  tabsOf,
   type Arrangement,
   type Group,
   type Split,
@@ -31,7 +33,7 @@ import { useT } from "./i18n/i18n";
 import type { OpenFiles } from "./openFiles";
 import type { AgentStatuses } from "./agentStatus";
 import type { RunningTerminal, RunningTerminals } from "./runningTerminals";
-import { ContentTabBody, ContentTabFace, type ContentTab } from "./tabViews";
+import { ContentTabBody, ContentTabFace, contentTabLabel, type ContentTab } from "./tabViews";
 import { useSettings } from "./settings";
 import type { Shell } from "./settingsStore";
 import { shellLabel, tabLabel, terminalTabLabel } from "./tabLabel";
@@ -39,6 +41,7 @@ import { UnmountedContentGuard, TabErrorBoundary } from "./TabErrorBoundary";
 import { TerminalView } from "./TerminalView";
 import { useTabDrag, type TabDrag } from "./useTabDrag";
 import type { WindowAgents } from "./windowAgents";
+import { tabDescriptions } from "./workspace";
 
 /** Schmaler lässt sich eine Gruppe mit der Trennlinie nicht ziehen (in Pixeln). */
 const MIN_GROUP_SIZE = 80;
@@ -54,6 +57,8 @@ interface MainAreaProps {
   files: OpenFiles;
   /** Der Ordner des Projekts; darin starten die Terminals. */
   cwd: string;
+  /** Die Projekte des Fensters in Reihenfolge; nach ihnen unterscheiden sich gleichnamige Tabs. */
+  projects: readonly string[];
   /** Die Shells, die sich für ein neues Terminal wählen lassen. */
   shells: Shell[];
   /** Steigt mit jeder Bedienung der Aufteilung; danach erhält das Terminal wieder den Fokus. */
@@ -69,7 +74,12 @@ interface MainAreaProps {
 }
 
 /** Was jeder Teil des Baums braucht. */
-type Shared = MainAreaProps & { onOpenMenu: (menu: Menu) => void; tabDrag: Omit<TabDrag, "drop"> };
+type Shared = MainAreaProps & {
+  onOpenMenu: (menu: Menu) => void;
+  tabDrag: Omit<TabDrag, "drop">;
+  /** Der Zusatz je Tab, der einen Namen mit einem Tab aus einem anderen Projekt teilt. */
+  descriptions: ReadonlyMap<string, string>;
+};
 
 interface Menu {
   x: number;
@@ -120,11 +130,29 @@ export function MainArea(props: MainAreaProps) {
   const [menu, setMenu] = useState<Menu | null>(null);
   const { root } = props.arrangement;
   const { drop, ...tabDrag } = useTabDrag(props.arrangement, props.update, props.onRefocus);
+  const t = useT();
+  const { settings } = useSettings();
+  const { arrangement, projects } = props;
+  const descriptions = useMemo(
+    () =>
+      tabDescriptions(projects, tabsOf(arrangement), (tab) =>
+        tab.content
+          ? contentTabLabel(tab.content, t)
+          : terminalTabLabel(tab, settings.showAssignment, t).text,
+      ),
+    [projects, arrangement, settings.showAssignment, t],
+  );
   return (
     <>
       {root && (
         <UnmountedContentGuard>
-          <NodeView node={root} {...props} onOpenMenu={setMenu} tabDrag={tabDrag} />
+          <NodeView
+            node={root}
+            {...props}
+            onOpenMenu={setMenu}
+            tabDrag={tabDrag}
+            descriptions={descriptions}
+          />
         </UnmountedContentGuard>
       )}
       {drop && (
@@ -278,6 +306,11 @@ function TerminalTabName({ tab }: { tab: Tab }) {
   );
 }
 
+/** Der Projektname klein hinter einem gleichnamigen Tab; ohne Zusatz nichts. */
+function TabDescription({ description }: { description: string | undefined }) {
+  return description === undefined ? null : <span className="tab-description">{description}</span>;
+}
+
 function GroupView({ group, ...shared }: Shared & { group: Group }) {
   const t = useT();
   const { arrangement, terminals, shells, update, onCloseTab, onOpenMenu, tabDrag } = shared;
@@ -397,6 +430,9 @@ function GroupView({ group, ...shared }: Shared & { group: Group }) {
                 />
               ) : (
                 <TerminalTabName tab={tab} />
+              )}
+              {tab.id !== renaming && (
+                <TabDescription description={shared.descriptions.get(tab.id)} />
               )}
               <button
                 className="tab-close"

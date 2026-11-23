@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { branchRows, branchTitle, loadBranches, type BranchRow } from "./branches";
 import type { Branch } from "./branches";
 import { useT } from "./i18n/i18n";
+import { projectName } from "./project";
 import { QuickPick } from "./QuickPick";
 import { useVersionControlStore } from "./versionControl";
 import { GitError } from "./VersionControlView";
@@ -13,7 +14,16 @@ import type { VersionControlError } from "./versionControlState";
  * legt einen Branch mit dem eingegebenen Namen an. Scheitert das, bleibt die
  * Liste offen und zeigt die Meldung.
  */
-export function BranchPicker({ project, onClose }: { project: string; onClose: () => void }) {
+export function BranchPicker({
+  project,
+  showProject,
+  onClose,
+}: {
+  project: string;
+  /** Ob die Liste nennt, in welchem Projekt sie wechselt; im Workspace. */
+  showProject: boolean;
+  onClose: () => void;
+}) {
   const t = useT();
   const store = useVersionControlStore();
   const [branches, setBranches] = useState<Branch[] | null>(null);
@@ -44,6 +54,13 @@ export function BranchPicker({ project, onClose }: { project: string; onClose: (
   return (
     <QuickPick
       placeholder={t("branches.placeholder")}
+      title={
+        showProject && (
+          <>
+            {t("branches.inProject")} <b>{projectName(project)}</b>
+          </>
+        )
+      }
       query={query}
       onQuery={(query) => {
         setQuery(query);

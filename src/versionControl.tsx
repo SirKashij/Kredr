@@ -369,8 +369,8 @@ export class VersionControls {
   }
 
   /**
-   * Die Versionskontrolle des ersten Projekts. Ihr folgen bis auf Weiteres
-   * Statusleiste, Branch-Liste und Explorer eines einzelnen Projekts.
+   * Die Versionskontrolle des ersten Projekts. Ihr folgt bis auf Weiteres
+   * der Explorer eines einzelnen Projekts.
    */
   primary(): VersionControlStore {
     return this.current.projects[0]?.store ?? this.idle;
@@ -456,6 +456,17 @@ export function RepositoryScope({
   children: ReactNode;
 }) {
   return <VersionControlContext.Provider value={store}>{children}</VersionControlContext.Provider>;
+}
+
+/**
+ * Darunter meint {@link useVersionControl} die Versionskontrolle des
+ * Projekts, etwa des aktiven für Statusleiste und Branch-Liste. Solange das
+ * Fenster dem Projekt noch nicht folgt, zeigt sich nichts.
+ */
+export function ProjectScope({ project, children }: { project: string; children: ReactNode }) {
+  const { projects } = useVersionControlsSnapshot();
+  const store = projects.find((followed) => followed.project === project)?.store;
+  return store ? <RepositoryScope store={store}>{children}</RepositoryScope> : null;
 }
 
 /** Die Versionskontrolle des Fensters, um etwas auszulösen (Diff zeigen, Verlauf umstellen). */

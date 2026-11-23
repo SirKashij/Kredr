@@ -3,7 +3,7 @@ import { holdsFileText, type Arrangement, type Tab, type TabContent } from "./ar
 import { fileIcon } from "./fileIcons";
 import { fileName } from "./filePath";
 import { FileView, useOpenFiles } from "./FileView";
-import { useT } from "./i18n/i18n";
+import { useT, type Translate } from "./i18n/i18n";
 import { ImageView } from "./ImageView";
 import type { OpenFiles } from "./openFiles";
 import { VersionControlTab } from "./VersionControlTab";
@@ -23,6 +23,13 @@ const MarkdownPreview = lazy(() =>
 /** Ein Tab mit eigenem Inhalt. */
 export type ContentTab = Tab & { content: TabContent };
 
+/** Was am Tab steht: „Versionskontrolle“ oder der Name der Datei. */
+export function contentTabLabel(content: TabContent, t: Translate): string {
+  if (content.kind === "versionControl") return t("activity.versionControl");
+  const name = fileName(content.path);
+  return content.kind === "markdown" ? t("markdown.tabLabel", { name }) : name;
+}
+
 /** Symbol und Beschriftung eines Tabs in der Tab-Leiste. */
 export function ContentTabFace({ tab, files }: { tab: ContentTab; files: OpenFiles }) {
   useOpenFiles(files);
@@ -33,7 +40,7 @@ export function ContentTabFace({ tab, files }: { tab: ContentTab; files: OpenFil
       return (
         <>
           <span className="tab-icon">±</span>
-          <span className="tab-label">{t("activity.versionControl")}</span>
+          <span className="tab-label">{contentTabLabel(content, t)}</span>
         </>
       );
     case "file":
@@ -56,7 +63,7 @@ export function ContentTabFace({ tab, files }: { tab: ContentTab; files: OpenFil
             </svg>
           )}
           <span className={classes.filter(Boolean).join(" ")} title={content.path}>
-            {content.kind === "markdown" ? t("markdown.tabLabel", { name }) : name}
+            {contentTabLabel(content, t)}
           </span>
           {state?.dirty && <span className="tab-dirty" />}
         </>

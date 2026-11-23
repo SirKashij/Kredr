@@ -17,7 +17,7 @@ import {
   type FolderList,
   type Tab,
 } from "./arrangement";
-import { folderKey, isOutsideProject } from "./filePath";
+import { folderKey, isOutsideProject, parentOf, projectName } from "./filePath";
 
 /** Was ein Fenster zeigt; der Kern liefert denselben Typ. */
 export type WindowContent =
@@ -128,6 +128,46 @@ export function activeProject(
     return projects.find((project) => folderKey(project) === key) ?? first;
   }
   return (tab && projectOfTab(projects, tab)) ?? first;
+}
+
+/**
+ * Der Zusatz an gleichnamigen Tabs, wie in VS Code: Tragen Tabs aus
+ * verschiedenen Projekten denselben Namen (`labelOf`), steht an jedem der
+ * Name seines Projekts. Ein Terminal außerhalb aller Projekte nennt seinen
+ * Startordner, eine Datei außerhalb ihren Ordner. Eindeutige Namen bleiben
+ * ohne Zusatz. Liefert den Zusatz je Kennung eines Tabs, der einen bekommt.
+ */
+export function tabDescriptions(
+  projects: readonly string[],
+  tabs: readonly Tab[],
+  labelOf: (tab: Tab) => string,
+): Map<string, string> {
+  const byLabel = new Map<string, { tab: Tab; origin: string }[]>();
+  for (const tab of tabs) {
+    const origin = originOf(projects, tab);
+    if (origin === null) continue;
+    const label = labelOf(tab);
+    byLabel.set(label, [...(byLabel.get(label) ?? []), { tab, origin }]);
+  }
+  const descriptions = new Map<string, string>();
+  for (const same of byLabel.values()) {
+    if (new Set(same.map(({ origin }) => folderKey(origin))).size < 2) continue;
+    for (const { tab, origin } of same) descriptions.set(tab.id, projectName(origin));
+  }
+  return descriptions;
+}
+
+/**
+ * Der Ordner, aus dem ein Tab stammt: sein Projekt, außerhalb aller Projekte
+ * der Startordner des Terminals oder der Ordner der Datei. `null` für die
+ * Versionskontrolle.
+ */
+function originOf(projects: readonly string[], tab: Tab): string | null {
+  const project = projectOfTab(projects, tab);
+  if (project !== null) return project;
+  if (isTerminal(tab)) return tab.cwd ?? null;
+  const file = filePathOf(tab);
+  return file === undefined ? null : parentOf(file);
 }
 
 /** Ein Abschnitt der Agenten-Ansicht im Workspace. */

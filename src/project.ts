@@ -28,8 +28,4 @@ export function forgetWorkspace(id: string): Promise<RecentEntry[]> {
   return invoke<RecentEntry[]>("forget_workspace", { id });
 }
 
-/** Der Name eines Projekts ist der Name seines Ordners. */
-export function projectName(folder: string): string {
-  const parts = folder.split(/[\\/]/).filter((part) => part !== "");
-  return parts.at(-1) ?? folder;
-}
+export { projectName } from "./filePath";

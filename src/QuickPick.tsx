@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
  */
 export function QuickPick<Row>({
   placeholder,
+  title,
   query,
   onQuery,
   rows,
@@ -24,6 +25,8 @@ export function QuickPick<Row>({
   children,
 }: {
   placeholder: string;
+  /** Steht klein unter dem Eingabefeld, etwa wofür die Liste gilt. */
+  title?: ReactNode;
   query: string;
   onQuery: (query: string) => void;
   /** Die Zeilen zur Eingabe, die beste zuerst. */
@@ -93,6 +96,7 @@ export function QuickPick<Row>({
         }}
         onKeyDown={onKeyDown}
       />
+      {title && <div className="quick-open-title">{title}</div>}
       {rows.length > 0 ? (
         <div className="quick-open-list" role="listbox" ref={list}>
           {rows.map((row, position) => (

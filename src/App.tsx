@@ -57,7 +57,7 @@ import { availableShells, type Shell } from "./settingsStore";
 import { shellLabel, tabLabel } from "./tabLabel";
 import { useWaitingAlerts } from "./useWaitingAlerts";
 import { SyncStatus } from "./SyncStatus";
-import { VersionControlProvider, VersionControls } from "./versionControl";
+import { ProjectScope, VersionControlProvider, VersionControls } from "./versionControl";
 import type { ChangedFile } from "./versionControlState";
 import { BranchStatus } from "./VersionControlView";
 import { alertBody } from "./waitingAlerts";
@@ -105,8 +105,8 @@ export function App() {
   /** Die Projekte des Fensters in Reihenfolge. */
   const projects = useMemo(() => projectsOf(content), [content]);
   /**
-   * Das erste Projekt des Fensters. Ihm folgen bis auf Weiteres die Ansichten,
-   * die Statusleiste und neue Terminals; für ein Projektfenster ist es das Projekt.
+   * Das erste Projekt des Fensters. Ihm folgen bis auf Weiteres die Ansichten
+   * und neue Terminals; für ein Projektfenster ist es das Projekt.
    */
   const project = firstProject(content);
   const [arrangement, setArrangement] = useState(emptyArrangement);
@@ -147,7 +147,8 @@ export function App() {
   /** Die Dateilisten aller Projekte für „Datei per Namen öffnen“. */
   const [fileList] = useState(() => new WorkspaceFileList());
   const [quickOpen, setQuickOpen] = useState(false);
-  const [branchPicker, setBranchPicker] = useState(false);
+  /** Das Projekt, dessen Branch die offene Branch-Liste wechselt. */
+  const [branchPickerProject, setBranchPickerProject] = useState<string | null>(null);
   /** Die offene Frage nach dem Projekt für einen neuen Agenten oder ein neues Terminal. */
   const [projectPick, setProjectPick] = useState<{ agent: boolean } | null>(null);
   /** Der Hinweis, der gerade unten rechts steht. */
@@ -419,7 +420,7 @@ export function App() {
    */
   const closeQuickPick = useCallback(() => {
     setQuickOpen(false);
-    setBranchPicker(false);
+    setBranchPickerProject(null);
     setProjectPick(null);
     setFocusRequest((count) => count + 1);
   }, []);
@@ -603,11 +604,13 @@ export function App() {
   const activeTab = focusedGroup?.tabs.find((tab) => tab.id === focusedGroup.activeTab);
   /** Die Datei des sichtbaren Tabs der fokussierten Gruppe. */
   const activeFile = filePathOf(activeTab) ?? null;
+  /** Das Projekt des aktiven Tabs; ihm folgen Statusleiste, Branch-Liste und Verlauf. */
+  const [active, setActive] = useState<string | null>(null);
+  // Zeigt sich die Versionskontrolle, bleibt das bisher aktive Projekt.
+  const nextActive = activeProject(projects, activeTab, active);
+  if (nextActive !== active) setActive(nextActive);
   // Ohne eigene Wahl zeigt der Verlauf das Repository des aktiven Projekts.
-  useEffect(() => {
-    const previous = versionControl.snapshot().active;
-    versionControl.setActive(activeProject(projects, activeTab, previous));
-  }, [projects, activeTab, versionControl]);
+  useEffect(() => versionControl.setActive(active), [active, versionControl]);
 
   async function openFolder() {
     const folder = await chooseFolder(t("dialog.openFolderTitle"));
@@ -888,6 +891,7 @@ export function App() {
               statuses={statuses}
               files={files}
               cwd={project}
+              projects={projects}
               shells={shells}
               focusRequest={focusRequest}
               update={update}
@@ -918,7 +922,15 @@ export function App() {
           onClose={closeQuickPick}
         />
       )}
-      {branchPicker && project && <BranchPicker project={project} onClose={closeQuickPick} />}
+      {branchPickerProject && (
+        <ProjectScope project={branchPickerProject}>
+          <BranchPicker
+            project={branchPickerProject}
+            showProject={content.kind === "workspace"}
+            onClose={closeQuickPick}
+          />
+        </ProjectScope>
+      )}
       {projectPick && (
         <ProjectPicker
           projects={projects}
@@ -929,9 +941,15 @@ export function App() {
       )}
       {notice && <Notice notice={notice} onClose={closeNotice} />}
       <footer className="status">
-        <BranchStatus onToggle={() => setBranchPicker((open) => !open)} />
-        <SyncStatus />
-        <span>{project ? projectName(project) : t("status.noProject")}</span>
+        {active && (
+          <ProjectScope project={active}>
+            <BranchStatus
+              onToggle={() => setBranchPickerProject((open) => (open === active ? null : active))}
+            />
+            <SyncStatus />
+          </ProjectScope>
+        )}
+        <span>{active ? projectName(active) : t("status.noProject")}</span>
         <AgentCounters statuses={statuses} />
         {closeError !== null && (
           <span className="status-error" role="alert">

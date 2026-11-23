@@ -23,6 +23,7 @@ import {
   removeProject,
   renameWorkspace,
   startPage,
+  tabDescriptions,
   toggleSection,
   workspaceFiles,
   type WindowContent,
@@ -456,6 +457,46 @@ test("auch verschachtelte Projekte nennen jede Datei unter eigenem Schlüssel", 
 
   expect(keys([outer, inner])).toEqual(["Kern/x.ts", "C:/Projekte/Kern/x.ts"]);
   expect(keys([inner, outer])).toEqual(["x.ts", "C:/Projekte/Kern/x.ts"]);
+});
+
+/** Der Name am Tab: der Dateiname oder der Name des Terminals. */
+function labelOfTab(tab: Tab): string {
+  if (tab.content && "path" in tab.content) return tab.content.path.split("/").at(-1)!;
+  return tab.name ?? "PowerShell";
+}
+
+test("gleichnamige Tabs aus verschiedenen Projekten tragen den Projektnamen, eindeutige nicht", () => {
+  const [web, core] = projectsOf(workspace);
+  const tabs: Tab[] = [
+    { id: "a", content: { kind: "file", path: "README.md" } },
+    { id: "b", content: { kind: "file", path: "C:/Projekte/Kern/README.md" } },
+    { id: "c", content: { kind: "file", path: "src/index.ts" } },
+  ];
+
+  const descriptions = tabDescriptions([web, core], tabs, labelOfTab);
+
+  expect([...descriptions]).toEqual([
+    ["a", "Web"],
+    ["b", "Kern"],
+  ]);
+});
+
+test("Terminals außerhalb aller Projekte tragen den Namen ihres Startordners", () => {
+  const [web, core] = projectsOf(workspace);
+  const tabs: Tab[] = [
+    { id: "a" },
+    { id: "b", cwd: "C:\\Projekte\\Web\\src" },
+    { id: "c", cwd: "D:\\temp" },
+    { id: "v", content: { kind: "versionControl" } },
+  ];
+
+  expect([...tabDescriptions([web, core], tabs, labelOfTab)]).toEqual([
+    ["a", "Web"],
+    ["b", "Web"],
+    ["c", "temp"],
+  ]);
+  // Zwei gleichnamige Terminals im selben Projekt brauchen keinen Zusatz.
+  expect(tabDescriptions([web, core], tabs.slice(0, 2), labelOfTab).size).toBe(0);
 });
 
 test("ein einzelnes Projekt nennt seine Dateien wie bisher", () => {
