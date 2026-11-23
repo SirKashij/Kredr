@@ -289,7 +289,7 @@ fn shell_command(
 
 /// Die Bash aus Git für Windows, wenn es installiert ist. Ein `bash.exe` aus
 /// dem Suchpfad wäre nicht verlässlich: Dort liegt oft der Starter von WSL.
-fn git_bash() -> Option<PathBuf> {
+pub fn git_bash() -> Option<PathBuf> {
     // Git für Windows trägt `<Git>\cmd` in den Suchpfad ein.
     let search_path = paths::search_path();
     let git = ["git.exe".to_owned()];

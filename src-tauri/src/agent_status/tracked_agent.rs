@@ -3,8 +3,14 @@
 //! Wie die Ereignisse ankommen, weiß er nicht.
 
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
+
+/// So viele Sekunden wartet Claude Code höchstens auf einen Hook; danach
+/// bricht es ihn ab. Länger nach dem Start kann auch der Befehls-Hook für
+/// `SessionStart` nichts mehr melden.
+pub(super) const HOOK_TIMEOUT_SECS: u64 = 5;
 
 /// Länger als so viele Zeichen wird die letzte Aktion nicht.
 const ACTION_LIMIT: usize = 120;
@@ -150,9 +156,11 @@ pub struct TrackedAgent {
     /// Die Kennung des laufenden Gesprächs.
     conversation: Option<String>,
     /// Ob der Agent gestartet ist. Ein fortgesetzter Agent ist es erst mit
-    /// seiner ersten Meldung; findet Claude Code das Gespräch nicht, meldet
-    /// es nur `SessionEnd`.
+    /// seiner ersten Meldung, in der Regel `SessionStart`; findet Claude Code
+    /// das Gespräch nicht, meldet es nur `SessionEnd`.
     started: bool,
+    /// Die Sitzung, die zuletzt endete: die Kennung ihres Gesprächs und wann.
+    ended: Option<(String, Instant)>,
 }
 
 /// Eine Rückfrage an die Person.
@@ -185,6 +193,15 @@ impl TrackedAgent {
     /// den neuen Agentenstatus, wenn sich für die Person etwas sichtbar
     /// ändert, sonst `None`.
     pub fn on_event(&mut self, event: &Value) -> Option<StatusUpdate> {
+        match event["hook_event_name"].as_str() {
+            Some("SessionStart") if self.is_late_start(event) => return None,
+            Some("SessionEnd") => {
+                self.ended = event["session_id"]
+                    .as_str()
+                    .map(|id| (id.to_owned(), Instant::now()));
+            }
+            _ => {}
+        }
         if event["hook_event_name"] != "SessionEnd" {
             self.started = true;
         } else if !self.started {
@@ -195,6 +212,19 @@ impl TrackedAgent {
         }
         let next = self.next(event);
         self.apply(next)
+    }
+
+    /// Ob `event`, ein `SessionStart`, zu der Sitzung gehört, die gerade
+    /// endete. Der Befehls-Hook läuft im Hintergrund; beendet die Person
+    /// Claude Code gleich nach dem Start, kommt sein `SessionStart` nach dem
+    /// `SessionEnd`. Später als die Laufzeit eines Hooks nach dem Ende ist
+    /// es ein neuer Start desselben Gesprächs, etwa mit `claude -c`.
+    fn is_late_start(&self, event: &Value) -> bool {
+        let Some((ended, at)) = &self.ended else {
+            return false;
+        };
+        event["session_id"] == ended.as_str()
+            && at.elapsed() < Duration::from_secs(HOOK_TIMEOUT_SECS)
     }
 
     /// Das Terminal endet: Der Status fällt auf „unbekannt“. Liefert die
@@ -224,10 +254,11 @@ impl TrackedAgent {
     }
 
     /// Ein Stand, in dem alles über das Gespräch vergessen ist. Ob der Agent
-    /// gestartet ist, bleibt.
+    /// gestartet ist und welche Sitzung zuletzt endete, bleibt.
     fn forgotten(&self) -> TrackedAgent {
         TrackedAgent {
             started: self.started,
+            ended: self.ended.clone(),
             ..TrackedAgent::default()
         }
     }
@@ -595,6 +626,10 @@ fn next_status(
         return Some((AgentState::Waiting, question.action));
     }
     match event["hook_event_name"].as_str()? {
+        // Die Sitzung beginnt: Der Agent wartet auf den ersten Prompt. Kommt
+        // `SessionStart` später, etwa nach `/compact` oder verspätet aus dem
+        // Befehls-Hook, gilt der Status, den der Agent schon hat.
+        "SessionStart" if state == AgentState::Unknown => Some((AgentState::Waiting, None)),
         "UserPromptSubmit" => Some((AgentState::Working, None)),
         "PreToolUse" => Some((AgentState::Working, tool_action(event))),
         "PostToolUse" | "PostToolUseFailure" => Some((AgentState::Working, last_action.clone())),

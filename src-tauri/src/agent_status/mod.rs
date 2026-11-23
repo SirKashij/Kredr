@@ -5,7 +5,9 @@
 //! Konfigurationsdatei im Laufzeitordner von Kredr. Claude Code bekommt sie
 //! beim Start über `--settings` mit, auch wenn die Person `claude` von Hand
 //! startet (ADR 0006), und meldet dann Ereignisse per HTTP-Hook
-//! an einen Empfänger auf dem eigenen Rechner. Die Adresse in der Datei
+//! an einen Empfänger auf dem eigenen Rechner. `SessionStart` meldet Claude
+//! Code nur Befehls-Hooks; ein kurzer PowerShell-Aufruf reicht es an
+//! dieselbe Adresse weiter. Die Adresse in der Datei
 //! enthält die Terminal-Kennung und ein Kennwort; darüber findet jede Meldung
 //! ihr Terminal. Einstellungen von Claude Code selbst werden weder gelesen
 //! noch geschrieben.
@@ -35,11 +37,11 @@ use tracked_agent::{IDLE_NOTIFICATION, WAITING_NOTIFICATIONS};
 /// Größer ist keine Meldung, die der Empfänger liest.
 const BODY_LIMIT: u64 = 4 * 1024 * 1024;
 /// So viele Sekunden wartet Claude Code höchstens auf den Empfänger.
-const HOOK_TIMEOUT: u32 = 5;
+const HOOK_TIMEOUT: u32 = tracked_agent::HOOK_TIMEOUT_SECS as u32;
 
-/// Ereignisse, die Claude Code ohne Einschränkung meldet. Dazu kommen die
-/// wartenden Meldungen (`Notification`), eingeschränkt auf die, die zählen.
-/// `SessionStart` fehlt: Claude Code meldet es nur Befehls-Hooks, nicht per HTTP.
+/// Ereignisse, die Claude Code ohne Einschränkung per HTTP meldet. Die
+/// Konfiguration trägt dazu die wartenden Meldungen (`Notification`) ein,
+/// eingeschränkt auf die, die zählen, und den Befehls-Hook für `SessionStart`.
 const EVENTS: [&str; 10] = [
     "UserPromptSubmit",
     "PreToolUse",
@@ -290,7 +292,71 @@ fn hook_settings(url: &str) -> Value {
         "Notification".to_owned(),
         json!([{ "matcher": notifications.join("|"), "hooks": [hook] }]),
     );
+    let forward = json!({
+        "type": "command",
+        "command": forwarding_command(url),
+        // Claude Code wartet nicht, bis PowerShell gestartet ist.
+        "async": true,
+        "timeout": HOOK_TIMEOUT,
+    });
+    hooks.insert("SessionStart".to_owned(), json!([{ "hooks": [forward] }]));
     json!({ "hooks": hooks })
+}
+
+/// Was der Befehls-Hook ausführt: Er schickt die Standardeingabe, das
+/// Ereignis als UTF-8, unverändert per POST an `{url}`. Was dabei schiefgeht,
+/// bleibt still; Claude Code merkt davon nichts.
+const FORWARDING_SCRIPT: &str = "\
+$ProgressPreference = 'SilentlyContinue'
+try {
+  $stdin = [Console]::OpenStandardInput()
+  $body = [IO.MemoryStream]::new()
+  $stdin.CopyTo($body)
+  $bytes = $body.ToArray()
+  $request = [Net.HttpWebRequest]::Create('{url}')
+  $request.Method = 'POST'
+  $request.ContentType = 'application/json'
+  $request.Proxy = $null
+  $request.Timeout = 3000
+  $request.ContentLength = $bytes.Length
+  $out = $request.GetRequestStream()
+  $out.Write($bytes, 0, $bytes.Length)
+  $out.Close()
+  $request.GetResponse().Close()
+} catch {}
+exit 0
+";
+
+/// Der Befehl, der das Ereignis eines Befehls-Hooks an `url` weiterreicht.
+/// Claude Code führt ihn je nach Rechner in Git Bash oder PowerShell aus; das
+/// Skript steht deshalb kodiert darin, ohne Zeichen, die eine der Shells
+/// deutet. PowerShell gehört zu Windows.
+fn forwarding_command(url: &str) -> String {
+    let script = FORWARDING_SCRIPT.replace("{url}", url);
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    format!(
+        "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {}",
+        base64(&utf16)
+    )
+}
+
+/// `bytes` in Base64 mit Auffüllung.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let group = chunk.iter().enumerate().fold(0u32, |group, (i, &byte)| {
+            group | u32::from(byte) << (16 - 8 * i)
+        });
+        for i in 0..4 {
+            if i <= chunk.len() {
+                text.push(ALPHABET[(group >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                text.push('=');
+            }
+        }
+    }
+    text
 }
 
 /// Ein nicht erratbares Kennwort; den Zufall liefert das Betriebssystem
@@ -298,4 +364,27 @@ fn hook_settings(url: &str) -> Value {
 fn random_token() -> String {
     let part = || RandomState::new().build_hasher().finish();
     format!("{:016x}{:016x}", part(), part())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::base64;
+
+    #[test]
+    fn base64_kodiert_wie_rfc_4648() {
+        // Die Testwerte aus RFC 4648, Abschnitt 10: jede Restlänge.
+        let cases = [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+        ];
+        for (plain, encoded) in cases {
+            assert_eq!(base64(plain.as_bytes()), encoded, "{plain}");
+        }
+        assert_eq!(base64(&[0xfb, 0xff]), "+/8=");
+    }
 }

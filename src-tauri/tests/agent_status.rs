@@ -19,7 +19,9 @@ use kredr_lib::agent_status::{
     remove_orphaned_runtime_folders, runtime_folder_of, AgentState, AgentStatus, BackgroundTask,
     Resumed, StatusUpdate, SubagentState, TrackedAgent,
 };
-use kredr_lib::terminal::{available_shells, Shell, Terminal, TerminalEvent, TerminalOptions};
+use kredr_lib::terminal::{
+    available_shells, git_bash, Shell, Terminal, TerminalEvent, TerminalOptions,
+};
 use serde_json::{json, Value};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -1083,9 +1085,123 @@ fn jeder_agent_hat_seinen_eigenen_auftrag() {
     assert_eq!(second.next().assignment.as_deref(), Some("Baue Ticket 25"));
 }
 
-// Claude Code meldet `SessionStart` nicht per HTTP-Hook (geprüft mit 2.1.330):
-// Das Gespräch ist mit der ersten Meldung bekannt, in der Regel dem ersten Prompt.
-// Erst dann hat Claude Code es auch gespeichert.
+// `SessionStart` meldet Claude Code nur an Befehls-Hooks; der Befehls-Hook der
+// Konfiguration reicht es an den Empfänger weiter (Tests weiter unten).
+
+#[test]
+fn beim_start_wartet_der_agent_mit_seinem_gespraech() {
+    let agent = TestAgent::start();
+
+    agent.report(
+        "SessionStart",
+        json!({ "session_id": "gespraech-1", "source": "startup" }),
+    );
+
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Waiting);
+    assert!(update.state_changed);
+    assert_eq!(update.last_action, None);
+    assert_eq!(update.conversation.as_deref(), Some("gespraech-1"));
+    assert_eq!(update.assignment, None);
+}
+
+#[test]
+fn ein_verspaetetes_sessionstart_laesst_den_arbeitenden_agenten_arbeiten() {
+    // Der Befehls-Hook läuft im Hintergrund; tippt die Person schnell, kommt
+    // der erste Prompt vor `SessionStart` an.
+    let agent = TestAgent::start();
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    assert_eq!(agent.next_state(), AgentState::Working);
+
+    agent.report("SessionStart", json!({ "source": "startup" }));
+
+    agent.expect_silence();
+}
+
+#[test]
+fn ein_sessionstart_nach_dem_ende_seiner_sitzung_erweckt_den_agenten_nicht() {
+    // Beendet die Person Claude Code gleich nach dem Start, kann das
+    // `SessionEnd` vor dem `SessionStart` aus dem Befehls-Hook ankommen.
+    for agent in [TestAgent::start(), resumed()] {
+        agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+        agent.report("SessionEnd", json!({ "reason": "prompt_input_exit" }));
+        settle(&agent);
+
+        agent.report("SessionStart", json!({ "source": "startup" }));
+
+        agent.expect_silence();
+    }
+}
+
+#[test]
+fn wird_dasselbe_gespraech_spaeter_neu_gestartet_wartet_der_agent_wieder() {
+    // Etwa `/exit` und dann `claude -c` im selben Terminal. Länger als die
+    // Laufzeit eines Hooks (5 s) nach dem Ende kann kein verspätetes
+    // `SessionStart` mehr kommen.
+    let agent = TestAgent::start();
+    agent.report("SessionStart", json!({ "source": "startup" }));
+    agent.report("SessionEnd", json!({ "reason": "prompt_input_exit" }));
+    settle(&agent);
+    std::thread::sleep(Duration::from_millis(5100));
+
+    agent.report("SessionStart", json!({ "source": "resume" }));
+
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(update.conversation.as_deref(), Some("abc123"));
+}
+
+#[test]
+fn sessionstart_nach_compact_aendert_den_status_nicht() {
+    let agent = TestAgent::start();
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.report("Stop", json!({ "last_assistant_message": "Erledigt." }));
+    settle(&agent);
+
+    agent.report("SessionStart", json!({ "source": "compact" }));
+
+    agent.expect_silence();
+}
+
+#[test]
+fn nach_dem_leeren_wartet_der_agent_mit_dem_neuen_gespraech() {
+    let agent = TestAgent::start();
+    agent.report(
+        "UserPromptSubmit",
+        json!({ "session_id": "alt", "prompt": "Los" }),
+    );
+    agent.report(
+        "SessionEnd",
+        json!({ "session_id": "alt", "reason": "clear" }),
+    );
+    settle(&agent);
+
+    agent.report(
+        "SessionStart",
+        json!({ "session_id": "neu", "source": "clear" }),
+    );
+
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(update.conversation.as_deref(), Some("neu"));
+}
+
+#[test]
+fn ein_fortgesetzter_agent_gilt_mit_sessionstart_als_gestartet() {
+    let agent = resumed();
+
+    agent.report("SessionStart", json!({ "source": "resume" }));
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(update.conversation.as_deref(), Some("abc123"));
+    assert_eq!(update.assignment.as_deref(), Some("Baue Ticket 24"));
+    agent.report("SessionEnd", json!({ "reason": "prompt_input_exit" }));
+
+    assert!(!agent.next().resume_failed);
+}
+
+// Ohne `SessionStart`, etwa wenn der Befehls-Hook nicht laufen kann, ist das
+// Gespräch mit der ersten Meldung bekannt, in der Regel dem ersten Prompt.
 #[test]
 fn das_gespraech_ist_mit_dem_ersten_prompt_bekannt() {
     let agent = TestAgent::start();
@@ -1647,8 +1763,7 @@ fn die_konfiguration_nennt_alle_ereignisse_mit_hooks_an_den_eigenen_rechner() {
     let keys: Vec<&String> = settings.as_object().unwrap().keys().collect();
     assert_eq!(keys, ["hooks"]);
     let hooks = settings["hooks"].as_object().unwrap();
-    // Jedes Ereignis, das der Agentenstatus auswertet; `SessionStart` meldet
-    // Claude Code nicht per HTTP.
+    // Jedes Ereignis, das der Agentenstatus auswertet.
     let mut events: Vec<&str> = hooks.keys().map(String::as_str).collect();
     events.sort();
     assert_eq!(
@@ -1660,6 +1775,7 @@ fn die_konfiguration_nennt_alle_ereignisse_mit_hooks_an_den_eigenen_rechner() {
             "PostToolUseFailure",
             "PreToolUse",
             "SessionEnd",
+            "SessionStart",
             "Stop",
             "StopFailure",
             "SubagentStart",
@@ -1668,6 +1784,10 @@ fn die_konfiguration_nennt_alle_ereignisse_mit_hooks_an_den_eigenen_rechner() {
         ]
     );
     for (event, entries) in hooks {
+        // `SessionStart` meldet Claude Code nur an Befehls-Hooks (Tests unten).
+        if event == "SessionStart" {
+            continue;
+        }
         for entry in entries.as_array().unwrap() {
             for hook in entry["hooks"].as_array().unwrap() {
                 assert_eq!(hook["type"], "http", "{event}");
@@ -1732,6 +1852,126 @@ fn eine_meldung_erreicht_nur_den_listener_ihres_terminals() {
     // derselben Kennung im anderen Prozess erfährt davon.
     first.expect_silence();
     other.expect_silence();
+}
+
+// Der Befehls-Hook für `SessionStart`: Claude Code führt ihn in der Shell aus,
+// die es für Hooks benutzt, und gibt ihm das Ereignis auf der Standardeingabe.
+
+/// Der Befehl, den die Konfiguration für `SessionStart` einträgt.
+fn session_start_command(settings: &Path) -> String {
+    let text = std::fs::read_to_string(settings).unwrap();
+    let settings: Value = serde_json::from_str(&text).unwrap();
+    let hook = &settings["hooks"]["SessionStart"][0]["hooks"][0];
+    assert_eq!(hook["type"], "command");
+    // Claude Code wartet nicht auf ihn.
+    assert_eq!(hook["async"], true);
+    hook["command"].as_str().unwrap().to_owned()
+}
+
+/// Eine Shell, in der Claude Code einen Befehls-Hook ausführen kann.
+struct HookShell {
+    name: &'static str,
+    program: PathBuf,
+    /// Was vor dem Befehl steht.
+    args: &'static [&'static str],
+}
+
+/// Die Shells, in denen Claude Code den Hook ausführen kann.
+fn hook_shells() -> Vec<HookShell> {
+    let mut shells = vec![HookShell {
+        name: "PowerShell",
+        program: "powershell.exe".into(),
+        args: &["-NoProfile", "-Command"],
+    }];
+    match git_bash() {
+        Some(bash) => shells.push(HookShell {
+            name: "Git Bash",
+            program: bash,
+            args: &["-c"],
+        }),
+        None => eprintln!("Git Bash wurde nicht gefunden; nur PowerShell geprüft"),
+    }
+    shells
+}
+
+/// Führt `command` mit `shell` aus, `input` auf der Standardeingabe. Liefert,
+/// ob er gelang, und wie lange er brauchte.
+fn run_hook(shell: &HookShell, command: &str, input: &str) -> (bool, Duration) {
+    use std::process::{Command, Stdio};
+    let started = Instant::now();
+    let mut child = Command::new(&shell.program)
+        .args(shell.args)
+        .arg(command)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Die Shell sollte starten");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    let errors = String::from_utf8_lossy(&output.stderr);
+    assert!(errors.trim().is_empty(), "Fehlerausgabe: {errors}");
+    (output.status.success(), started.elapsed())
+}
+
+#[test]
+fn sessionstart_kommt_ueber_den_befehls_hook_beim_richtigen_terminal_an() {
+    let status = AgentStatus::start(runtime_folder("sessionstart"), no_task_outputs()).unwrap();
+    let other = Registered::new(&status, 1);
+    let terminal = Registered::new(&status, 2);
+    let command = session_start_command(&terminal.settings);
+
+    for shell in hook_shells() {
+        let name = shell.name;
+        // Die Meldung kommt als UTF-8, auch mit Umlauten.
+        let event = hook_event(
+            "SessionStart",
+            json!({ "session_id": format!("gespräch-{name}"), "source": "startup" }),
+        );
+        let (success, _) = run_hook(&shell, &command, &event.to_string());
+
+        assert!(success, "{name}");
+        let update = terminal.wait();
+        assert_eq!(update.state, AgentState::Waiting, "{name}");
+        let conversation = format!("gespräch-{name}");
+        assert_eq!(update.conversation.as_deref(), Some(conversation.as_str()));
+        // Für die nächste Shell beginnt die Sitzung neu.
+        let end = hook_event("SessionEnd", json!({ "reason": "clear" }));
+        assert_eq!(terminal.post("SessionEnd", &end.to_string()), 200);
+        assert_eq!(terminal.wait().state, AgentState::Unknown);
+    }
+    other.expect_silence();
+}
+
+#[test]
+fn ohne_empfaenger_scheitert_der_befehls_hook_nicht() {
+    let status = AgentStatus::start(runtime_folder("ohne-empfaenger"), no_task_outputs()).unwrap();
+    let terminal = Registered::new(&status, 1);
+    let command = session_start_command(&terminal.settings);
+    let event = hook_event("SessionStart", json!({ "source": "startup" })).to_string();
+
+    // Erst ist das Terminal abgemeldet, dann ist Kredr ganz fort.
+    status.forget(1);
+    let mut outcomes = Vec::new();
+    for shell in hook_shells() {
+        let name = shell.name;
+        outcomes.push((name, run_hook(&shell, &command, &event)));
+    }
+    drop(status);
+    for shell in hook_shells() {
+        let name = shell.name;
+        outcomes.push((name, run_hook(&shell, &command, &event)));
+    }
+
+    for (name, (success, took)) in outcomes {
+        assert!(success, "{name}");
+        assert!(took < Duration::from_secs(5), "{name}: {took:?}");
+    }
 }
 
 // Die Ausgabedateien der Hintergrundaufgaben: Ein Abbruch über `/tasks`
