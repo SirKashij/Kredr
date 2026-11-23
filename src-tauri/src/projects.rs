@@ -13,6 +13,7 @@ use tauri::{
 };
 
 use crate::arrangement_store::{ArrangementStore, ProjectState, RecentEntry, WorkspaceState};
+use crate::paths;
 use crate::project_windows::{project_folder, project_from_args, ProjectWindows, WindowContent};
 use crate::window_geometry::{Observed, Screen, WindowGeometry};
 
@@ -372,6 +373,74 @@ pub fn add_project(
     remember_workspace(&store, &id);
     remember_open_workspaces(&app);
     Ok(AddProjectOutcome::Added { content })
+}
+
+/// Entfernt das Projekt aus dem Workspace des aufrufenden Fensters und
+/// speichert ihn mit der Aufteilung ohne die Tabs des Projekts. Der
+/// Workspace bleibt bestehen, auch ohne Projekt. Liefert, was das Fenster
+/// danach zeigt.
+#[tauri::command]
+pub fn remove_project(
+    app: AppHandle,
+    window: Window,
+    windows: State<'_, ProjectWindows>,
+    store: State<'_, ArrangementStore>,
+    project: PathBuf,
+    arrangement: serde_json::Value,
+) -> Result<WindowContent, String> {
+    let _guard = OPENING.lock();
+    let WindowContent::Workspace { id, name, projects } = windows.content_of(window.label()) else {
+        return Err("only a workspace can lose a project".to_string());
+    };
+    if !projects.iter().any(|open| paths::same(open, &project)) {
+        return Err(format!("{} is not in this workspace", project.display()));
+    }
+    let projects: Vec<PathBuf> = projects
+        .into_iter()
+        .filter(|open| !paths::same(open, &project))
+        .collect();
+    // Aufteilung und Projekte gehören zusammen: Fehlt das Projekt, fehlen
+    // auch seine Tabs, sonst kämen seine Agenten mit dem Workspace zurück.
+    let state = WorkspaceState {
+        name: name.clone(),
+        projects: projects.clone(),
+        arrangement: Some(arrangement),
+        window: store.workspace_state(&id).and_then(|state| state.window),
+    };
+    store
+        .save_workspace_state(&id, &state)
+        .map_err(|e| e.to_string())?;
+    let content = WindowContent::Workspace { id, name, projects };
+    windows.assign(window.label(), content.clone());
+    remember_open_workspaces(&app);
+    Ok(content)
+}
+
+/// Die gespeicherte Aufteilung des Projekts, gleich welches Fenster es
+/// gerade zeigt; nichts, wenn keine lesbare gespeichert ist.
+#[tauri::command(async)]
+pub fn project_arrangement_load(
+    store: State<'_, ArrangementStore>,
+    project: PathBuf,
+) -> Option<serde_json::Value> {
+    store.project_state(&project).arrangement
+}
+
+/// Speichert die Aufteilung des Projekts; seine Fenstergeometrie bleibt.
+#[tauri::command(async)]
+pub fn project_arrangement_save(
+    store: State<'_, ArrangementStore>,
+    project: PathBuf,
+    arrangement: serde_json::Value,
+) -> Result<(), String> {
+    let window = store.project_state(&project).window;
+    let state = ProjectState {
+        arrangement: Some(arrangement),
+        window,
+    };
+    store
+        .save_project_state(&project, &state)
+        .map_err(|e| e.to_string())
 }
 
 /// Die zuletzt genutzten Projekte und Workspaces gemischt, das jüngste zuerst.

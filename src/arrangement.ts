@@ -231,6 +231,31 @@ export function openTabIn(arrangement: Arrangement, cwd: string, agent = false):
 }
 
 /**
+ * Legt die Tabs mit neuen Kennungen als eigene Gruppe rechts neben alles
+ * Bisherige; der Fokus bleibt, wo er ist. Ohne Tabs bleibt alles, wie es war.
+ */
+export function addGroupBeside(arrangement: Arrangement, tabs: readonly Tab[]): Arrangement {
+  if (tabs.length === 0) return arrangement;
+  let nextId = arrangement.nextId;
+  const renamed = tabs.map((tab) => ({ ...tab, id: `t${nextId++}` }));
+  const group: Group = {
+    kind: "group",
+    id: `g${nextId++}`,
+    tabs: renamed,
+    activeTab: renamed[0].id,
+  };
+  if (!arrangement.root) return { ...arrangement, root: group, focusedGroup: group.id, nextId };
+  const split: Split = {
+    kind: "split",
+    id: `s${nextId++}`,
+    axis: "row",
+    children: [arrangement.root, group],
+    sizes: [0.5, 0.5],
+  };
+  return { ...arrangement, root: tidy(split), nextId };
+}
+
+/**
  * Teilt die Gruppe: rechts von ihr oder unter ihr entsteht eine neue Gruppe
  * mit einem neuen Tab, die die Hälfte ihres Platzes übernimmt und den Fokus erhält.
  */

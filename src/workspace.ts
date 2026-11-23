@@ -3,7 +3,18 @@
  * Funktionen ohne React und ohne Aufrufe an den Kern.
  */
 
-import { folderKey } from "./filePath";
+import type { Statuses } from "./agentStatus";
+import {
+  addGroupBeside,
+  closeTab,
+  filePathOf,
+  isTerminal,
+  recordConversation,
+  tabsOf,
+  type Arrangement,
+  type Tab,
+} from "./arrangement";
+import { folderKey, isOutsideProject } from "./filePath";
 
 /** Was ein Fenster zeigt; der Kern liefert denselben Typ. */
 export type WindowContent =
@@ -81,4 +92,97 @@ export function addProject(
     case "workspace":
       return { kind: "added", content: { ...content, projects: [...content.projects, folder] } };
   }
+}
+
+/**
+ * Das Projekt, zu dem der Tab gehört. Ein Terminal gehört zu dem Projekt, in
+ * dessen Ordner es gestartet wurde; ohne eigenen Startordner startet es im
+ * ersten Projekt. Eine Datei mit relativem Pfad liegt im ersten Projekt.
+ * Die Versionskontrolle gehört zu keinem Projekt.
+ */
+export function projectOfTab(projects: readonly string[], tab: Tab): string | null {
+  const first = projects[0] ?? null;
+  if (isTerminal(tab)) return tab.cwd === undefined ? first : projectOf(projects, tab.cwd);
+  const file = filePathOf(tab);
+  if (file === undefined) return null;
+  return isOutsideProject(file) ? projectOf(projects, file) : first;
+}
+
+/** Was aus dem Entfernen eines Projekts aus dem Workspace wird. */
+export interface Removal {
+  /** Der Workspace ohne das Projekt; er bleibt bestehen, auch leer. */
+  content: WindowContent;
+  /** Die Aufteilung ohne die Tabs, die schließen. */
+  arrangement: Arrangement;
+  /** Die Tabs, die schließen, in der Reihenfolge ihrer Gruppen. */
+  closing: Tab[];
+}
+
+/**
+ * Entfernt das Projekt aus dem Workspace. Mit ihm schließen seine Terminals
+ * und Dateien; alle übrigen Tabs bleiben, wie sie sind. Bleibt kein Projekt
+ * übrig, schließen alle Tabs. `null`, wenn das Fenster keinen Workspace mit
+ * diesem Projekt zeigt.
+ */
+export function removeProject(
+  content: WindowContent,
+  arrangement: Arrangement,
+  folder: string,
+): Removal | null {
+  if (content.kind !== "workspace" || !containsProject(content, folder)) return null;
+  const key = folderKey(folder);
+  const projects = content.projects.filter((project) => folderKey(project) !== key);
+  const belongs = (tab: Tab) => {
+    const owner = projectOfTab(content.projects, tab);
+    return owner !== null && folderKey(owner) === key;
+  };
+  const closing = tabsOf(arrangement).filter((tab) => projects.length === 0 || belongs(tab));
+  return {
+    content: { ...content, projects },
+    arrangement: closing.reduce((current, tab) => closeTab(current, tab.id), arrangement),
+    closing,
+  };
+}
+
+/**
+ * Die gespeicherte Aufteilung des Projekts `folder` mit den Agenten unter
+ * `closing`, die ein Gespräch haben: So setzen sie es fort, wenn das Projekt
+ * wieder allein geöffnet wird. Kennt die Aufteilung ein Gespräch schon, etwa
+ * weil aus diesem Projekt der Workspace entstand, rückt es an jener Stelle
+ * auf den neuen Stand; jedes Gespräch steht nur einmal darin (ADR 0004).
+ */
+export function keepConversations(
+  stored: Arrangement,
+  closing: readonly Tab[],
+  folder: string,
+): Arrangement {
+  const known = new Map(
+    tabsOf(stored).flatMap((tab) => (tab.conversation ? [[tab.conversation.id, tab.id]] : [])),
+  );
+  let kept = stored;
+  const added: Tab[] = [];
+  for (const tab of closing) {
+    if (!tab.conversation) continue;
+    const existing = known.get(tab.conversation.id);
+    if (existing !== undefined) {
+      kept = recordConversation(kept, existing, tab.conversation);
+      continue;
+    }
+    const { cwd, ...rest } = tab;
+    // Im Projektordner startet ein Terminal ohnehin.
+    added.push(cwd === undefined || folderKey(cwd) === folderKey(folder) ? rest : tab);
+  }
+  return addGroupBeside(kept, added);
+}
+
+/**
+ * Ob das Schließen dieser Tabs einen Agenten unterbräche, der arbeitet oder
+ * auf Eingabe wartet; dann fragt Kredr vorher nach. Ein fertiger Agent
+ * verliert nichts.
+ */
+export function removalInterrupts(closing: readonly Tab[], statuses: Statuses): boolean {
+  return closing.some((tab) => {
+    const state = statuses.get(tab.id)?.state;
+    return state === "working" || state === "waiting";
+  });
 }

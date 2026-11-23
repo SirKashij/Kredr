@@ -79,6 +79,8 @@ interface SidebarProps extends AgentsViewProps {
   content: WindowContent;
   /** Fügt dem Fenster ein weiteres Projekt hinzu. */
   onAddProject: () => void;
+  /** Nimmt das Projekt mit diesem Ordner aus dem Workspace. */
+  onRemoveProject: (folder: string) => void;
   /** Öffnet ein Terminal in diesem Ordner, mit `agent` samt einem Agenten. */
   onOpenTerminalIn: (folder: string, agent: boolean) => void;
   /** Die Datei des sichtbaren Tabs der fokussierten Gruppe. */
@@ -99,6 +101,7 @@ export function Sidebar({
   project,
   content,
   onAddProject,
+  onRemoveProject,
   onOpenTerminalIn,
   activeFile,
   onOpenFile,
@@ -145,6 +148,7 @@ export function Sidebar({
           projects={projectsOf(content)}
           workspace={content.kind === "workspace" ? content.name : null}
           onAddProject={onAddProject}
+          onRemoveProject={onRemoveProject}
           hidden={!showsExplorer}
           onOpenTerminalIn={onOpenTerminalIn}
           activeFile={activeFile}

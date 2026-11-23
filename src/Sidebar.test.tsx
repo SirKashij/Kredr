@@ -67,6 +67,7 @@ describe("Agenten-Ansicht mit Subagenten", () => {
             project={null}
             content={startPage}
             onAddProject={() => {}}
+            onRemoveProject={() => {}}
             onOpenTerminalIn={() => {}}
             activeFile={null}
             onOpenFile={() => {}}

@@ -68,6 +68,8 @@ interface ExplorerProps {
   workspace: string | null;
   /** Fügt dem Fenster ein weiteres Projekt hinzu. */
   onAddProject: () => void;
+  /** Nimmt das Projekt mit diesem Ordner aus dem Workspace. */
+  onRemoveProject: (folder: string) => void;
   hidden: boolean;
   /** Öffnet ein Terminal im Ordner mit diesem vollen Pfad, mit `agent` samt einem Agenten. */
   onOpenTerminalIn: (folder: string, agent: boolean) => void;
@@ -101,6 +103,7 @@ export function Explorer({
   projects,
   workspace,
   onAddProject,
+  onRemoveProject,
   hidden,
   onOpenTerminalIn,
   activeFile,
@@ -403,8 +406,15 @@ export function Explorer({
         onSelect: () => copyText(fullPath(owner, path)).catch((error) => report(error, name)),
       },
     ];
-    // Eine Projektwurzel lässt sich hier weder umbenennen noch löschen.
-    if (!row || isRoot(row)) return items;
+    // Eine Projektwurzel lässt sich hier weder umbenennen noch löschen, aber
+    // aus dem Workspace nehmen.
+    if (row && isRoot(row)) {
+      return [
+        ...items,
+        { label: t("workspace.removeProject"), onSelect: () => onRemoveProject(owner) },
+      ];
+    }
+    if (!row) return items;
     return [
       ...items,
       {
@@ -482,8 +492,16 @@ export function Explorer({
         onKeyDown={onKeyDown}
         onContextMenu={(event) => openMenu(event, null)}
       >
-        {rows.length === 0 && tree.listings.has("") && (
-          <p className="hint">{t("explorer.empty")}</p>
+        {roots && projects.length === 0 ? (
+          <div className="empty-workspace">
+            <p className="hint">{t("workspace.empty")}</p>
+            <button className="btn" onClick={onAddProject}>
+              {t("workspace.addFirstProject")}
+            </button>
+          </div>
+        ) : (
+          rows.length === 0 &&
+          tree.listings.has("") && <p className="hint">{t("explorer.empty")}</p>
         )}
         <div style={{ height: rows.length * ROW_HEIGHT, paddingTop: first * ROW_HEIGHT }}>
           {rows.slice(first, last).map((row) =>

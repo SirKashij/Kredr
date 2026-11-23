@@ -10,5 +10,5 @@ Ein Fenster kann mehrere Projekte als Workspace zeigen. Kredr bewahrt Workspaces
 ## Folgen
 
 - Fügt man ein Projekt hinzu, kommen seine früheren Agenten nicht von selbst zurück. Ihre Gespräche bleiben aber erhalten und lassen sich fortsetzen.
-- Entfernt man ein Projekt aus dem Workspace, schließen seine Tabs und Terminals. Laufen dort Agenten, fragt Kredr vorher nach, wie beim Schließen eines Fensters.
+- Entfernt man ein Projekt aus dem Workspace, schließen seine Tabs und Terminals. Laufen dort Agenten, fragt Kredr vorher nach, wie beim Schließen eines Fensters. Die Gespräche seiner Agenten wandern in die eigene Aufteilung des Projekts, jedes nur einmal. Öffnet man das Projekt danach allein, gehen sie dort weiter. Sie gehören dann zu genau einer Aufteilung, und nichts wird doppelt fortgesetzt.
 - Workspaces wandern nicht mit dem Repository auf andere Rechner.

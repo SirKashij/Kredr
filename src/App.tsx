@@ -21,6 +21,7 @@ import {
   openContent,
   openTab,
   openTabIn,
+  restoreArrangement,
   showsFile,
   showVersionControl,
   splitGroup,
@@ -59,7 +60,16 @@ import type { ChangedFile } from "./versionControlState";
 import { BranchStatus } from "./VersionControlView";
 import { alertBody } from "./waitingAlerts";
 import { WindowAgents } from "./windowAgents";
-import { addProject, firstProject, projectsOf, startPage, type WindowContent } from "./workspace";
+import {
+  addProject,
+  firstProject,
+  keepConversations,
+  projectsOf,
+  removalInterrupts,
+  removeProject,
+  startPage,
+  type WindowContent,
+} from "./workspace";
 import { Notice, type NoticeContent } from "./Notice";
 
 /** Was der Kern auf „Projekt hinzufügen“ antwortet. */
@@ -95,6 +105,8 @@ export function App() {
   const [arrangement, setArrangement] = useState(emptyArrangement);
   /** Ob die gespeicherte Aufteilung des Projekts geladen ist; erst dann wird gezeigt und gespeichert. */
   const [restored, setRestored] = useState(false);
+  /** Das Projekt oder der Workspace, dessen gespeicherte Aufteilung geladen ist. */
+  const loadedFor = useRef<string | null>(null);
   const [saver] = useState(() => new ArrangementSaver());
   /** Steigt mit jeder Bedienung der Aufteilung; danach erhält das Terminal wieder den Fokus. */
   const [focusRequest, setFocusRequest] = useState(0);
@@ -111,9 +123,9 @@ export function App() {
         openFile: (target) => openFileRequest.current(target),
       }),
   );
-  /** Die Aufteilung und die Einstellungen für die Rückfrage beim Schließen. */
-  const latest = useRef({ arrangement, settings });
-  latest.current = { arrangement, settings };
+  /** Aufteilung, Einstellungen und Fensterinhalt für Rückfragen, die auf eine Antwort warten. */
+  const latest = useRef({ arrangement, settings, content });
+  latest.current = { arrangement, settings, content };
   const [agents] = useState(
     () =>
       new WindowAgents({
@@ -178,9 +190,16 @@ export function App() {
   // Ein Projekt öffnet sich mit seiner gespeicherten Aufteilung; ohne sie
   // beginnt es mit einem Terminal. Gemerkte Agenten starten sofort und
   // gleichzeitig, auch in verdeckten Tabs, und setzen ihr Gespräch fort.
+  // Geladen wird einmal je Projekt bzw. Workspace: Ein Workspace, der aus
+  // dem Projektfenster entsteht, übernimmt die laufende Aufteilung, und wird
+  // sein erstes Projekt entfernt, lädt er nichts neu.
+  const arrangementOwner = content.kind === "workspace" ? content.id : project;
+  const hasProject = project !== null;
   useEffect(() => {
-    if (!project) return;
+    if (!project || loadedFor.current === arrangementOwner) return;
+    loadedFor.current = arrangementOwner;
     let stale = false;
+    let done = false;
     const { resumeAgents } = latest.current.settings;
     loadArrangement(project, { resumeAgents }).then((stored) => {
       if (stale) return;
@@ -191,11 +210,14 @@ export function App() {
       );
       if (used) agents.resumeAll(stored, project);
       setRestored(true);
+      done = true;
     });
     return () => {
       stale = true;
+      // Ein abgebrochenes Laden zählt nicht; der nächste Lauf lädt erneut.
+      if (!done) loadedFor.current = null;
     };
-  }, [project]);
+  }, [arrangementOwner, hasProject]);
 
   // Die Aufteilung wird laufend gespeichert, mit ihr Größe und Position des Fensters.
   useEffect(() => {
@@ -554,8 +576,10 @@ export function App() {
         return setNotice({ text: t("workspace.openElsewhere", { project: added }) });
       }
       const becameWorkspace = content.kind === "project";
-      setContent(outcome.content);
       const next = outcome.content;
+      // Der neue Workspace übernimmt die laufende Aufteilung, statt seine zu laden.
+      if (becameWorkspace && next.kind === "workspace") loadedFor.current = next.id;
+      setContent(next);
       if (becameWorkspace && next.kind === "workspace") {
         const from = projectName(content.path);
         setNotice({
@@ -577,6 +601,64 @@ export function App() {
     }
   }
 
+  /**
+   * „Projekt aus Workspace entfernen“: Terminals und Tabs des Projekts
+   * schließen, seine Beobachter enden. Gingen dabei ungespeicherte Änderungen
+   * verloren oder würde ein arbeitender oder wartender Agent unterbrochen,
+   * fragt Kredr vorher. Die Gespräche seiner Agenten kommen in die eigene
+   * Aufteilung des Projekts und gehen beim nächsten Öffnen dort weiter.
+   */
+  async function removeProjectFromWindow(folder: string) {
+    const name = projectName(folder);
+    const removal = removeProject(content, latest.current.arrangement, folder);
+    if (!removal) return;
+    const dirty = removal.closing.some(
+      (tab) => showsFile(tab.content) && files.find(tab.content.path)?.state.dirty,
+    );
+    const ask = (message: MessageKey, title: MessageKey) =>
+      confirm(t(message, { project: name }), {
+        title: t(title),
+        kind: "warning",
+        okLabel: t("workspace.removeConfirm.ok"),
+        cancelLabel: t("dialog.cancel"),
+      });
+    if (dirty && !(await ask("workspace.removeUnsaved.message", "file.closeConfirm.title"))) {
+      return refocusTerminal();
+    }
+    if (
+      removalInterrupts(removal.closing, statuses.snapshot()) &&
+      !(await ask("workspace.removeConfirm.message", "workspace.removeConfirm.title"))
+    ) {
+      return refocusTerminal();
+    }
+    // Während der Rückfragen können sich Fensterinhalt und Aufteilung geändert haben.
+    const before = latest.current.content;
+    const confirmed = removeProject(before, latest.current.arrangement, folder);
+    if (!confirmed) return;
+    try {
+      const raw = await invoke<unknown>("project_arrangement_load", { project: folder });
+      const stored = restoreArrangement(raw, undefined, { resumeAgents: true });
+      const withConversations = keepConversations(stored, confirmed.closing, folder);
+      if (withConversations !== stored) {
+        await invoke("project_arrangement_save", {
+          project: folder,
+          arrangement: withConversations,
+        });
+      }
+      // Was noch aussteht, darf den Workspace ohne das Projekt nicht überschreiben.
+      await saver.flush();
+      const next = await invoke<WindowContent>("remove_project", {
+        project: folder,
+        arrangement: confirmed.arrangement,
+      });
+      setContent(next);
+      setArrangement((current) => removeProject(before, current, folder)?.arrangement ?? current);
+      setNotice({ text: t("workspace.removed", { project: name }) });
+    } catch (reason) {
+      setNotice({ text: t("workspace.removeFailed", { project: name, details: String(reason) }) });
+    }
+  }
+
   return (
     <VersionControlProvider store={versionControl}>
       <div className="workbench">
@@ -593,6 +675,7 @@ export function App() {
           project={project}
           content={content}
           onAddProject={addProjectToWindow}
+          onRemoveProject={removeProjectFromWindow}
           arrangement={arrangement}
           activeFile={activeFile}
           onOpenFile={(path, preview) => openFile({ path, preview })}
@@ -608,7 +691,14 @@ export function App() {
           }
         />
         <main className="main">
-          {!project ? (
+          {content.kind === "workspace" && !project ? (
+            <div className="empty-main">
+              <p>{t("workspace.empty")}</p>
+              <button className="btn" onClick={addProjectToWindow}>
+                {t("workspace.addFirstProject")}
+              </button>
+            </div>
+          ) : !project ? (
             <StartPage
               onOpen={openProject}
               onOpenWorkspace={openWorkspace}
