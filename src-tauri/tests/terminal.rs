@@ -6,6 +6,7 @@ use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
 use kredr_lib::agent::shell_start_command;
+use kredr_lib::agent_status::TerminalHooks;
 use kredr_lib::terminal::{
     available_shells, startable_shell, Shell, Terminal, TerminalEvent, TerminalOptions,
 };
@@ -350,8 +351,12 @@ fn terminal_settings() -> PathBuf {
 /// Öffnet eine PowerShell, wie Kredr sie startet. `profile` läuft vorher,
 /// so wie das Profil der Person.
 fn open_powershell(name: &str, profile: &str, agent_command: Option<&str>) -> TestTerminal {
-    let settings = terminal_settings();
-    let start = shell_start_command(Shell::Powershell, Some(&settings), agent_command)
+    // Ohne Empfänger: Die Meldung der Rückkehr von `claude` geht ins Leere.
+    let hooks = TerminalHooks {
+        settings: terminal_settings(),
+        exited_url: "http://127.0.0.1:9/hook/7/kennwort/exited".to_owned(),
+    };
+    let start = shell_start_command(Shell::Powershell, Some(&hooks), agent_command)
         .expect("Mit Konfigurationsdatei sollte es einen Startbefehl geben");
     let start = format!("{profile}; {start}");
     TestTerminal::open_with(temp_project(name), Shell::Powershell, Some(&start))

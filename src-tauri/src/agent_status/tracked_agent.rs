@@ -164,6 +164,9 @@ pub struct TrackedAgent {
     conversation: Option<String>,
     /// Die Sitzung, die zuletzt endete: die Kennung ihres Gesprächs und wann.
     ended: Option<(String, Instant)>,
+    /// Ob das Ende der Sitzung schon gemeldet ist und seither nichts kam.
+    /// Dann ändert die Rückkehr von `claude` nichts mehr.
+    end_reported: bool,
 }
 
 /// Eine Rückfrage an die Person.
@@ -203,19 +206,44 @@ impl TrackedAgent {
                     .map(|id| (id.to_owned(), Instant::now()));
                 // Außer beim Leeren oder Wechseln des Gesprächs ist die
                 // Sitzung vorbei, auch wenn sich das Gespräch nicht fortsetzen
-                // ließ. Das wird immer gemeldet, auch ohne sichtbare Änderung
-                // des Status: Erst damit wird der Tab wieder ein gewöhnliches
-                // Terminal.
+                // ließ.
                 let reason = event["reason"].as_str().unwrap_or_default();
                 if !CONVERSATION_CHANGES.contains(&reason) {
-                    let next = self.forgotten();
-                    return Some(self.report(next, true));
+                    return Some(self.end_session());
                 }
             }
             _ => {}
         }
-        let next = self.next(event);
+        let mut next = self.next(event);
+        next.end_reported = false;
         self.apply(next)
+    }
+
+    /// Das Programm `claude` ist im Terminal zurückgekehrt, so meldet es die
+    /// Shell-Funktion (ADR 0006). Hat Claude Code sein Ende nicht selbst mit
+    /// `SessionEnd` gemeldet, etwa nach einem Absturz oder hartem Beenden,
+    /// endet die Sitzung jetzt. Sonst liefert es `None`: Der Tab ist dann
+    /// schon ein gewöhnliches Terminal.
+    pub fn claude_exited(&mut self) -> Option<StatusUpdate> {
+        if self.end_reported {
+            return None;
+        }
+        // Das `SessionStart` dieser Sitzung kann noch unterwegs sein.
+        if let Some(conversation) = &self.conversation {
+            self.ended = Some((conversation.clone(), Instant::now()));
+        }
+        Some(self.end_session())
+    }
+
+    /// Die Sitzung ist vorbei. Das wird immer gemeldet, auch ohne sichtbare
+    /// Änderung des Status: Erst damit wird der Tab wieder ein gewöhnliches
+    /// Terminal.
+    fn end_session(&mut self) -> StatusUpdate {
+        let next = TrackedAgent {
+            end_reported: true,
+            ..self.forgotten()
+        };
+        self.report(next, true)
     }
 
     /// Ob `event`, ein `SessionStart`, zu der Sitzung gehört, die gerade

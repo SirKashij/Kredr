@@ -14,10 +14,10 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
-use kredr_lib::agent::with_status_settings;
+use kredr_lib::agent::{shell_start_command, with_status_settings};
 use kredr_lib::agent_status::{
     remove_orphaned_runtime_folders, runtime_folder_of, AgentState, AgentStatus, BackgroundTask,
-    Resumed, StatusUpdate, SubagentState, TrackedAgent,
+    Resumed, StatusUpdate, SubagentState, TerminalHooks, TrackedAgent,
 };
 use kredr_lib::terminal::{
     available_shells, git_bash, Shell, Terminal, TerminalEvent, TerminalOptions,
@@ -79,6 +79,12 @@ impl TestAgent {
             .tracked
             .borrow_mut()
             .on_event(&hook_event(event, fields));
+        self.updates.borrow_mut().extend(update);
+    }
+
+    /// Das Programm `claude` ist zurückgekehrt; so meldet es die Shell-Funktion.
+    fn claude_exited(&self) {
+        let update = self.tracked.borrow_mut().claude_exited();
         self.updates.borrow_mut().extend(update);
     }
 
@@ -1345,6 +1351,96 @@ fn laesst_sich_das_gespraech_nicht_fortsetzen_ist_die_sitzung_beendet() {
     assert_eq!(update.assignment, None);
 }
 
+// Kehrt das Programm `claude` zurück, meldet die Shell-Funktion das Ende
+// selbst, auch nach einem Absturz ohne `SessionEnd` (ADR 0006).
+
+#[test]
+fn kehrt_claude_ohne_sessionend_zurueck_ist_die_sitzung_beendet() {
+    for agent in [TestAgent::start(), resumed()] {
+        agent.report(
+            "UserPromptSubmit",
+            json!({ "session_id": "laufend", "prompt": "Los" }),
+        );
+        agent.next();
+
+        agent.claude_exited();
+
+        let update = agent.next();
+        assert!(update.session_ended);
+        assert_eq!(update.state, AgentState::Unknown);
+        assert_eq!(update.conversation, None);
+        assert_eq!(update.assignment, None);
+    }
+}
+
+#[test]
+fn kehrt_claude_vor_jeder_meldung_zurueck_ist_die_sitzung_beendet() {
+    // Etwa ein Absturz gleich beim Start eines Agenten, den Kredr gestartet
+    // hat: Nur diese Meldung macht den Tab wieder zum Terminal.
+    for agent in [TestAgent::start(), resumed()] {
+        agent.claude_exited();
+
+        assert!(agent.next().session_ended);
+    }
+}
+
+#[test]
+fn kehrt_claude_nach_sessionend_zurueck_passiert_nichts_weiter() {
+    let agent = TestAgent::start();
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.report("SessionEnd", json!({ "reason": "prompt_input_exit" }));
+    settle(&agent);
+
+    agent.claude_exited();
+
+    agent.expect_silence();
+}
+
+#[test]
+fn kehrt_claude_zweimal_zurueck_endet_die_sitzung_nur_einmal() {
+    let agent = TestAgent::start();
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.claude_exited();
+    settle(&agent);
+
+    agent.claude_exited();
+
+    agent.expect_silence();
+}
+
+#[test]
+fn nach_der_rueckkehr_von_claude_entsteht_im_selben_terminal_ein_neuer_agent() {
+    let agent = TestAgent::start();
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.claude_exited();
+    settle(&agent);
+
+    agent.report(
+        "SessionStart",
+        json!({ "session_id": "zweite", "source": "startup" }),
+    );
+    let update = agent.next();
+    assert_eq!(update.state, AgentState::Waiting);
+    assert_eq!(update.conversation.as_deref(), Some("zweite"));
+
+    agent.claude_exited();
+    assert!(agent.next().session_ended);
+}
+
+#[test]
+fn ein_sessionstart_nach_der_rueckkehr_von_claude_erweckt_den_agenten_nicht() {
+    // Stürzt Claude Code gleich nach dem Start ab, kann das `SessionStart`
+    // aus dem Befehls-Hook erst nach der Meldung der Shell-Funktion ankommen.
+    let agent = TestAgent::start();
+    agent.report("UserPromptSubmit", json!({ "prompt": "Los" }));
+    agent.claude_exited();
+    settle(&agent);
+
+    agent.report("SessionStart", json!({ "source": "startup" }));
+
+    agent.expect_silence();
+}
+
 #[test]
 fn nach_dem_ende_entsteht_im_selben_terminal_ein_neuer_agent() {
     let agent = TestAgent::start();
@@ -1729,6 +1825,7 @@ fn sessionend_und_das_ende_des_terminals_raeumen_die_hintergrundaufgaben_weg() {
 /// Ein angemeldetes Terminal aus Sicht des Tests: die Konfiguration, die sein
 /// Agent beim Start mitbekommt, und die Meldungen an seinen Listener.
 struct Registered {
+    hooks: TerminalHooks,
     settings: PathBuf,
     updates: Receiver<StatusUpdate>,
 }
@@ -1736,12 +1833,16 @@ struct Registered {
 impl Registered {
     fn new(status: &AgentStatus, terminal: u32) -> Registered {
         let (sender, updates) = channel();
-        let settings = status
+        let hooks = status
             .register(terminal, None, move |update| {
                 let _ = sender.send(update);
             })
             .expect("Die Konfiguration sollte sich anlegen lassen");
-        Registered { settings, updates }
+        Registered {
+            settings: hooks.settings.clone(),
+            hooks,
+            updates,
+        }
     }
 
     /// Schickt `body` an die Adresse, die in der Konfiguration für `event`
@@ -2289,7 +2390,7 @@ fn der_agent_startet_mit_der_konfiguration_und_das_projekt_bleibt_unberuehrt() {
     .unwrap();
 
     let status = AgentStatus::start(folder.join("laufzeit"), no_task_outputs()).unwrap();
-    let settings = status.register(1, None, |_| {}).unwrap();
+    let settings = status.register(1, None, |_| {}).unwrap().settings;
     let command = with_status_settings(
         programs.join("claude.cmd").to_str().unwrap(),
         &settings,
@@ -2352,7 +2453,7 @@ fn in_git_bash_kommt_die_konfiguration_als_ein_argument_beim_agenten_an() {
         no_task_outputs(),
     )
     .unwrap();
-    let settings = status.register(1, None, |_| {}).unwrap();
+    let settings = status.register(1, None, |_| {}).unwrap().settings;
     let program = programs.join("claude").to_str().unwrap().replace('\\', "/");
     let command = with_status_settings(
         &format!("{program} --model opus"),
@@ -2390,4 +2491,162 @@ fn in_git_bash_kommt_die_konfiguration_als_ein_argument_beim_agenten_an() {
         passed.lines().collect::<Vec<_>>(),
         ["--settings", settings.as_str(), "--model", "opus"]
     );
+}
+
+// Das Ende über die Shell-Funktion: eine echte PowerShell, wie Kredr sie
+// startet, mit einem Test-Ersatz für `claude`, der kein `SessionEnd` meldet.
+
+/// Eine PowerShell, wie Kredr sie für ein angemeldetes Terminal startet; im
+/// Suchpfad steht zuerst ein Test-Ersatz `claude.cmd`, der `script` ausführt.
+struct ShellWithClaude {
+    terminal: Terminal,
+    events: Receiver<TerminalEvent>,
+    registered: Registered,
+    /// Der Ordner des Test-Ersatzes.
+    programs: PathBuf,
+    _status: AgentStatus,
+}
+
+impl ShellWithClaude {
+    fn open(name: &str, script: &str, agent_command: Option<&str>) -> ShellWithClaude {
+        let folder = runtime_folder(name);
+        let programs = folder.join("programme");
+        std::fs::create_dir_all(&programs).unwrap();
+        std::fs::write(
+            programs.join("claude.cmd"),
+            format!("@echo off\r\n{script}\r\n"),
+        )
+        .unwrap();
+        let status = AgentStatus::start(folder.join("laufzeit"), no_task_outputs()).unwrap();
+        let registered = Registered::new(&status, 1);
+        let start = shell_start_command(Shell::Powershell, Some(&registered.hooks), agent_command)
+            .expect("Mit Konfigurationsdatei sollte es einen Startbefehl geben");
+        let profile = format!("$env:Path = '{};' + $env:Path", programs.display());
+        let (sender, events) = channel();
+        let options = TerminalOptions {
+            shell: Shell::Powershell,
+            cwd: folder,
+            cols: 200,
+            rows: 30,
+            start_command: Some(format!("{profile}; {start}")),
+        };
+        let terminal = Terminal::open(options, move |event| {
+            let _ = sender.send(event);
+        })
+        .expect("PowerShell sollte starten");
+        ShellWithClaude {
+            terminal,
+            events,
+            registered,
+            programs,
+            _status: status,
+        }
+    }
+
+    fn send_line(&self, line: &str) {
+        self.terminal.write(format!("{line}\r").as_bytes()).unwrap();
+    }
+
+    /// Bedient das Terminal, bis `condition` gilt.
+    fn wait_until(&self, expectation: &str, mut condition: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !condition() {
+            assert!(Instant::now() < deadline, "{expectation}");
+            // ConPTY wartet beim Start auf die Antwort auf seine Cursorabfrage.
+            if let Ok(TerminalEvent::Output(bytes)) =
+                self.events.recv_timeout(Duration::from_millis(50))
+            {
+                if String::from_utf8_lossy(&bytes).contains("\x1b[6n") {
+                    self.terminal.write(b"\x1b[1;1R").unwrap();
+                }
+            }
+        }
+    }
+
+    /// Wartet auf die nächste Statusmeldung des Terminals.
+    fn next_update(&self) -> StatusUpdate {
+        let mut update = None;
+        self.wait_until("Es kam keine Statusmeldung", || {
+            update = self.registered.updates.try_recv().ok();
+            update.is_some()
+        });
+        update.unwrap()
+    }
+}
+
+#[test]
+fn kehrt_claude_im_terminal_zurueck_kommt_das_ende_der_sitzung_an() {
+    for (case, script) in [("regulaer", "echo gelaufen"), ("fehler", "exit /b 3")] {
+        let shell = ShellWithClaude::open(&format!("rueckkehr-{case}"), script, None);
+
+        shell.send_line("claude --model x");
+
+        assert!(shell.next_update().session_ended, "{case}");
+    }
+}
+
+#[test]
+fn wird_claude_hart_beendet_kommt_das_ende_der_sitzung_an() {
+    // Der Test-Ersatz schreibt die Kennung seines Prozesses auf und wartet;
+    // der Test beendet ihn wie der Task-Manager.
+    let script = "powershell -NoProfile -Command \
+                  \"(Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID)).ParentProcessId\" \
+                  > \"%~dp0pid.txt\"\r\nping -n 60 127.0.0.1 > nul";
+    let shell = ShellWithClaude::open("hart-beendet", script, None);
+    shell.send_line("claude");
+    let pid_file = shell.programs.join("pid.txt");
+    let mut pid = String::new();
+    shell.wait_until("claude wurde nie gestartet", || {
+        pid = std::fs::read_to_string(&pid_file).unwrap_or_default();
+        pid.trim().parse::<u32>().is_ok()
+    });
+
+    let killed = std::process::Command::new("taskkill")
+        .args(["/F", "/T", "/PID", pid.trim()])
+        .output()
+        .unwrap();
+    assert!(killed.status.success(), "{killed:?}");
+
+    assert!(shell.next_update().session_ended);
+}
+
+#[test]
+fn ein_agent_von_kredr_meldet_sein_ende_auch_beim_fortsetzen() {
+    let shell = ShellWithClaude::open(
+        "agent-von-kredr",
+        "exit /b 1",
+        Some("claude --resume abc-123"),
+    );
+
+    assert!(shell.next_update().session_ended);
+}
+
+#[test]
+fn ein_agent_mit_pfad_im_startbefehl_meldet_sein_ende() {
+    let name = "agent-mit-pfad";
+    let program = runtime_folder(name).join("programme").join("claude.cmd");
+    let command = format!("{} --model x", program.display());
+    let shell = ShellWithClaude::open(name, "exit /b 1", Some(&command));
+
+    assert!(shell.next_update().session_ended);
+}
+
+#[test]
+fn aufrufe_von_claude_ohne_sitzung_melden_kein_ende() {
+    let shell = ShellWithClaude::open(
+        "ohne-sitzung-kein-ende",
+        "echo %* > \"%~dp0args.txt\"",
+        None,
+    );
+    let args = shell.programs.join("args.txt");
+
+    shell.send_line("claude --version; claude mcp list");
+    shell.wait_until("claude wurde nie aufgerufen", || {
+        std::fs::read_to_string(&args).is_ok_and(|text| text.contains("mcp list"))
+    });
+    // Die Meldung wäre spätestens zusammen mit dem nächsten Befehl da.
+    shell.send_line("claude --version");
+    std::thread::sleep(Duration::from_secs(2));
+
+    shell.registered.expect_silence();
 }

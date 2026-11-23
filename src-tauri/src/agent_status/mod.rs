@@ -7,7 +7,9 @@
 //! startet (ADR 0006), und meldet dann Ereignisse per HTTP-Hook
 //! an einen Empfänger auf dem eigenen Rechner. `SessionStart` meldet Claude
 //! Code nur Befehls-Hooks; ein kurzer PowerShell-Aufruf reicht es an
-//! dieselbe Adresse weiter. Die Adresse in der Datei
+//! dieselbe Adresse weiter. Dass das Programm `claude` zurückgekehrt ist,
+//! meldet die Shell-Funktion an eine eigene Adresse daneben; so kommt das
+//! Ende auch ohne `SessionEnd` an. Die Adresse in der Datei
 //! enthält die Terminal-Kennung und ein Kennwort; darüber findet jede Meldung
 //! ihr Terminal. Einstellungen von Claude Code selbst werden weder gelesen
 //! noch geschrieben.
@@ -121,6 +123,19 @@ fn is_running(pid: u32) -> bool {
     }
 }
 
+/// Worüber sich der Agent eines angemeldeten Terminals meldet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalHooks {
+    /// Die Konfigurationsdatei, die Claude Code beim Start mitbekommt.
+    pub settings: PathBuf,
+    /// Die Adresse, an die die Shell-Funktion `claude` per POST meldet, dass
+    /// das Programm zurückgekehrt ist (ADR 0006). Der Inhalt zählt nicht.
+    pub exited_url: String,
+}
+
+/// Der letzte Teil der Adresse, über die die Rückkehr von `claude` kommt.
+const EXITED: &str = "exited";
+
 type Listener = Box<dyn Fn(StatusUpdate) + Send>;
 
 struct Registration {
@@ -194,18 +209,18 @@ impl AgentStatus {
         })
     }
 
-    /// Meldet das Terminal an, in dem ein Agent starten kann, und liefert
-    /// die Konfigurationsdatei, die der Agent beim Start mitbekommt.
-    /// `on_update` erhält danach jede Änderung des Agentenstatus dieses
-    /// Terminals, der Reihe nach aus einem Hintergrund-Thread, bevor der
-    /// Empfänger die Meldung beantwortet. Setzt der Agent ein Gespräch fort
-    /// (`resumed`), gelten dessen Kennung und Auftrag von Anfang an.
+    /// Meldet das Terminal an, in dem ein Agent starten kann, und liefert,
+    /// worüber sein Agent sich meldet. `on_update` erhält danach jede
+    /// Änderung des Agentenstatus dieses Terminals, der Reihe nach aus einem
+    /// Hintergrund-Thread, bevor der Empfänger die Meldung beantwortet. Setzt
+    /// der Agent ein Gespräch fort (`resumed`), gelten dessen Kennung und
+    /// Auftrag von Anfang an.
     pub fn register(
         &self,
         terminal: u32,
         resumed: Option<Resumed>,
         on_update: impl Fn(StatusUpdate) + Send + 'static,
-    ) -> io::Result<PathBuf> {
+    ) -> io::Result<TerminalHooks> {
         let token = random_token();
         let url = format!("http://127.0.0.1:{}/hook/{terminal}/{token}", self.port);
         let settings = self.dir.join(format!("terminal-{terminal}.json"));
@@ -220,7 +235,10 @@ impl AgentStatus {
             .lock()
             .map_err(|e| io::Error::other(e.to_string()))?
             .insert(terminal, registration);
-        Ok(settings)
+        Ok(TerminalHooks {
+            settings,
+            exited_url: format!("{url}/{EXITED}"),
+        })
     }
 
     /// Meldet das Terminal ab, weil es geschlossen wurde oder seine Shell
@@ -255,10 +273,19 @@ impl Drop for AgentStatus {
 /// Terminal gehört; ihr Inhalt darf unlesbar sein und wird dann verworfen.
 fn receive(registrations: &Registrations, url: &str, body: Option<&String>) -> bool {
     let mut parts = url.trim_start_matches('/').split('/');
-    let (Some("hook"), Some(terminal), Some(token), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
+    let (Some("hook"), Some(terminal), Some(token), kind, None) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
         return false;
+    };
+    let exited = match kind {
+        None => false,
+        Some(EXITED) => true,
+        Some(_) => return false,
     };
     let Ok(terminal) = terminal.parse::<u32>() else {
         return false;
@@ -272,7 +299,10 @@ fn receive(registrations: &Registrations, url: &str, body: Option<&String>) -> b
     if registration.token != token {
         return false;
     }
-    if let Some(event) = body.and_then(|body| serde_json::from_str::<Value>(body).ok()) {
+    if exited {
+        let update = registration.agent.claude_exited();
+        registration.tell(update);
+    } else if let Some(event) = body.and_then(|body| serde_json::from_str::<Value>(body).ok()) {
         let update = registration.agent.on_event(&event);
         registration.tell(update);
     }

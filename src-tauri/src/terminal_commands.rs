@@ -117,7 +117,7 @@ pub(crate) fn terminal_open(
     // `claude` erst von Hand startet. Lässt sie sich nicht anlegen, startet
     // das Terminal ohne.
     let status = agent_status.inner().clone();
-    let settings_file = status.as_ref().and_then(|status| {
+    let hooks = status.as_ref().and_then(|status| {
         status
             .register(id, resume, move |update| {
                 // Hier beginnt jede Reaktion des Kerns auf einen Statuswechsel.
@@ -125,8 +125,7 @@ pub(crate) fn terminal_open(
             })
             .ok()
     });
-    let start_command =
-        agent::shell_start_command(shell, settings_file.as_deref(), agent_command.as_deref());
+    let start_command = agent::shell_start_command(shell, hooks.as_ref(), agent_command.as_deref());
     let options = TerminalOptions {
         shell,
         cwd,

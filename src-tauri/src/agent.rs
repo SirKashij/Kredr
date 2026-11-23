@@ -6,6 +6,7 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
+use crate::agent_status::TerminalHooks;
 use crate::paths;
 use crate::terminal::Shell;
 
@@ -56,37 +57,55 @@ pub fn with_status_settings(command: &str, settings: &Path, shell: Shell) -> Str
 }
 
 /// Der Befehl, mit dem die Shell eines Terminals startet; `None`, wenn sie
-/// ohne Befehl startet. `settings` ist die Konfigurationsdatei des Terminals
-/// für den Agentenstatus, `agent_command` der Startbefehl seines Agenten.
+/// ohne Befehl startet. `hooks` sagt, worüber der Agent des Terminals seinen
+/// Status meldet, `agent_command` ist der Startbefehl seines Agenten.
 ///
 /// In PowerShell legt der Befehl nach dem Profil der Person eine Funktion
 /// `claude` an. Sie ruft immer das installierte Programm `claude` mit der
 /// Konfigurationsdatei auf, so dass auch ein von Hand gestartetes `claude`
-/// seinen Agentenstatus meldet (ADR 0006). Ein Alias oder eine Funktion
+/// seinen Agentenstatus meldet (ADR 0006). Kehrt das Programm zurück, meldet
+/// sie das, auch nach einem Absturz oder Strg+C. Ein Alias oder eine Funktion
 /// `claude` aus dem Profil ist dann wirkungslos. Ein Agent, den Kredr mit
-/// `claude` startet, läuft über dieselbe Funktion.
+/// `claude` startet, läuft über dieselbe Funktion; ein Startbefehl mit einem
+/// Pfad zu `claude` meldet seine Rückkehr ebenso.
 pub fn shell_start_command(
     shell: Shell,
-    settings: Option<&Path>,
+    hooks: Option<&TerminalHooks>,
     agent_command: Option<&str>,
 ) -> Option<String> {
-    let Some(settings) = settings else {
+    let Some(hooks) = hooks else {
         return agent_command.map(str::to_owned);
     };
-    let with_settings = |command: &str| with_status_settings(command, settings, shell);
+    let with_settings = |command: &str| with_status_settings(command, &hooks.settings, shell);
     match shell {
         Shell::Powershell => {
-            let function = powershell_claude_function(settings);
+            let function = powershell_claude_function(hooks);
             Some(match agent_command {
                 None => function,
                 Some(command) if calls_claude_function(command) => {
                     format!("{function}; {command}")
                 }
-                Some(command) => format!("{function}; {}", with_settings(command)),
+                Some(command) if claude_program(command).is_some() => format!(
+                    "{function}; try {{ {} }} finally {{ {} }}",
+                    with_settings(command),
+                    powershell_exit_report(&hooks.exited_url)
+                ),
+                Some(command) => format!("{function}; {command}"),
             })
         }
         Shell::GitBash => agent_command.map(with_settings),
     }
+}
+
+/// PowerShell-Befehle, die per POST an `url` melden, dass `claude`
+/// zurückgekehrt ist. Was dabei schiefgeht, bleibt still; ist Kredr fort,
+/// lehnt der Rechner die Verbindung sofort ab.
+fn powershell_exit_report(url: &str) -> String {
+    format!(
+        "try {{ $request = [Net.HttpWebRequest]::Create('{url}'); \
+         $request.Method = 'POST'; $request.Proxy = $null; $request.Timeout = 3000; \
+         $request.ContentLength = 0; $request.GetResponse().Close() }} catch {{}}"
+    )
 }
 
 /// Die PowerShell-Funktion `claude`, die das installierte Programm mit der
@@ -99,9 +118,12 @@ pub fn shell_start_command(
 ///
 /// Aufrufe ohne Sitzung (siehe `SESSIONLESS_OPTIONS` und
 /// `SUBCOMMAND_PATTERN`) bekommen die Konfigurationsdatei nicht, damit sie
-/// das Terminal nicht zum Agenten machen.
-fn powershell_claude_function(settings: &Path) -> String {
-    let settings = quoted(settings, Shell::Powershell);
+/// das Terminal nicht zum Agenten machen. Nach jedem Aufruf mit Sitzung
+/// meldet die Funktion die Rückkehr des Programms an `exited_url`, in
+/// `finally`, damit das auch bei Strg+C geschieht.
+fn powershell_claude_function(hooks: &TerminalHooks) -> String {
+    let settings = quoted(&hooks.settings, Shell::Powershell);
+    let exit_report = powershell_exit_report(&hooks.exited_url);
     let programs_of_kind = |kind: &str| {
         format!("@(Get-Command claude -CommandType {kind} -ErrorAction SilentlyContinue)")
     };
@@ -119,8 +141,9 @@ fn powershell_claude_function(settings: &Path) -> String {
          $sessionless = ($args.Count -gt 0 -and \"$($args[0])\" -cmatch '{SUBCOMMAND_PATTERN}') \
          -or @($args | Where-Object {{ \"$_\" -cin {sessionless_options} }}).Count -gt 0; \
          $settingsArgs = @(); if (-not $sessionless) {{ $settingsArgs = '--settings', {settings} }}; \
-         if ($MyInvocation.ExpectingInput) {{ $input | & $program @settingsArgs @args }} \
-         else {{ & $program @settingsArgs @args }} }}",
+         try {{ if ($MyInvocation.ExpectingInput) {{ $input | & $program @settingsArgs @args }} \
+         else {{ & $program @settingsArgs @args }} }} \
+         finally {{ if (-not $sessionless) {{ {exit_report} }} }} }}",
         programs_of_kind("Application"),
         programs_of_kind("ExternalScript"),
     )
