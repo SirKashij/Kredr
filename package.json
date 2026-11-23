@@ -2,7 +2,7 @@
   "name": "kredr",
   "private": true,
   "version": "0.3.1",
-  "license": "GPL-3.0-only",
+  "license": "UNLICENSED",
   "type": "module",
   "scripts": {
     "dev": "vite",

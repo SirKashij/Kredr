@@ -154,7 +154,7 @@ Code comments, commit messages, issues and the documents in `docs/` are written 
 
 ## Contributing
 
-Bug reports and feature requests are welcome in the [issues](https://github.com/SirKashij/Kredr/issues). For now I don't accept pull requests.
+Bug reports and feature requests are welcome in the [issues](https://github.com/SirKashij/Kredr/issues). For now I don't accept pull requests, as long as Kredr has no license (see [License](#license)).
 
 ## Acknowledgements
 
@@ -166,6 +166,4 @@ Please report vulnerabilities privately, not as public issues. See [SECURITY.md]
 
 ## License
 
-Copyright (C) 2026 Kevin Urmoneit
-
-Kredr is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License, version 3](LICENSE), as published by the Free Software Foundation. It is distributed in the hope that it will be useful, but without any warranty; see the license for details.
+Kredr is currently not released under an open source license; all rights reserved. You may use the published installers and read the source code. Modifying, redistributing or using the code in your own projects is not permitted without permission.
