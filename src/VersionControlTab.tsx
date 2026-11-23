@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { editor } from "monaco-editor/editor/editor.api";
 import { CommitHistory } from "./CommitHistoryView";
 import { summaryOf, type ShownCommitFile } from "./commitHistory";
@@ -299,7 +299,9 @@ export function DiffEditor({
   const [shown, setShown] = useState<editor.IStandaloneDiffEditor | null>(null);
   const initial = useRef({ settings, sideBySide });
   const texts = useRef({ original, modified });
-  texts.current = { original, modified };
+  useLayoutEffect(() => {
+    texts.current = { original, modified };
+  });
 
   // Je Datei zwei Texte in Monaco; die Sprache ergibt sich aus dem Dateinamen.
   // Dieser Effekt steht vor dem, der den Editor erzeugt: Beim Aushängen räumt

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   PAGE_SIZE,
   appendPage,
@@ -131,7 +131,9 @@ function CommitList({
   // Nur die Antwort auf die jüngste Anfrage zählt.
   const request = useRef(0);
   const current = useRef(loaded);
-  current.current = loaded;
+  useLayoutEffect(() => {
+    current.current = loaded;
+  });
 
   const reloading = useRef(0);
 
