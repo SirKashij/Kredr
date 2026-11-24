@@ -1,5 +1,11 @@
 import { expect, test } from "vitest";
-import { AppUpdate, showsNotice, type AppUpdatePort, type AppUpdateState } from "./appUpdate";
+import {
+  AppUpdate,
+  showsIcon,
+  showsNotice,
+  type AppUpdatePort,
+  type AppUpdateState,
+} from "./appUpdate";
 
 const none: AppUpdateState = { phase: "none", version: null, installed: "0.5.0", error: null };
 
@@ -122,4 +128,47 @@ test("ein Angebot zeigt den Hinweis, nach „Später“ verschwindet er", async 
 
   expect(core.calls).toEqual(["later"]);
   expect(showsNotice(update.snapshot())).toBe(false);
+});
+
+test("„Später“ lässt nur das Symbol stehen", async () => {
+  const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
+  const core = fakeCore(offered);
+  const update = new AppUpdate(core.port);
+  await settled();
+  expect(showsIcon(update.snapshot())).toBe(false);
+
+  await update.later();
+  core.announce({ ...offered, phase: "later" });
+
+  expect(showsNotice(update.snapshot())).toBe(false);
+  expect(showsIcon(update.snapshot())).toBe(true);
+});
+
+test("nach einem Neustart kommt dieselbe Version nur als Symbol, eine höhere als Hinweis", async () => {
+  // Der Kern hat sich 0.6.0 gemerkt und meldet sie nach dem Start als „später“.
+  const core = fakeCore(none);
+  const update = new AppUpdate(core.port);
+  await settled();
+
+  core.announce({ ...none, phase: "later", version: "0.6.0" });
+  expect(showsNotice(update.snapshot())).toBe(false);
+  expect(showsIcon(update.snapshot())).toBe(true);
+
+  core.announce({ ...none, phase: "offered", version: "0.7.0" });
+  expect(showsNotice(update.snapshot())).toBe(true);
+  expect(showsIcon(update.snapshot())).toBe(false);
+});
+
+test("aus dem Menü des Symbols lässt sich aktualisieren und die Neuerungen öffnen", async () => {
+  const core = fakeCore({ ...none, phase: "later", version: "0.6.0" });
+  const update = new AppUpdate(core.port);
+  await settled();
+
+  update.showReleaseNotes();
+  await update.updateNow();
+
+  expect(core.calls).toEqual([
+    "open https://github.com/SirKashij/Kredr/releases/tag/v0.6.0",
+    "install",
+  ]);
 });

@@ -316,5 +316,9 @@
   "appUpdate.downloading": "Lade Kredr {version} …",
   "appUpdate.installing": "Installiere Kredr {version}, Kredr startet gleich neu …",
   "appUpdate.failed": "Die Aktualisierung auf Kredr {version} ist fehlgeschlagen.",
-  "appUpdate.retry": "Erneut versuchen"
+  "appUpdate.retry": "Erneut versuchen",
+  "appUpdate.menuTitle": "Kredr {version} ist verfügbar",
+  "appUpdate.menuInstalled": "Installiert: {version}",
+  "appUpdate.menuUpdate": "Jetzt aktualisieren und neu starten",
+  "appUpdate.menuNews": "Neuerungen ansehen"
 }

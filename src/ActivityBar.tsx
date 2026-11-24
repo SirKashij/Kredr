@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { AgentStatuses } from "./agentStatus";
 import { WaitingBadge } from "./AgentStatusViews";
+import { AppUpdateButton } from "./AppUpdateNotice";
 import { useT, type MessageKey } from "./i18n/i18n";
 import { ChangesBadge } from "./VersionControlView";
 
@@ -87,6 +88,7 @@ export function ActivityBar({
         </button>
       ))}
       <div className="spacer" />
+      <AppUpdateButton />
       <button
         className={settingsOpen ? "on" : ""}
         title={t("activity.settingsTooltip")}

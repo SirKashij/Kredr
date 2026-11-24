@@ -1328,6 +1328,19 @@ button {
   color: #fff;
 }
 
+/* Die Kopfzeile eines Menüs, etwa beim Symbol der Aktualisierung. */
+.menu-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 24px 4px;
+}
+
+.menu-header .dim {
+  color: var(--dim);
+  font-size: 12px;
+}
+
 .menu-separator {
   height: 1px;
   margin: 4px 0;
@@ -1916,6 +1929,22 @@ button {
 .actbar .badge.changes {
   background: var(--accent);
   color: #fff;
+}
+
+/* Das Symbol der Aktualisierung über dem Zahnrad: hell, mit Punkt im Akzentblau. */
+.actbar button.app-update {
+  color: var(--text);
+}
+
+.actbar .badge.dot {
+  background: var(--accent);
+  min-width: 8px;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  right: 10px;
+  top: 10px;
+  bottom: auto;
 }
 
 /* Der aktuelle Branch am linken Rand der Statusleiste. */

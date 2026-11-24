@@ -50,6 +50,14 @@ export function showsNotice(state: AppUpdateState): boolean {
   return state.phase !== "none" && state.phase !== "later";
 }
 
+/**
+ * Ob über dem Zahnrad der Aktivitätsleiste das Symbol der Aktualisierung
+ * steht: nach „Später“ und nach einem Fehlschlag, bis aktualisiert ist.
+ */
+export function showsIcon(state: AppUpdateState): boolean {
+  return (state.phase === "later" || state.phase === "failed") && state.version !== null;
+}
+
 /** Aus diesen Phasen heraus lässt sich die Aktualisierung anstoßen. */
 const CAN_START = new Set<Phase>(["offered", "later", "failed"]);
 

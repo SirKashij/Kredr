@@ -1,7 +1,50 @@
-use kredr_lib::app_update::{AppUpdateState, Phase};
+use std::path::Path;
+
+use kredr_lib::app_update::{load_declined, save_declined, AppUpdateState, Phase};
 
 fn state() -> AppUpdateState {
-    AppUpdateState::new("0.5.0")
+    AppUpdateState::new("0.5.0", None)
+}
+
+/// Was Kredr beim Start aus `dir`, dem Benutzerdatenverzeichnis, über die
+/// abgelehnte Version weiß.
+fn started_from(dir: &Path) -> AppUpdateState {
+    AppUpdateState::new("0.5.0", load_declined(dir))
+}
+
+#[test]
+fn spaeter_merkt_sich_die_version_ueber_einen_neustart() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut state = started_from(dir.path());
+    state.found("0.6.0".into());
+    state.later();
+    save_declined(
+        dir.path(),
+        state
+            .declined()
+            .expect("„Später“ sollte die Version merken"),
+    )
+    .expect("die Version sollte sich speichern lassen");
+
+    let mut restarted = started_from(dir.path());
+
+    // Dieselbe Version zeigt nur das Symbol, keinen Hinweis.
+    assert!(restarted.found("0.6.0".into()));
+    assert_eq!(restarted.phase, Phase::Later);
+    assert_eq!(restarted.version.as_deref(), Some("0.6.0"));
+    // Eine höhere Version bietet sich wieder an.
+    assert!(restarted.found("0.7.0".into()));
+    assert_eq!(restarted.phase, Phase::Offered);
+    assert_eq!(restarted.version.as_deref(), Some("0.7.0"));
+}
+
+#[test]
+fn eine_fehlende_oder_kaputte_datei_merkt_keine_version() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(load_declined(dir.path()), None);
+
+    std::fs::write(dir.path().join("app-update.json"), "kaputt").unwrap();
+    assert_eq!(load_declined(dir.path()), None);
 }
 
 #[test]

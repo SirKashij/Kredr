@@ -103,3 +103,11 @@ _Vermeiden_: Update (für die Version selbst), Build
 **Neuerungen**:
 Die Release-Seite einer neuen Version auf GitHub mit ihrem Release-Text. Kredr öffnet sie im Browser.
 _Vermeiden_: Changelog, Release Notes, Patchnotes
+
+**Abgelehnte Version**:
+Die neue Version, die die Person mit „Später“ aufgeschoben hat. Kredr merkt sie sich im Benutzerdatenverzeichnis und bietet sie nicht wieder als Hinweis an, auch nach einem Neustart nicht; eine andere neue Version schon. Im Code heißt sie `declined`.
+_Vermeiden_: ignorierte Version, übersprungene Version
+
+**Symbol der Aktualisierung**:
+Der Pfeil nach oben mit Punkt unmittelbar über dem Zahnrad der Aktivitätsleiste. Er steht nach „Später“ oder einem Fehlschlag, bis aktualisiert ist, und öffnet ein Menü zum Aktualisieren und zu den Neuerungen. Im Code heißt er `AppUpdateButton`.
+_Vermeiden_: Badge, Update-Icon

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useRef } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 
 export interface MenuItem {
   label: string;
@@ -13,11 +13,14 @@ export function ContextMenu({
   y,
   items,
   onClose,
+  header,
 }: {
   x: number;
   y: number;
   items: MenuItem[];
   onClose: () => void;
+  /** Steht über den Einträgen, durch eine Linie getrennt. */
+  header?: ReactNode;
 }) {
   const menu = useRef<HTMLDivElement>(null);
 
@@ -56,6 +59,12 @@ export function ContextMenu({
       style={{ left: x, top: y }}
       onContextMenu={(event) => event.preventDefault()}
     >
+      {header && (
+        <>
+          <div className="menu-header">{header}</div>
+          <div className="menu-separator" role="separator" />
+        </>
+      )}
       {items.map(({ label, onSelect, separator }) => (
         <Fragment key={label}>
           {separator && <div className="menu-separator" role="separator" />}
