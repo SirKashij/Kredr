@@ -111,8 +111,12 @@ export class WindowAgents<T> {
 
   /** Ob Schließen einen Agenten unterbräche: Er kommt zurück, arbeitet aber gerade. */
   closingInterrupts(arrangement: Arrangement): boolean {
-    const statuses = this.statuses.snapshot();
-    return this.returning(arrangement).some((tabId) => statuses.get(tabId)?.state === "working");
+    return this.interruptedCount(arrangement) > 0;
+  }
+
+  /** Wie viele Agenten Schließen unterbräche. */
+  interruptedCount(arrangement: Arrangement): number {
+    return this.returningIn(arrangement, "working");
   }
 
   /**
@@ -120,8 +124,19 @@ export class WindowAgents<T> {
    * zurück, steht aber „im Hintergrund“. Die Shells der Aufgaben kommen nicht mit.
    */
   closingEndsBackgroundTasks(arrangement: Arrangement): boolean {
+    return this.backgroundCount(arrangement) > 0;
+  }
+
+  /** Wie viele Agenten beim Schließen ihre Hintergrundaufgaben verlören. */
+  backgroundCount(arrangement: Arrangement): number {
+    return this.returningIn(arrangement, "background");
+  }
+
+  /** Wie viele zurückkommende Agenten gerade im Zustand `state` sind. */
+  private returningIn(arrangement: Arrangement, state: "working" | "background"): number {
     const statuses = this.statuses.snapshot();
-    return this.returning(arrangement).some((tabId) => statuses.get(tabId)?.state === "background");
+    return this.returning(arrangement).filter((tabId) => statuses.get(tabId)?.state === state)
+      .length;
   }
 
   private open(tab: Tab, project: string): T {

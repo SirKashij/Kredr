@@ -226,7 +226,12 @@ export class OpenFiles {
 
   /** Ob irgendeine offene Datei ungespeicherte Änderungen hat. */
   anyDirty(): boolean {
-    return [...this.files.values()].some((file) => file.state.dirty);
+    return this.dirtyCount() > 0;
+  }
+
+  /** Wie viele Dateien ungespeicherte Änderungen haben. */
+  dirtyCount(): number {
+    return [...this.files.values()].filter((file) => file.state.dirty).length;
   }
 
   /**

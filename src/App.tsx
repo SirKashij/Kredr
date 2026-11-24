@@ -71,6 +71,8 @@ import {
 } from "./workspace";
 import { Notice, type NoticeContent } from "./Notice";
 import { AppUpdateNotice } from "./AppUpdateNotice";
+import type { UpdateReasons } from "./updateReasons";
+import { answerPolls, tauriEventBus } from "./windowPoll";
 import { ProjectPicker } from "./ProjectPicker";
 
 /** Eine Datei, die als Dateiansicht geöffnet werden soll. */
@@ -335,6 +337,27 @@ export function App() {
         "file.closeWindowConfirm.ok",
       );
       if (!close) event.preventDefault();
+    });
+    return () => {
+      unlisten.then((stop) => stop());
+    };
+  }, [files, store, terminals, agents]);
+
+  // Vor einer Aktualisierung, die alle Fenster beendet, nennt jedes Fenster
+  // seine Anlässe zur Rückfrage und speichert danach seine Aufteilung.
+  useEffect(() => {
+    const unlisten = answerPolls(tauriEventBus, getCurrentWindow().label, async (question) => {
+      if (question === "saveArrangement") return store.flush().then(() => true);
+      const { arrangement } = store.snapshot();
+      // Agenten, die nach dem Neustart zurückkommen, zählen nicht als laufender Prozess.
+      const resumed = new Set(agents.returning(arrangement));
+      return {
+        unsavedFiles: files.dirtyCount(),
+        runningProcesses: await terminals.countWithChildProcess(resumed),
+        workingAgents: agents.interruptedCount(arrangement),
+        backgroundAgents: agents.backgroundCount(arrangement),
+        silentWindows: 0,
+      } satisfies UpdateReasons;
     });
     return () => {
       unlisten.then((stop) => stop());

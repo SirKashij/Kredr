@@ -320,5 +320,19 @@
   "appUpdate.menuTitle": "Kredr {version} is available",
   "appUpdate.menuInstalled": "Installed: {version}",
   "appUpdate.menuUpdate": "Update now and restart",
-  "appUpdate.menuNews": "See what's new"
+  "appUpdate.menuNews": "See what's new",
+  "appUpdate.confirm.title": "Update Kredr?",
+  "appUpdate.confirm.message": "{reasons}.\n\nTo update, Kredr closes all windows. Processes in terminals end, unsaved changes are lost.",
+  "appUpdate.confirm.agentsMessage": "{reasons}.\n\nTo update, Kredr closes all windows. Running responses stop, processes in terminals end, unsaved changes are lost. After the restart, the agents' conversations resume.",
+  "appUpdate.confirm.ok": "Update anyway",
+  "appUpdate.reason.workingAgents.one": "{count} agent is still working",
+  "appUpdate.reason.workingAgents.other": "{count} agents are still working",
+  "appUpdate.reason.backgroundAgents.one": "{count} agent has a background task",
+  "appUpdate.reason.backgroundAgents.other": "{count} agents have background tasks",
+  "appUpdate.reason.runningProcesses.one": "{count} terminal has a running process",
+  "appUpdate.reason.runningProcesses.other": "{count} terminals have running processes",
+  "appUpdate.reason.unsavedFiles.one": "{count} file is not saved",
+  "appUpdate.reason.unsavedFiles.other": "{count} files are not saved",
+  "appUpdate.reason.silentWindows.one": "{count} window is not responding",
+  "appUpdate.reason.silentWindows.other": "{count} windows are not responding"
 }

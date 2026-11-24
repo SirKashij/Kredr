@@ -5,12 +5,10 @@
  * daher für alle.
  */
 
-/**
- * Wie weit die Aktualisierung ist. `confirm` (Rückfrage, wenn Agenten
- * arbeiten) meldet der Kern noch nicht; sie folgt mit #92.
- */
-export type Phase =
-  "none" | "offered" | "later" | "confirm" | "downloading" | "installing" | "failed";
+import { hasReasons, sumReasons, type UpdateReasons } from "./updateReasons";
+
+/** Wie weit die Aktualisierung ist. */
+export type Phase = "none" | "offered" | "later" | "downloading" | "installing" | "failed";
 
 /** Was der Kern über die Aktualisierung weiß. */
 export interface AppUpdateState {
@@ -31,6 +29,12 @@ export interface AppUpdatePort {
   onChange(listener: (state: AppUpdateState) => void): void;
   /** Lädt die neue Version, prüft ihre Signatur, installiert sie und startet Kredr neu. */
   install(): Promise<void>;
+  /** Die Anlässe jedes offenen Fensters; ein Fenster ohne Antwort als `SILENT_WINDOW`. */
+  reasons(): Promise<UpdateReasons[]>;
+  /** Die Rückfrage mit den Anlässen aller Fenster; `true` heißt: trotzdem aktualisieren. */
+  confirm(reasons: UpdateReasons): Promise<boolean>;
+  /** Jedes offene Fenster speichert seine Aufteilung. */
+  saveArrangements(): Promise<void>;
   /** Schließt das Angebot in allen Fenstern. */
   later(): Promise<void>;
   /** Öffnet eine Web-Adresse im Standardbrowser. */
@@ -97,13 +101,20 @@ export class AppUpdate {
 
   /**
    * „Jetzt aktualisieren“: lädt die neue Version und installiert sie; Kredr
-   * startet danach neu. Den Fortschritt melden die Phasen des Kerns. Läuft
-   * schon eine Aktualisierung, geschieht nichts.
+   * beendet dabei alle Fenster und startet neu. Gibt es in einem Fenster etwas,
+   * das verloren ginge oder abbräche, fasst eine Rückfrage die Anlässe aller
+   * Fenster zusammen; „Später“ bricht ab. Vorher speichert jedes Fenster seine
+   * Aufteilung. Den Fortschritt melden die Phasen des Kerns. Läuft schon eine
+   * Aktualisierung, geschieht nichts.
    */
   async updateNow(): Promise<void> {
     if (this.started || !CAN_START.has(this.state.phase)) return;
     this.started = true;
     try {
+      const reasons = sumReasons(await this.port.reasons());
+      if (hasReasons(reasons) && !(await this.port.confirm(reasons))) return;
+      // Die Aufteilung ist Komfort; an ihr scheitert die Aktualisierung nicht.
+      await this.port.saveArrangements().catch(() => {});
       await this.port.install();
     } catch (reason) {
       this.set({ ...this.state, phase: "failed", error: String(reason) });

@@ -111,3 +111,15 @@ _Vermeiden_: ignorierte Version, übersprungene Version
 **Symbol der Aktualisierung**:
 Der Pfeil nach oben mit Punkt unmittelbar über dem Zahnrad der Aktivitätsleiste. Er steht nach „Später“ oder einem Fehlschlag, bis aktualisiert ist, und öffnet ein Menü zum Aktualisieren und zu den Neuerungen. Im Code heißt er `AppUpdateButton`.
 _Vermeiden_: Badge, Update-Icon
+
+**Anlass**:
+Etwas, das beim Beenden eines Fensters verloren ginge oder abbräche: eine ungespeicherte Datei, ein laufender Prozess in einem Terminal, ein arbeitender Agent oder ein Agent im Hintergrund. Vor der Aktualisierung zählt auch ein Fenster, das seine Anlässe nicht nennt. Gibt es Anlässe, fragt Kredr nach. Im Code heißen sie `UpdateReasons`.
+_Vermeiden_: Grund, Blocker, Warnung
+
+**Rückfrage vor der Aktualisierung**:
+Der eine Dialog, der vor einer Aktualisierung die Anlässe aller Fenster zusammengezählt nennt, mit „Später“ (bricht ab) und „Trotzdem aktualisieren“. Ohne Anlass entfällt er.
+_Vermeiden_: Warnung, Popup
+
+**Rundfrage**:
+Ein Fenster fragt alle offenen Fenster etwas und sammelt ihre Antworten, etwa die Anlässe oder „Aufteilung gespeichert“. Ein Fenster, das nicht rechtzeitig antwortet, gilt als stumm. Im Code heißt sie `pollWindows`.
+_Vermeiden_: Broadcast, Umfrage

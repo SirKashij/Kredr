@@ -320,5 +320,19 @@
   "appUpdate.menuTitle": "Kredr {version} ist verfügbar",
   "appUpdate.menuInstalled": "Installiert: {version}",
   "appUpdate.menuUpdate": "Jetzt aktualisieren und neu starten",
-  "appUpdate.menuNews": "Neuerungen ansehen"
+  "appUpdate.menuNews": "Neuerungen ansehen",
+  "appUpdate.confirm.title": "Kredr aktualisieren?",
+  "appUpdate.confirm.message": "{reasons}.\n\nZur Aktualisierung beendet Kredr alle Fenster. Prozesse in Terminals enden, ungespeicherte Änderungen gehen verloren.",
+  "appUpdate.confirm.agentsMessage": "{reasons}.\n\nZur Aktualisierung beendet Kredr alle Fenster. Laufende Antworten brechen ab, Prozesse in Terminals enden, ungespeicherte Änderungen gehen verloren. Nach dem Neustart werden die Gespräche der Agenten fortgesetzt.",
+  "appUpdate.confirm.ok": "Trotzdem aktualisieren",
+  "appUpdate.reason.workingAgents.one": "{count} Agent arbeitet noch",
+  "appUpdate.reason.workingAgents.other": "{count} Agenten arbeiten noch",
+  "appUpdate.reason.backgroundAgents.one": "{count} Agent hat eine Hintergrundaufgabe",
+  "appUpdate.reason.backgroundAgents.other": "{count} Agenten haben Hintergrundaufgaben",
+  "appUpdate.reason.runningProcesses.one": "{count} Terminal hat einen laufenden Prozess",
+  "appUpdate.reason.runningProcesses.other": "{count} Terminals haben laufende Prozesse",
+  "appUpdate.reason.unsavedFiles.one": "{count} Datei ist nicht gespeichert",
+  "appUpdate.reason.unsavedFiles.other": "{count} Dateien sind nicht gespeichert",
+  "appUpdate.reason.silentWindows.one": "{count} Fenster antwortet nicht",
+  "appUpdate.reason.silentWindows.other": "{count} Fenster antworten nicht"
 }

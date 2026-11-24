@@ -453,11 +453,16 @@ export class RunningTerminals implements AgentTerminals<RunningTerminal> {
    * Agent. Die Terminals der Tabs in `except` zählen nicht.
    */
   async anyHasChildProcess(except: ReadonlySet<string> = new Set()): Promise<boolean> {
+    return (await this.countWithChildProcess(except)) > 0;
+  }
+
+  /** Wie viele Terminals, außer denen der Tabs `except`, einen laufenden Prozess haben. */
+  async countWithChildProcess(except: ReadonlySet<string> = new Set()): Promise<number> {
     const terminals = [...this.terminals]
       .filter(([tabId]) => !except.has(tabId))
       .map(([, terminal]) => terminal);
     const running = await Promise.all(terminals.map((terminal) => terminal.hasChildProcess()));
-    return running.includes(true);
+    return running.filter(Boolean).length;
   }
 
   /** Beendet alle Terminals, deren Tab es nicht mehr gibt. */

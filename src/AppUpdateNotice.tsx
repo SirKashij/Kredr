@@ -1,16 +1,18 @@
-import { useCallback, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { AppUpdate, showsIcon, showsNotice } from "./appUpdate";
 import { appUpdatePort } from "./appUpdatePort";
 import { ContextMenu } from "./ContextMenu";
-import { useT } from "./i18n/i18n";
+import { translate, useT, type Translate } from "./i18n/i18n";
 import { PinnedNotice } from "./Notice";
 
 let forThisWindow: AppUpdate | null = null;
+/** Die Sprache dieses Fensters für die Rückfrage vor der Aktualisierung. */
+let windowTranslate: Translate = (key, values) => translate("en", key, values);
 
 /** Der Ablauf dieses Fensters; er hört dem Kern zu, solange das Fenster lebt. */
 function windowAppUpdate(): AppUpdate {
-  forThisWindow ??= new AppUpdate(appUpdatePort());
+  forThisWindow ??= new AppUpdate(appUpdatePort(() => windowTranslate));
   return forThisWindow;
 }
 
@@ -22,6 +24,10 @@ const CLOSING_CLICK = 300;
 
 /** Der Zustand der Aktualisierung in diesem Fenster. */
 function useAppUpdate() {
+  const t = useT();
+  useEffect(() => {
+    windowTranslate = t;
+  }, [t]);
   const update = windowAppUpdate();
   const state = useSyncExternalStore(update.subscribe, update.snapshot);
   return { update, state };
