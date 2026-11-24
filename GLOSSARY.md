@@ -135,6 +135,10 @@ _Vermeiden_: Grund, Blocker, Warnung
 Der Dialog, der vor einer Aktualisierung die Anlässe aller Fenster zusammengezählt nennt, mit „Später“ (bricht ab) und „Trotzdem aktualisieren“. Ohne Anlass entfällt er. Nach dem Download prüft das fragende Fenster die Anlässe erneut. Gibt es einen **neuen Anlass** (eine Art mit mehr Fällen als vorher), kommt der Dialog ein zweites Mal. Erst danach speichern alle Fenster ihre Aufteilung, und der Installer startet. Der Kern führt die Rückfrage als Phase `confirm`, sobald ein Fenster „Jetzt aktualisieren“ auslöst, auch wenn der Dialog dann entfällt, und nach dem Download noch einmal, bis installiert wird. Nur dieses **fragende Fenster** darf sie beenden, den Download beginnen oder installieren, alle anderen zeigen sie ohne Aktionen. Schließt sich das fragende Fenster oder lädt es neu, endet sie wie mit „Später“, während des Downloads spätestens mit dessen Ende.
 _Vermeiden_: Warnung, Popup
 
+**Verwaister Dialog**:
+Ein nativer Dialog (Rückfrage, Fehlermeldung, Ordnerwahl), dessen Fenster sich geschlossen hat. Solange sein Fenster lebt, gehört der Dialog ihm und sperrt es. Endet das Fenster, schließt Kredr den Dialog wie mit „Abbrechen“, denn seine Antwort erreicht niemanden mehr. Im Code heißt das `close_orphaned_dialogs`.
+_Vermeiden_: Popup
+
 **Rundfrage**:
 Ein Fenster fragt alle offenen Fenster etwas und sammelt ihre Antworten, etwa die Anlässe oder „Aufteilung gespeichert“. Ein Fenster, das nicht rechtzeitig antwortet, gilt als stumm. Im Code heißt sie `pollWindows`.
 _Vermeiden_: Broadcast, Umfrage

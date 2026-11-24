@@ -6,6 +6,7 @@ pub mod dialog_answers;
 pub mod external;
 pub mod file_list;
 pub mod notifications;
+mod orphaned_dialogs;
 mod paths;
 pub mod project_files;
 mod project_files_commands;
@@ -93,6 +94,7 @@ fn release_window(window: &tauri::Window) {
     window.state::<VersionControls>().close_all_of(label);
     window.state::<ProjectWatchers>().close_all_of(label);
     window.state::<Searches>().close_all_of(label);
+    orphaned_dialogs::close_orphaned_dialogs();
 }
 
 pub fn run() {
