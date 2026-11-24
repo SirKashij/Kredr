@@ -35,6 +35,8 @@ export interface AppUpdateState {
 export type CheckResult =
   | { outcome: "found"; version: string }
   | { outcome: "current" }
+  /** Die Entwicklungsfassung sucht nicht, damit sie sich nicht selbst überschreibt. */
+  | { outcome: "development" }
   | { outcome: "failed"; cause: FailureCause; error: string };
 
 /** Was der Ablauf vom Kern und vom Rechner braucht. */
@@ -116,6 +118,8 @@ export function checkResultText(t: Translate, result: CheckResult): string {
       return t("appUpdate.available", { version: result.version });
     case "current":
       return t("appUpdate.check.current");
+    case "development":
+      return t("appUpdate.check.development");
     case "failed":
       return t("appUpdate.check.failed", { reason: t(CAUSE_TEXTS[result.cause]) });
   }

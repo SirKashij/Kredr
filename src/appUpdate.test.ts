@@ -92,6 +92,12 @@ test("erreicht „Jetzt suchen“ den Kern nicht, gilt die Suche als gescheitert
   expect(checkResultText(de, result)).toBe("Suche fehlgeschlagen. Unerwarteter Fehler.");
 });
 
+test("„Jetzt suchen“ in der Entwicklungsfassung sagt, dass sie nicht sucht", () => {
+  expect(checkResultText(de, { outcome: "development" })).toBe(
+    "Die Entwicklungsfassung sucht nicht nach Aktualisierungen.",
+  );
+});
+
 test("eine neue Version ergibt ein Angebot", async () => {
   const core = fakeCore(none);
   const update = new AppUpdate(core.port);

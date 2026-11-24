@@ -109,7 +109,11 @@ Die Release-Seite einer neuen Version auf GitHub mit ihrem Release-Text. Kredr �
 _Vermeiden_: Changelog, Release Notes, Patchnotes
 
 **Suche nach einer neuen Version**:
-Die Frage an GitHub, ob es eine neue Version gibt. Von selbst sucht Kredr kurz nach dem Start, sofort beim Anschalten und danach alle 3 Stunden, solange die Einstellung „Nach Aktualisierungen suchen“ an ist; eine gescheiterte Suche von selbst bleibt stumm. „Jetzt suchen“ in den Einstellungen sucht immer und nennt das Ergebnis: neue Version, aktuell oder gescheitert mit Grund. Eine gescheiterte Suche ist kein Fehlschlag.
+Die Frage an GitHub, ob es eine neue Version gibt. Von selbst sucht Kredr kurz nach dem Start, sofort beim Anschalten und danach alle 3 Stunden, solange die Einstellung „Nach Aktualisierungen suchen“ an ist; eine gescheiterte Suche von selbst bleibt stumm. „Jetzt suchen“ in den Einstellungen sucht immer und nennt das Ergebnis: neue Version, aktuell oder gescheitert mit Grund. Eine gescheiterte Suche ist kein Fehlschlag. Die Entwicklungsfassung sucht nie; „Jetzt suchen“ sagt ihr das.
+
+**Entwicklungsfassung**:
+Kredr aus `npm run tauri dev`, im Gegensatz zur installierten Fassung. Sie sucht nie nach einer neuen Version und installiert keine, damit sie sich nicht selbst überschreibt; eine Aktualisierung spielt sie höchstens vor. Im Code heißt die laufende Fassung `Edition`.
+_Vermeiden_: Dev-Build, Debug-Version
 
 **Abgelehnte Version**:
 Die neue Version, die die Person mit „Später“ aufgeschoben hat. Kredr merkt sie sich im Benutzerdatenverzeichnis und bietet sie nicht wieder als Hinweis an, auch nach einem Neustart nicht; eine andere neue Version schon. Sucht die Person selbst mit „Jetzt suchen“ in den Einstellungen, bietet Kredr auch die abgelehnte Version wieder an. Im Code heißt sie `declined`.

@@ -330,6 +330,7 @@
   "appUpdate.check": "Jetzt suchen",
   "appUpdate.check.searching": "Suche …",
   "appUpdate.check.current": "Kredr ist aktuell.",
+  "appUpdate.check.development": "Die Entwicklungsfassung sucht nicht nach Aktualisierungen.",
   "appUpdate.check.failed": "Suche fehlgeschlagen. {reason}",
   "appUpdate.menuTitle": "Kredr {version} ist verfügbar",
   "appUpdate.menuInstalled": "Installiert: {version}",

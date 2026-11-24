@@ -330,6 +330,7 @@
   "appUpdate.check": "Check now",
   "appUpdate.check.searching": "Checking …",
   "appUpdate.check.current": "Kredr is up to date.",
+  "appUpdate.check.development": "The development build does not check for updates.",
   "appUpdate.check.failed": "Check failed. {reason}",
   "appUpdate.menuTitle": "Kredr {version} is available",
   "appUpdate.menuInstalled": "Installed: {version}",

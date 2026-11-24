@@ -2,7 +2,7 @@
 //! drei Stunden nach einer neuen Version, solange die Einstellung es erlaubt,
 //! und auf Wunsch mit „Jetzt suchen“. Hält den Zustand für alle Fenster und
 //! meldet jede Änderung mit dem Ereignis `app-update-changed`. Die
-//! Entwicklungsfassung sucht nur auf Wunsch.
+//! Entwicklungsfassung sucht und installiert nie.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -255,6 +255,32 @@ struct DeclinedFile {
     declined: String,
 }
 
+/// Welche Fassung von Kredr läuft.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Edition {
+    /// `npm run tauri dev`: Sie fragt GitHub nie, damit sie sich nicht selbst
+    /// mit der veröffentlichten Version überschreibt.
+    Development,
+    /// Die installierte Fassung.
+    Installed,
+}
+
+impl Edition {
+    /// Die laufende Fassung.
+    pub fn current() -> Self {
+        if cfg!(debug_assertions) {
+            Self::Development
+        } else {
+            Self::Installed
+        }
+    }
+
+    /// Ob diese Fassung nach Aktualisierungen suchen und sie installieren darf.
+    pub fn may_update(self) -> bool {
+        self == Self::Installed
+    }
+}
+
 /// Der Zustand der Aktualisierung und die zuletzt gefundene neue Version.
 pub struct AppUpdates {
     inner: Mutex<(AppUpdateState, Option<Update>)>,
@@ -339,6 +365,8 @@ pub enum CheckResult {
     Found { version: String },
     /// Kredr ist aktuell.
     Current,
+    /// Die Entwicklungsfassung sucht nicht.
+    Development,
     /// Die Suche scheiterte, mit eingeordnetem Grund und Originaltext.
     Failed { cause: FailureCause, error: String },
 }
@@ -352,7 +380,7 @@ pub fn start(app: &AppHandle) {
         crate::data_dir(app).ok(),
         app.state::<SettingsStore>().get().check_for_updates,
     ));
-    if cfg!(debug_assertions) {
+    if !Edition::current().may_update() {
         return;
     }
     let app = app.clone();
@@ -379,7 +407,7 @@ pub fn settings_changed(app: &AppHandle, settings: &Settings) {
         .lock()
         .unwrap()
         .setting_changed(settings.check_for_updates);
-    if switched_on && !cfg!(debug_assertions) {
+    if switched_on && Edition::current().may_update() {
         let app = app.clone();
         tauri::async_runtime::spawn(async move { check(&app).await });
     }
@@ -432,6 +460,9 @@ pub async fn app_update_check(
     app: AppHandle,
     updates: State<'_, AppUpdates>,
 ) -> Result<CheckResult, String> {
+    if !Edition::current().may_update() {
+        return Ok(CheckResult::Development);
+    }
     Ok(match search(&app).await {
         Ok(Some(found)) => {
             let version = found.version.clone();
@@ -470,6 +501,11 @@ pub async fn app_update_install(
     app: AppHandle,
     updates: State<'_, AppUpdates>,
 ) -> Result<(), String> {
+    // Ohne Suche bietet die Entwicklungsfassung nie eine Version an; die
+    // Sperre hält auch einen Aufruf ohne Angebot vom Updater fern.
+    if !Edition::current().may_update() {
+        return Ok(());
+    }
     let mut pending = None;
     updates.change(&app, |state, update| {
         let Some(update) = update.clone() else {
