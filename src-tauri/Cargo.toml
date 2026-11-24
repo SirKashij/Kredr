@@ -1,6 +1,6 @@
 [package]
 name = "kredr"
-version = "0.5.0"
+version = "0.6.0"
 description = "Schlanke Arbeitsfläche für Claude-Code-Agenten"
 repository = "https://github.com/SirKashij/Kredr"
 edition = "2021"
