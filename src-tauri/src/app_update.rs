@@ -44,7 +44,14 @@ pub struct AppUpdateState {
     pub version: Option<String>,
     /// Die installierte Fassung.
     pub installed: String,
-    /// Warum die Aktualisierung zuletzt scheiterte.
+    /// Wie weit der Download ist, in ganzen Prozent; ohne bekannte Größe keiner.
+    pub progress: Option<u8>,
+    /// Ob die Person den Hinweis zum laufenden Download weggeklickt hat. Dann
+    /// zeigt nur das Symbol den Fortschritt.
+    pub hidden: bool,
+    /// Warum die Aktualisierung zuletzt scheiterte, eingeordnet.
+    pub cause: Option<FailureCause>,
+    /// Der Originaltext des letzten Fehlschlags.
     pub error: Option<String>,
     /// Die Version, die die Person auf „Später“ gestellt hat. Sie bietet
     /// sich nicht wieder als Hinweis an, auch nach einem Neustart nicht.
@@ -59,6 +66,9 @@ impl AppUpdateState {
             phase: Phase::None,
             version: None,
             installed: installed.into(),
+            progress: None,
+            hidden: false,
+            cause: None,
             error: None,
             declined,
         }
@@ -88,42 +98,109 @@ impl AppUpdateState {
                 Phase::Offered
             };
             self.version = Some(version);
+            self.cause = None;
             self.error = None;
         }
         changes
     }
 
-    /// „Später“: schließt das Angebot und merkt sich die Version. Gibt
-    /// zurück, ob sich der Zustand geändert hat.
+    /// „Später“: schließt das Angebot und merkt sich die Version. Während
+    /// des Downloads blendet es nur den Hinweis aus; das Symbol zeigt dann
+    /// den Fortschritt. Gibt zurück, ob sich der Zustand geändert hat.
     pub fn later(&mut self) -> bool {
-        let closes = matches!(self.phase, Phase::Offered | Phase::Failed);
-        if closes {
-            self.phase = Phase::Later;
-            self.declined = self.version.clone();
+        match self.phase {
+            Phase::Offered | Phase::Failed => {
+                self.phase = Phase::Later;
+                self.declined = self.version.clone();
+                true
+            }
+            Phase::Downloading if !self.hidden => {
+                self.hidden = true;
+                true
+            }
+            _ => false,
         }
-        closes
     }
 
     /// „Jetzt aktualisieren“: beginnt den Download, wenn eine neue Version
-    /// angeboten ist und noch keine Aktualisierung läuft.
+    /// angeboten ist und noch keine Aktualisierung läuft. Aus dem Symbol
+    /// angestoßen, zeigt nur das Symbol den Fortschritt.
     pub fn start_download(&mut self) -> bool {
         let starts = matches!(self.phase, Phase::Offered | Phase::Later | Phase::Failed);
         if starts {
+            self.hidden = self.phase == Phase::Later;
             self.phase = Phase::Downloading;
+            self.progress = Some(0);
+            self.cause = None;
             self.error = None;
         }
         starts
     }
 
+    /// Vom Download sind `done` Bytes da, von `total`, falls bekannt. Gibt
+    /// zurück, ob sich der Fortschritt in ganzen Prozent geändert hat.
+    pub fn downloaded(&mut self, done: u64, total: Option<u64>) -> bool {
+        if self.phase != Phase::Downloading {
+            return false;
+        }
+        let progress = total
+            .filter(|&total| total > 0)
+            .map(|total| (done.min(total) * 100 / total) as u8);
+        let changes = self.progress != progress;
+        self.progress = progress;
+        changes
+    }
+
     /// Der Download ist fertig und geprüft; der Installer startet.
     pub fn start_install(&mut self) {
         self.phase = Phase::Installing;
+        self.progress = None;
     }
 
-    /// Die Aktualisierung ist gescheitert; sie lässt sich erneut anstoßen.
-    pub fn fail(&mut self, error: String) {
+    /// Die Aktualisierung ist gescheitert; der Hinweis nennt den Grund, und
+    /// sie lässt sich erneut anstoßen.
+    pub fn fail(&mut self, cause: FailureCause, error: String) {
         self.phase = Phase::Failed;
+        self.progress = None;
+        self.hidden = false;
+        self.cause = Some(cause);
         self.error = Some(error);
+    }
+}
+
+/// Warum eine Aktualisierung scheiterte, kurz genug für einen Satz.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FailureCause {
+    /// GitHub war nicht erreichbar oder der Download brach ab.
+    Network,
+    /// Die Signatur des Installers passt nicht zum Kredr-Schlüssel.
+    Signature,
+    /// Der Installer ließ sich nicht starten.
+    Installer,
+    /// Alles andere, etwa ein Schreibfehler auf der Platte.
+    Unknown,
+}
+
+/// Der Schritt der Aktualisierung, in dem ein Fehler auftrat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    Download,
+    Install,
+}
+
+/// Ordnet einen Fehler des Updaters aus `step` einem Grund zu.
+pub fn failure_cause(error: &tauri_plugin_updater::Error, step: Step) -> FailureCause {
+    use tauri_plugin_updater::Error;
+    match error {
+        Error::Minisign(_)
+        | Error::Base64(_)
+        | Error::SignatureUtf8(_)
+        | Error::SignedVersionMismatch { .. }
+        | Error::MissingSignedVersion => FailureCause::Signature,
+        _ if step == Step::Install => FailureCause::Installer,
+        Error::Reqwest(_) | Error::Network(_) | Error::ReleaseNotFound => FailureCause::Network,
+        _ => FailureCause::Unknown,
     }
 }
 
@@ -260,7 +337,8 @@ pub fn app_update_state(updates: State<'_, AppUpdates>) -> AppUpdateState {
 }
 
 /// „Später“ aus einem Fenster gilt für alle. Die Version merkt sich Kredr
-/// über einen Neustart hinaus.
+/// über einen Neustart hinaus. Während des Downloads blendet es nur den
+/// Hinweis aus.
 #[tauri::command]
 pub fn app_update_later(app: AppHandle, updates: State<'_, AppUpdates>) {
     updates.later(&app);
@@ -268,7 +346,9 @@ pub fn app_update_later(app: AppHandle, updates: State<'_, AppUpdates>) {
 
 /// Lädt die neue Version, prüft ihre Signatur und startet den Installer im
 /// Modus `passive`. Er beendet Kredr und startet es nach der Installation neu.
-/// Scheitert ein Schritt, meldet der Zustand den Grund.
+/// Den Fortschritt des Downloads meldet der Zustand in ganzen Prozent.
+/// Scheitert ein Schritt, meldet der Zustand den eingeordneten Grund und den
+/// Originaltext.
 #[tauri::command]
 pub async fn app_update_install(
     app: AppHandle,
@@ -288,19 +368,32 @@ pub async fn app_update_install(
     let Some(update) = pending else {
         return Ok(());
     };
-    let result = async {
-        let bytes = update.download(|_, _| {}, || {}).await?;
-        updates.change(&app, |state, _| {
-            state.start_install();
-            true
-        });
-        update.install(bytes)
-    }
-    .await;
-    if let Err(error) = result {
+    let mut done = 0u64;
+    let downloaded = update
+        .download(
+            |chunk, total| {
+                done += chunk as u64;
+                updates.change(&app, |state, _| state.downloaded(done, total));
+            },
+            || {},
+        )
+        .await;
+    let result = match downloaded {
+        Ok(bytes) => {
+            updates.change(&app, |state, _| {
+                state.start_install();
+                true
+            });
+            update
+                .install(bytes)
+                .map_err(|error| (failure_cause(&error, Step::Install), error))
+        }
+        Err(error) => Err((failure_cause(&error, Step::Download), error)),
+    };
+    if let Err((cause, error)) = result {
         crate::projects::forget_windows_for_restart(&app);
         updates.change(&app, |state, _| {
-            state.fail(error.to_string());
+            state.fail(cause, error.to_string());
             true
         });
     }

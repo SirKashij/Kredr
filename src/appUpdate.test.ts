@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import {
   AppUpdate,
+  failureSentence,
   showsIcon,
   showsNotice,
   type AppUpdatePort,
@@ -14,7 +15,15 @@ import {
   type UpdateReasons,
 } from "./updateReasons";
 
-const none: AppUpdateState = { phase: "none", version: null, installed: "0.5.0", error: null };
+const none: AppUpdateState = {
+  phase: "none",
+  version: null,
+  installed: "0.5.0",
+  progress: null,
+  hidden: false,
+  cause: null,
+  error: null,
+};
 
 /**
  * Ein Kern, den der Test steuert: `announce` meldet allen Fenstern einen neuen
@@ -107,17 +116,111 @@ test("ein zweiter Klick während des Downloads startet keine zweite Aktualisieru
   expect(core.calls).toEqual(["save", "install"]);
 });
 
-test("scheitert die Aktualisierung, zeigt der Hinweis den Grund", async () => {
+test("scheitert der Aufruf des Kerns, zeigt der Hinweis den Fehlschlag mit Originaltext", async () => {
   const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
   const core = fakeCore(offered);
-  core.port.install = () => Promise.reject(new Error("Signatur ungültig"));
+  core.port.install = () => Promise.reject(new Error("IPC kaputt"));
   const update = new AppUpdate(core.port);
   await settled();
 
   await update.updateNow();
 
-  expect(update.snapshot()).toMatchObject({ phase: "failed", error: "Error: Signatur ungültig" });
+  expect(update.snapshot()).toMatchObject({
+    phase: "failed",
+    cause: "unknown",
+    error: "Error: IPC kaputt",
+  });
   expect(showsNotice(update.snapshot())).toBe(true);
+  expect(showsIcon(update.snapshot())).toBe(true);
+});
+
+test("der Fortschritt des Downloads kommt im Hinweis an", async () => {
+  const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
+  const downloading: AppUpdateState = { ...offered, phase: "downloading", progress: 0 };
+  const core = fakeCore(offered, [downloading, { ...downloading, progress: 42 }]);
+  const update = new AppUpdate(core.port);
+  await settled();
+  const progress: (number | null)[] = [];
+  update.subscribe(() => progress.push(update.snapshot().progress));
+
+  await update.updateNow();
+
+  expect(progress).toEqual([0, 42]);
+  expect(showsNotice(update.snapshot())).toBe(true);
+  expect(showsIcon(update.snapshot())).toBe(false);
+});
+
+test("ist der Hinweis zum Download weggeklickt, zeigt das Symbol den Fortschritt", async () => {
+  const core = fakeCore(none);
+  const update = new AppUpdate(core.port);
+  await settled();
+
+  core.announce({ ...none, phase: "downloading", version: "0.6.0", progress: 42, hidden: true });
+
+  expect(showsNotice(update.snapshot())).toBe(false);
+  expect(showsIcon(update.snapshot())).toBe(true);
+  expect(update.snapshot().progress).toBe(42);
+});
+
+test("die Installation zeigt den Hinweis auch nach dem Wegklicken", async () => {
+  const core = fakeCore(none);
+  const update = new AppUpdate(core.port);
+  await settled();
+
+  core.announce({ ...none, phase: "installing", version: "0.6.0", hidden: true });
+
+  expect(showsNotice(update.snapshot())).toBe(true);
+});
+
+test.each([
+  ["network", "Keine Verbindung zu GitHub."],
+  ["signature", "Signatur ungültig."],
+  ["installer", "Der Installer ließ sich nicht starten."],
+  ["unknown", "Unerwarteter Fehler."],
+] as const)("ein Fehlschlag mit Grund %s nennt ihn in einem Satz", async (cause, sentence) => {
+  const core = fakeCore(none);
+  const update = new AppUpdate(core.port);
+  await settled();
+
+  core.announce({
+    ...none,
+    phase: "failed",
+    version: "0.6.0",
+    cause,
+    error: "error sending request",
+  });
+
+  expect(failureSentence(de, update.snapshot())).toBe(sentence);
+  expect(update.snapshot().error).toBe("error sending request");
+});
+
+test("„Erneut versuchen“ startet Download und Installation neu", async () => {
+  const failed: AppUpdateState = {
+    ...none,
+    phase: "failed",
+    version: "0.6.0",
+    cause: "network",
+    error: "timeout",
+  };
+  const core = fakeCore(failed, [{ ...failed, phase: "downloading", cause: null, error: null }]);
+  const update = new AppUpdate(core.port);
+  await settled();
+
+  await update.updateNow();
+
+  expect(core.calls).toEqual(["save", "install"]);
+  expect(update.snapshot().phase).toBe("downloading");
+});
+
+test("scheitert die automatische Suche, meldet Kredr nichts", async () => {
+  const core = fakeCore(none);
+  core.port.current = () => Promise.reject(new Error("keine Verbindung"));
+  const update = new AppUpdate(core.port);
+  await settled();
+
+  expect(update.snapshot().phase).toBe("none");
+  expect(showsNotice(update.snapshot())).toBe(false);
+  expect(showsIcon(update.snapshot())).toBe(false);
 });
 
 test("„Neuerungen“ öffnet die Release-Seite des Tags", async () => {

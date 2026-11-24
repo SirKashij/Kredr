@@ -5,10 +5,14 @@
  * daher für alle.
  */
 
+import type { MessageKey, Translate } from "./i18n/i18n";
 import { hasReasons, sumReasons, type UpdateReasons } from "./updateReasons";
 
 /** Wie weit die Aktualisierung ist. */
 export type Phase = "none" | "offered" | "later" | "downloading" | "installing" | "failed";
+
+/** Warum eine Aktualisierung scheiterte, eingeordnet vom Kern. */
+export type FailureCause = "network" | "signature" | "installer" | "unknown";
 
 /** Was der Kern über die Aktualisierung weiß. */
 export interface AppUpdateState {
@@ -17,7 +21,13 @@ export interface AppUpdateState {
   version: string | null;
   /** Die installierte Fassung. */
   installed: string;
+  /** Wie weit der Download ist, 0 bis 100; ohne bekannte Größe `null`. */
+  progress: number | null;
+  /** Ob die Person den Hinweis zum Download weggeklickt hat. */
+  hidden: boolean;
   /** Warum die Aktualisierung zuletzt scheiterte. */
+  cause: FailureCause | null;
+  /** Der Originaltext des letzten Fehlschlags. */
   error: string | null;
 }
 
@@ -48,25 +58,59 @@ export function releasePage(version: string): string {
 
 /**
  * Ob unten rechts der Hinweis zur Aktualisierung steht: vom Angebot an, bis
- * die Person „Später“ wählt oder Kredr neu startet.
+ * die Person „Später“ wählt oder Kredr neu startet. Den Hinweis zum Download
+ * kann sie wegklicken, den zur Installation nicht.
  */
 export function showsNotice(state: AppUpdateState): boolean {
+  if (state.phase === "downloading") return !state.hidden;
   return state.phase !== "none" && state.phase !== "later";
 }
 
 /**
  * Ob über dem Zahnrad der Aktivitätsleiste das Symbol der Aktualisierung
- * steht: nach „Später“ und nach einem Fehlschlag, bis aktualisiert ist.
+ * steht: nach „Später“ und nach einem Fehlschlag, bis aktualisiert ist, und
+ * mit dem Fortschritt als Ring, solange ein weggeklickter Download läuft.
  */
 export function showsIcon(state: AppUpdateState): boolean {
-  return (state.phase === "later" || state.phase === "failed") && state.version !== null;
+  if (state.version === null) return false;
+  if (state.phase === "downloading") return state.hidden;
+  return state.phase === "later" || state.phase === "failed";
+}
+
+/** Wie weit der Download ist, als Text für Hinweis und Symbol; ohne bekannte Größe ohne Prozent. */
+export function downloadingText(t: Translate, state: AppUpdateState): string {
+  const version = state.version ?? "";
+  return state.progress === null
+    ? t("appUpdate.downloading", { version })
+    : t("appUpdate.downloadingProgress", { version, progress: String(state.progress) });
+}
+
+/** Der Satz zu jedem Grund eines Fehlschlags. */
+const CAUSE_TEXTS: Record<FailureCause, MessageKey> = {
+  network: "appUpdate.cause.network",
+  signature: "appUpdate.cause.signature",
+  installer: "appUpdate.cause.installer",
+  unknown: "appUpdate.cause.unknown",
+};
+
+/** Der Grund eines Fehlschlags in einem Satz, für „Mehr Infos“. */
+export function failureSentence(t: Translate, state: AppUpdateState): string {
+  return t(CAUSE_TEXTS[state.cause ?? "unknown"]);
 }
 
 /** Aus diesen Phasen heraus lässt sich die Aktualisierung anstoßen. */
 const CAN_START = new Set<Phase>(["offered", "later", "failed"]);
 
 /** Der Zustand, bevor der Kern geantwortet hat. */
-const UNKNOWN: AppUpdateState = { phase: "none", version: null, installed: "", error: null };
+const UNKNOWN: AppUpdateState = {
+  phase: "none",
+  version: null,
+  installed: "",
+  progress: null,
+  hidden: false,
+  cause: null,
+  error: null,
+};
 
 /** Der Ablauf der Aktualisierung für ein Fenster, als Store für `useSyncExternalStore`. */
 export class AppUpdate {
@@ -117,7 +161,14 @@ export class AppUpdate {
       await this.port.saveArrangements().catch(() => {});
       await this.port.install();
     } catch (reason) {
-      this.set({ ...this.state, phase: "failed", error: String(reason) });
+      this.set({
+        ...this.state,
+        phase: "failed",
+        progress: null,
+        hidden: false,
+        cause: "unknown",
+        error: String(reason),
+      });
     } finally {
       this.started = false;
     }
@@ -128,7 +179,10 @@ export class AppUpdate {
     if (this.state.version) this.port.openUrl(releasePage(this.state.version));
   }
 
-  /** „Später“: schließt das Angebot in allen Fenstern. */
+  /**
+   * „Später“: schließt das Angebot in allen Fenstern. Während des Downloads
+   * blendet es nur den Hinweis aus; das Symbol zeigt dann den Fortschritt.
+   */
   later(): Promise<void> {
     return this.port.later().catch(() => {});
   }

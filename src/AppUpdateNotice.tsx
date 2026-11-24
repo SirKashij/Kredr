@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { AppUpdate, showsIcon, showsNotice } from "./appUpdate";
+import {
+  AppUpdate,
+  downloadingText,
+  failureSentence,
+  showsIcon,
+  showsNotice,
+  type AppUpdateState,
+} from "./appUpdate";
 import { appUpdatePort } from "./appUpdatePort";
 import { ContextMenu } from "./ContextMenu";
 import { translate, useT, type Translate } from "./i18n/i18n";
@@ -50,8 +57,20 @@ export function AppUpdateButton() {
   }, []);
   if (!showsIcon(state) || !state.version) return null;
   const version = { version: state.version };
-  const title = t("appUpdate.menuTitle", version);
 
+  if (state.phase === "downloading") {
+    const title = downloadingText(t, state);
+    return (
+      <div className="app-update downloading" title={title} role="img" aria-label={title}>
+        <ProgressRing progress={state.progress} />
+        <svg viewBox="0 0 24 24">
+          <path d="M12 16V6M7.5 10.5 12 6l4.5 4.5M7 19h10" />
+        </svg>
+      </div>
+    );
+  }
+
+  const title = t("appUpdate.menuTitle", version);
   return (
     <>
       <button
@@ -97,6 +116,31 @@ export function AppUpdateButton() {
   );
 }
 
+/** Umfang des Rings um das Symbol: Kreis mit Radius 20 im Rahmen 48 × 48. */
+const RING = 2 * Math.PI * 20;
+
+/** Der Fortschritt des Downloads als Ring; ohne bekannte Größe ein Viertel, das kreist. */
+function ProgressRing({ progress }: { progress: number | null }) {
+  const filled = progress === null ? 0.25 : progress / 100;
+  return (
+    <svg
+      className={progress === null ? "ring indeterminate" : "ring"}
+      viewBox="0 0 48 48"
+      aria-hidden
+    >
+      <circle className="track" cx="24" cy="24" r="20" />
+      <circle
+        className="value"
+        cx="24"
+        cy="24"
+        r="20"
+        strokeDasharray={RING}
+        strokeDashoffset={RING * (1 - filled)}
+      />
+    </svg>
+  );
+}
+
 /**
  * Der Hinweis unten rechts, der eine neue Version anbietet und zeigt, wie weit
  * die Aktualisierung ist. Er erscheint in jedem Fenster; eine Aktion in einem
@@ -127,22 +171,59 @@ export function AppUpdateNotice() {
         </PinnedNotice>
       );
     case "downloading":
-      return <PinnedNotice actions={[]}>{t("appUpdate.downloading", version)}</PinnedNotice>;
+      return (
+        <PinnedNotice
+          actions={[{ label: t("appUpdate.hide"), run: () => void update.later(), link: true }]}
+        >
+          {downloadingText(t, state)}
+          <div
+            className={state.progress === null ? "progress indeterminate" : "progress"}
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={state.progress ?? undefined}
+          >
+            <div style={{ width: `${state.progress ?? 100}%` }} />
+          </div>
+        </PinnedNotice>
+      );
     case "installing":
       return <PinnedNotice actions={[]}>{t("appUpdate.installing", version)}</PinnedNotice>;
     case "failed":
-      return (
-        <PinnedNotice
-          actions={[
-            { label: t("appUpdate.retry"), run: () => void update.updateNow() },
-            { label: t("appUpdate.later"), run: () => void update.later() },
-          ]}
-        >
-          <strong>{t("appUpdate.failed", version)}</strong>
-          {state.error && <div className="details">{state.error}</div>}
-        </PinnedNotice>
-      );
+      return <FailedNotice update={update} state={state} />;
     default:
       return null;
   }
+}
+
+/**
+ * Der Hinweis nach einem Fehlschlag: „Erneut versuchen“ startet Download und
+ * Installation neu, „Mehr Infos“ nennt den Grund in einem Satz und klappt den
+ * Originaltext auf.
+ */
+function FailedNotice({ update, state }: { update: AppUpdate; state: AppUpdateState }) {
+  const t = useT();
+  const [moreInfo, setMoreInfo] = useState(false);
+  return (
+    <PinnedNotice
+      actions={[
+        { label: t("appUpdate.retry"), run: () => void update.updateNow() },
+        { label: t("appUpdate.later"), run: () => void update.later() },
+        { label: t("appUpdate.moreInfo"), run: () => setMoreInfo((open) => !open), link: true },
+      ]}
+    >
+      <strong>{t("appUpdate.failed")}</strong>
+      {moreInfo && (
+        <div className="details">
+          {failureSentence(t, state)}
+          {state.error && (
+            <details>
+              <summary>{t("appUpdate.originalError")}</summary>
+              <pre>{state.error}</pre>
+            </details>
+          )}
+        </div>
+      )}
+    </PinnedNotice>
+  );
 }

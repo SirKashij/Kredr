@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use kredr_lib::app_update::{load_declined, save_declined, AppUpdateState, Phase};
+use kredr_lib::app_update::{
+    failure_cause, load_declined, save_declined, AppUpdateState, FailureCause, Phase, Step,
+};
 
 fn state() -> AppUpdateState {
     AppUpdateState::new("0.5.0", None)
@@ -84,7 +86,9 @@ fn aktualisieren_laesst_sich_nur_mit_angebot_anstossen() {
     assert!(!state.start_download());
     // Während des Downloads ändert eine Suche nichts.
     assert!(!state.found("0.7.0".into()));
-    assert!(!state.later());
+    // „Später“ blendet dann nur den Hinweis aus.
+    assert!(state.later());
+    assert_eq!(state.phase, Phase::Downloading);
 }
 
 #[test]
@@ -93,10 +97,94 @@ fn scheitert_die_aktualisierung_laesst_sie_sich_erneut_anstossen() {
     state.found("0.6.0".into());
     state.start_download();
 
-    state.fail("Signatur ungültig".into());
+    state.fail(FailureCause::Signature, "Signatur ungültig".into());
 
     assert_eq!(state.phase, Phase::Failed);
+    assert_eq!(state.cause, Some(FailureCause::Signature));
     assert_eq!(state.error.as_deref(), Some("Signatur ungültig"));
     assert!(state.start_download());
     assert_eq!(state.error, None);
+    assert_eq!(state.cause, None);
+}
+
+#[test]
+fn der_download_meldet_den_fortschritt_in_ganzen_prozent() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    state.start_download();
+    assert_eq!(state.progress, Some(0));
+
+    // Nur ein neuer ganzer Prozentwert ist eine Änderung.
+    assert!(state.downloaded(420, Some(1000)));
+    assert_eq!(state.progress, Some(42));
+    assert!(!state.downloaded(425, Some(1000)));
+    // Ohne bekannte Größe gibt es keinen Prozentwert.
+    assert!(state.downloaded(500, None));
+    assert_eq!(state.progress, None);
+}
+
+#[test]
+fn ein_weggeklickter_download_zeigt_nur_das_symbol() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    state.start_download();
+    assert!(!state.hidden);
+
+    assert!(state.later());
+
+    assert_eq!(state.phase, Phase::Downloading);
+    assert!(state.hidden);
+    // Die Version gilt dadurch nicht als abgelehnt.
+    assert_eq!(state.declined(), None);
+    // Ein Fehlschlag zeigt den Hinweis wieder.
+    state.fail(FailureCause::Network, "timeout".into());
+    assert!(!state.hidden);
+}
+
+#[test]
+fn aus_dem_symbol_angestossen_bleibt_der_hinweis_weg() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    state.later();
+
+    state.start_download();
+
+    assert!(state.hidden);
+}
+
+#[test]
+fn der_grund_eines_fehlschlags_wird_eingeordnet() {
+    use tauri_plugin_updater::Error;
+
+    let cases = [
+        (
+            Error::Network("timeout".into()),
+            Step::Download,
+            FailureCause::Network,
+        ),
+        (
+            Error::ReleaseNotFound,
+            Step::Download,
+            FailureCause::Network,
+        ),
+        (
+            Error::MissingSignedVersion,
+            Step::Download,
+            FailureCause::Signature,
+        ),
+        (
+            Error::SignatureUtf8("x".into()),
+            Step::Download,
+            FailureCause::Signature,
+        ),
+        (
+            Error::InvalidUpdaterFormat,
+            Step::Install,
+            FailureCause::Installer,
+        ),
+        (Error::FormatDate, Step::Download, FailureCause::Unknown),
+    ];
+    for (error, step, cause) in cases {
+        assert_eq!(failure_cause(&error, step), cause, "{error}");
+    }
 }

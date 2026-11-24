@@ -113,8 +113,12 @@ Die neue Version, die die Person mit „Später“ aufgeschoben hat. Kredr merkt
 _Vermeiden_: ignorierte Version, übersprungene Version
 
 **Symbol der Aktualisierung**:
-Der Pfeil nach oben mit Punkt unmittelbar über dem Zahnrad der Aktivitätsleiste. Er steht nach „Später“ oder einem Fehlschlag, bis aktualisiert ist, und öffnet ein Menü zum Aktualisieren und zu den Neuerungen. Im Code heißt er `AppUpdateButton`.
+Der Pfeil nach oben mit Punkt unmittelbar über dem Zahnrad der Aktivitätsleiste. Er steht nach „Später“ oder einem Fehlschlag, bis aktualisiert ist, und öffnet ein Menü zum Aktualisieren und zu den Neuerungen. Ist der Hinweis zu einem laufenden Download weggeklickt, zeigt er den Fortschritt als Ring. Im Code heißt er `AppUpdateButton`.
 _Vermeiden_: Badge, Update-Icon
+
+**Fehlschlag**:
+Eine von der Person ausgelöste Aktualisierung, die beim Herunterladen, bei der Signaturprüfung oder beim Start des Installers scheiterte. Ein Hinweis bietet „Erneut versuchen“ und nennt unter „Mehr Infos“ den Grund in einem Satz, den Originaltext zum Aufklappen. Eine gescheiterte automatische Suche ist kein Fehlschlag; sie bleibt stumm. Im Code heißt der eingeordnete Grund `FailureCause`.
+_Vermeiden_: Update-Fehler, Crash
 
 **Anlass**:
 Etwas, das beim Beenden eines Fensters verloren ginge oder abbräche: eine ungespeicherte Datei, ein laufender Prozess in einem Terminal, ein arbeitender Agent oder ein Agent im Hintergrund. Vor der Aktualisierung zählt auch ein Fenster, das seine Anlässe nicht nennt. Gibt es Anlässe, fragt Kredr nach. Im Code heißen sie `UpdateReasons`.

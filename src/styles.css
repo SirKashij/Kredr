@@ -403,6 +403,45 @@ button {
   overflow-wrap: anywhere;
 }
 
+.notice-body .details details {
+  margin-top: 4px;
+}
+
+.notice-body .details summary {
+  cursor: pointer;
+}
+
+.notice-body .details pre {
+  margin: 4px 0 0;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 11px;
+}
+
+/* Der Fortschritt des Downloads im Hinweis. */
+.notice.pinned .notice-body:has(.progress) {
+  align-self: stretch;
+}
+
+.notice-body .progress {
+  margin-top: 8px;
+  height: 4px;
+  border-radius: 2px;
+  background: #ffffff1a;
+  overflow: hidden;
+}
+
+.notice-body .progress > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s;
+}
+
+.notice-body .progress.indeterminate > div {
+  opacity: 0.5;
+}
+
 .notice-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1934,6 +1973,46 @@ button {
 /* Das Symbol der Aktualisierung über dem Zahnrad: hell, mit Punkt im Akzentblau. */
 .actbar button.app-update {
   color: var(--text);
+}
+
+/* Während eines weggeklickten Downloads: das Symbol mit dem Fortschritt als Ring. */
+.actbar .app-update.downloading {
+  width: 48px;
+  height: 48px;
+  padding: 12px;
+  position: relative;
+  color: var(--text);
+}
+
+.actbar .app-update .ring {
+  position: absolute;
+  inset: 0;
+  transform: rotate(-90deg);
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.actbar .app-update .ring .track {
+  stroke: #ffffff26;
+}
+
+.actbar .app-update .ring .value {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.3s;
+}
+
+.actbar .app-update .ring.indeterminate {
+  animation: app-update-spin 1.2s linear infinite;
+}
+
+@keyframes app-update-spin {
+  from {
+    transform: rotate(-90deg);
+  }
+  to {
+    transform: rotate(270deg);
+  }
 }
 
 .actbar .badge.dot {
