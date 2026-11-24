@@ -91,6 +91,10 @@ The installer adds “Open with Kredr” to the Explorer context menu and a fold
 > [!NOTE]
 > The installer is not signed, so Windows SmartScreen shows a warning on first launch. Click “More info” → “Run anyway” to start it.
 
+### Updates
+
+From version 0.6.0 on, Kredr updates itself. It looks for a new version on start and every 3 hours and offers it to you; nothing is installed until you click “Update now”. Before the installer starts, Kredr saves the layout of every window and brings all of them back afterwards. In the settings you can turn the search off, see the installed version and search right away with “Check now”. If you use 0.5.x or older, install the latest version once by hand.
+
 ### Requirements
 
 | What | Why |
