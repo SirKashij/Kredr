@@ -29,15 +29,17 @@ const none: AppUpdateState = {
 
 /**
  * Ein Kern, den der Test steuert: `announce` meldet allen Fenstern einen neuen
- * Zustand, `installSteps` sind die Zustände, die er beim Aktualisieren meldet.
- * `windows` sind die Anlässe der offenen Fenster, `answer` ist die Antwort der
- * Person auf die Rückfrage. Wie der echte Kern lässt er nur ein Fenster
- * zugleich fragen und meldet die Rückfrage allen Fenstern. `portFor` ist der
- * Port eines weiteren Fensters.
+ * Zustand, `downloadSteps` sind die Zustände, die er während des Downloads
+ * meldet. Danach hält das Fenster wie im echten Kern wieder die Rückfrage, bis
+ * es installiert. `windows` sind die Anlässe der offenen Fenster, `answer` ist
+ * die Antwort der Person auf die Rückfrage. Wie der echte Kern lässt er nur
+ * ein Fenster zugleich fragen und meldet die Rückfrage allen Fenstern.
+ * `portFor` ist der Port eines weiteren Fensters, `whileDownloading` lässt den
+ * Test während des Downloads etwas ändern.
  */
 function fakeCore(
   initial: AppUpdateState,
-  installSteps: AppUpdateState[] = [],
+  downloadSteps: AppUpdateState[] = [],
   windows: UpdateReasons[] = [quiet],
   answer: boolean | (() => Promise<boolean>) = true,
 ) {
@@ -45,17 +47,21 @@ function fakeCore(
   const calls: string[] = [];
   const asked: UpdateReasons[] = [];
   let state = initial;
+  let duringDownload = () => {};
   // Beginnt er in der Rückfrage, kam sie aus dem Angebot.
   let beforeConfirm: AppUpdateState =
     initial.phase === "confirm" ? { ...initial, phase: "offered" } : initial;
   /** Das Fenster, das die Rückfrage hält. */
   let asker: string | null = initial.phase === "confirm" ? "main" : null;
+  /** Ob die neue Version geladen ist und auf die Installation wartet. */
+  let installerReady = false;
   const announce = (next: AppUpdateState) => {
     state = next;
     listeners.forEach((listener) => listener(next));
   };
   const portFor = (window: string): AppUpdatePort => {
     const named = (call: string) => (window === "main" ? call : `${call} ${window}`);
+    const holds = () => state.phase === "confirm" && asker === window;
     return {
       current: async () => state,
       check: async () => {
@@ -82,24 +88,42 @@ function fakeCore(
         return true;
       },
       cancel: async () => {
-        if (state.phase !== "confirm" || asker !== window) return;
+        if (!holds()) return;
         calls.push(named("cancel"));
         asker = null;
+        installerReady = false;
         announce(beforeConfirm);
       },
-      install: async () => {
-        calls.push(named("install"));
-        for (const step of installSteps) {
+      download: async () => {
+        calls.push(named("download"));
+        if (!holds() || installerReady) return false;
+        for (const step of downloadSteps) {
           await Promise.resolve();
           announce(step);
         }
+        duringDownload();
+        await Promise.resolve();
+        installerReady = true;
+        announce({ ...state, phase: "confirm", progress: null });
+        return true;
+      },
+      install: async () => {
+        calls.push(named("install"));
+        if (!holds() || !installerReady) return;
+        asker = null;
+        await Promise.resolve();
+        announce({ ...state, phase: "installing", progress: null });
       },
       later: async () => {
         calls.push(named("later"));
       },
       openUrl: (url) => calls.push(`open ${url}`),
-      reasons: async () => windows,
+      reasons: async () => {
+        calls.push(named("reasons"));
+        return windows;
+      },
       confirm: async (reasons) => {
+        calls.push(named("confirm"));
         asked.push(reasons);
         return typeof answer === "boolean" ? answer : answer();
       },
@@ -108,7 +132,21 @@ function fakeCore(
       },
     };
   };
-  return { port: portFor("main"), portFor, announce, calls, asked };
+  return {
+    port: portFor("main"),
+    portFor,
+    announce,
+    calls,
+    asked,
+    /** Was während des Downloads in den Fenstern geschieht. */
+    whileDownloading(change: () => void) {
+      duringDownload = change;
+    },
+    /** Neue Anlässe in den Fenstern. */
+    setWindows(next: UpdateReasons[]) {
+      windows = next;
+    },
+  };
 }
 
 /** Wartet, bis alle anstehenden Antworten des Kerns angekommen sind. */
@@ -151,10 +189,7 @@ test("eine neue Version ergibt ein Angebot", async () => {
 
 test("„Jetzt aktualisieren“ führt über den Download zur Installation", async () => {
   const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
-  const core = fakeCore(offered, [
-    { ...offered, phase: "downloading" },
-    { ...offered, phase: "installing" },
-  ]);
+  const core = fakeCore(offered, [{ ...offered, phase: "downloading" }]);
   const update = new AppUpdate(core.port);
   await settled();
   const phases: string[] = [];
@@ -162,8 +197,8 @@ test("„Jetzt aktualisieren“ führt über den Download zur Installation", asy
 
   await update.updateNow();
 
-  expect(core.calls).toEqual(["ask", "save", "install"]);
-  expect(phases).toEqual(["confirm", "downloading", "installing"]);
+  expect(core.calls).toEqual(["ask", "reasons", "download", "reasons", "save", "install"]);
+  expect(phases).toEqual(["confirm", "downloading", "confirm", "installing"]);
   expect(showsNotice(update.snapshot())).toBe(true);
 });
 
@@ -176,7 +211,7 @@ test("ein zweiter Klick während des Downloads startet keine zweite Aktualisieru
   await update.updateNow();
   await update.updateNow();
 
-  expect(core.calls).toEqual(["ask", "save", "install"]);
+  expect(core.calls).toEqual(["ask", "reasons", "download", "reasons", "save", "install"]);
 });
 
 test("scheitert der Aufruf des Kerns, zeigt der Hinweis den Fehlschlag mit Originaltext", async () => {
@@ -204,13 +239,16 @@ test("der Fortschritt des Downloads kommt im Hinweis an", async () => {
   const update = new AppUpdate(core.port);
   await settled();
   const progress: (number | null)[] = [];
-  update.subscribe(() => progress.push(update.snapshot().progress));
+  update.subscribe(() => {
+    const { phase, progress: now } = update.snapshot();
+    if (phase === "downloading") progress.push(now);
+    else expect(showsIcon(update.snapshot())).toBe(false);
+  });
 
   await update.updateNow();
 
-  expect(progress).toEqual([null, 0, 42]);
+  expect(progress).toEqual([0, 42]);
   expect(showsNotice(update.snapshot())).toBe(true);
-  expect(showsIcon(update.snapshot())).toBe(false);
 });
 
 test("ist der Hinweis zum Download weggeklickt, zeigt das Symbol den Fortschritt", async () => {
@@ -269,10 +307,13 @@ test("„Erneut versuchen“ startet Download und Installation neu", async () =>
   const update = new AppUpdate(core.port);
   await settled();
 
+  const phases: string[] = [];
+  update.subscribe(() => phases.push(update.snapshot().phase));
+
   await update.updateNow();
 
-  expect(core.calls).toEqual(["ask", "save", "install"]);
-  expect(update.snapshot().phase).toBe("downloading");
+  expect(core.calls).toEqual(["ask", "reasons", "download", "reasons", "save", "install"]);
+  expect(phases).toContain("downloading");
 });
 
 test("scheitert die automatische Suche, meldet Kredr nichts", async () => {
@@ -359,6 +400,9 @@ test("aus dem Menü des Symbols lässt sich aktualisieren und die Neuerungen öf
   expect(core.calls).toEqual([
     "open https://github.com/SirKashij/Kredr/releases/tag/v0.6.0",
     "ask",
+    "reasons",
+    "download",
+    "reasons",
     "save",
     "install",
   ]);
@@ -373,7 +417,7 @@ test("ohne Anlass in einem Fenster aktualisiert Kredr ohne Rückfrage", async ()
   await update.updateNow();
 
   expect(core.asked).toEqual([]);
-  expect(core.calls).toEqual(["ask", "save", "install"]);
+  expect(core.calls).toEqual(["ask", "reasons", "download", "reasons", "save", "install"]);
 });
 
 test("Anlässe aus mehreren Fenstern erscheinen zusammen in einer Rückfrage", async () => {
@@ -401,7 +445,16 @@ test("Anlässe aus mehreren Fenstern erscheinen zusammen in einer Rückfrage", a
       silentWindows: 0,
     },
   ]);
-  expect(core.calls).toEqual(["ask", "save", "install"]);
+  // Nach dem Download gibt es keinen neuen Anlass, also keine zweite Rückfrage.
+  expect(core.calls).toEqual([
+    "ask",
+    "reasons",
+    "confirm",
+    "download",
+    "reasons",
+    "save",
+    "install",
+  ]);
 });
 
 test("ein Fenster, das nicht antwortet, verlangt die Rückfrage", async () => {
@@ -413,7 +466,7 @@ test("ein Fenster, das nicht antwortet, verlangt die Rückfrage", async () => {
   await update.updateNow();
 
   expect(core.asked).toEqual([{ ...quiet, silentWindows: 1 }]);
-  expect(core.calls).toEqual(["ask", "cancel"]);
+  expect(core.calls).toEqual(["ask", "reasons", "confirm", "cancel"]);
 });
 
 const de: Translate = (key, values) => translate("de", key, values);
@@ -446,7 +499,7 @@ test("„Später“ in der Rückfrage bricht die Aktualisierung ab", async () =>
   await update.updateNow();
 
   expect(core.asked).toHaveLength(1);
-  expect(core.calls).toEqual(["ask", "cancel"]);
+  expect(core.calls).toEqual(["ask", "reasons", "confirm", "cancel"]);
   expect(update.snapshot().phase).toBe("offered");
 });
 
@@ -474,7 +527,7 @@ test("während der Rückfrage zeigt ein zweites Fenster sie ohne Aktionen und fr
   await second.updateNow();
   await second.later();
   expect(core.asked).toHaveLength(1);
-  expect(core.calls).toEqual(["ask"]);
+  expect(core.calls).toEqual(["ask", "reasons", "confirm"]);
 
   person.give(false);
   await updating;
@@ -493,7 +546,16 @@ test("fragt schon ein anderes Fenster, öffnet ein Klick keine zweite Rückfrage
   await Promise.all([first.updateNow(), second.updateNow()]);
 
   expect(core.asked).toHaveLength(1);
-  expect(core.calls).toEqual(["ask", "ask zweites", "save", "install"]);
+  expect(core.calls).toEqual([
+    "ask",
+    "ask zweites",
+    "reasons",
+    "confirm",
+    "download",
+    "reasons",
+    "save",
+    "install",
+  ]);
 });
 
 test("eine Rückfrage aus dem Symbol zeigt in den anderen Fenstern nur das Symbol, ohne Menü", async () => {
@@ -538,4 +600,88 @@ test("lädt das fragende Fenster neu, endet seine Rückfrage", async () => {
 
   expect(core.calls).toEqual(["cancel"]);
   expect(other.snapshot().phase).toBe("offered");
+});
+
+test("die Aufteilung wird erst nach dem Download gespeichert, unmittelbar vor der Installation", async () => {
+  const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
+  const core = fakeCore(offered, [{ ...offered, phase: "downloading", progress: 0 }]);
+  const update = new AppUpdate(core.port);
+  await settled();
+
+  await update.updateNow();
+
+  const order = core.calls;
+  expect(order.indexOf("save")).toBeGreaterThan(order.indexOf("download"));
+  expect(order.slice(-2)).toEqual(["save", "install"]);
+});
+
+test("ein Anlass, der während des Downloads entsteht, löst vor der Installation eine Rückfrage aus", async () => {
+  const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
+  const core = fakeCore(offered, [{ ...offered, phase: "downloading", progress: 0 }]);
+  core.whileDownloading(() => core.setWindows([quiet, { ...quiet, workingAgents: 1 }]));
+  const update = new AppUpdate(core.port);
+  await settled();
+
+  await update.updateNow();
+
+  expect(core.asked).toEqual([{ ...quiet, workingAgents: 1 }]);
+  expect(core.calls).toEqual([
+    "ask",
+    "reasons",
+    "download",
+    "reasons",
+    "confirm",
+    "save",
+    "install",
+  ]);
+});
+
+test("„Später“ in der Rückfrage nach dem Download installiert nicht", async () => {
+  const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
+  const core = fakeCore(
+    offered,
+    [{ ...offered, phase: "downloading", progress: 0 }],
+    [quiet],
+    false,
+  );
+  core.whileDownloading(() => core.setWindows([{ ...quiet, unsavedFiles: 1 }]));
+  const update = new AppUpdate(core.port);
+  await settled();
+
+  await update.updateNow();
+
+  expect(core.calls).toEqual(["ask", "reasons", "download", "reasons", "confirm", "cancel"]);
+  expect(update.snapshot().phase).toBe("offered");
+});
+
+test("ohne neuen Anlass nach dem Download fragt Kredr kein zweites Mal", async () => {
+  const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
+  const busy = { ...quiet, workingAgents: 2, unsavedFiles: 1 };
+  const core = fakeCore(offered, [], [busy]);
+  // Ein Agent ist fertig geworden; das ist weniger, nicht neu.
+  core.whileDownloading(() => core.setWindows([{ ...busy, workingAgents: 1 }]));
+  const update = new AppUpdate(core.port);
+  await settled();
+
+  await update.updateNow();
+
+  expect(core.asked).toEqual([busy]);
+  expect(core.calls.slice(-2)).toEqual(["save", "install"]);
+});
+
+test("scheitert der Download, wird weder gespeichert noch installiert", async () => {
+  const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
+  const core = fakeCore(offered);
+  core.port.download = async () => {
+    core.calls.push("download");
+    core.announce({ ...offered, phase: "failed", cause: "network", error: "timeout" });
+    return false;
+  };
+  const update = new AppUpdate(core.port);
+  await settled();
+
+  await update.updateNow();
+
+  expect(core.calls).toEqual(["ask", "reasons", "download"]);
+  expect(update.snapshot().phase).toBe("failed");
 });

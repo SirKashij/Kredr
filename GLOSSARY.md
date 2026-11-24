@@ -132,7 +132,7 @@ Etwas, das beim Beenden eines Fensters verloren ginge oder abbräche: eine unges
 _Vermeiden_: Grund, Blocker, Warnung
 
 **Rückfrage vor der Aktualisierung**:
-Der eine Dialog, der vor einer Aktualisierung die Anlässe aller Fenster zusammengezählt nennt, mit „Später“ (bricht ab) und „Trotzdem aktualisieren“. Ohne Anlass entfällt er. Der Kern führt sie als Phase `confirm`, sobald ein Fenster „Jetzt aktualisieren“ auslöst, auch wenn der Dialog dann entfällt: Nur dieses **fragende Fenster** darf sie beenden oder den Download beginnen, alle anderen zeigen sie ohne Aktionen. Schließt sich das fragende Fenster, endet sie wie mit „Später“.
+Der Dialog, der vor einer Aktualisierung die Anlässe aller Fenster zusammengezählt nennt, mit „Später“ (bricht ab) und „Trotzdem aktualisieren“. Ohne Anlass entfällt er. Nach dem Download prüft das fragende Fenster die Anlässe erneut. Gibt es einen **neuen Anlass** (eine Art mit mehr Fällen als vorher), kommt der Dialog ein zweites Mal. Erst danach speichern alle Fenster ihre Aufteilung, und der Installer startet. Der Kern führt die Rückfrage als Phase `confirm`, sobald ein Fenster „Jetzt aktualisieren“ auslöst, auch wenn der Dialog dann entfällt, und nach dem Download noch einmal, bis installiert wird. Nur dieses **fragende Fenster** darf sie beenden, den Download beginnen oder installieren, alle anderen zeigen sie ohne Aktionen. Schließt sich das fragende Fenster oder lädt es neu, endet sie wie mit „Später“, während des Downloads spätestens mit dessen Ende.
 _Vermeiden_: Warnung, Popup
 
 **Rundfrage**:

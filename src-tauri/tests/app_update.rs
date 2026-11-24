@@ -349,6 +349,83 @@ fn der_download_meldet_den_fortschritt_in_ganzen_prozent() {
 }
 
 #[test]
+fn nach_dem_download_haelt_das_fenster_wieder_die_rueckfrage() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    update_now(&mut state);
+    state.downloaded(1000, Some(1000));
+
+    assert!(state.finish_download());
+
+    // Bis zur Installation prüft das Fenster die Anlässe erneut; solange fragt kein anderes.
+    assert_eq!(state.phase, Phase::Confirm);
+    assert_eq!(state.progress, None);
+    assert!(!state.ask(OTHER));
+    assert!(!state.start_install(OTHER));
+    assert!(state.start_install(MAIN));
+    assert_eq!(state.phase, Phase::Installing);
+}
+
+#[test]
+fn ohne_fertigen_download_wird_nicht_installiert() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    state.ask(MAIN);
+    assert!(!state.start_install(MAIN), "vor dem Download");
+
+    state.start_download(MAIN);
+    assert!(!state.start_install(MAIN), "während des Downloads");
+    assert_eq!(state.phase, Phase::Downloading);
+}
+
+#[test]
+fn spaeter_nach_dem_download_fuehrt_zum_angebot_zurueck() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    update_now(&mut state);
+    state.finish_download();
+
+    assert!(state.cancel_confirm(MAIN));
+
+    assert_eq!(state.phase, Phase::Offered);
+    // Die geladene Version gilt nicht mehr; eine neue Rückfrage lädt neu.
+    state.ask(MAIN);
+    assert!(!state.start_install(MAIN));
+}
+
+#[test]
+fn laedt_das_fenster_waehrend_des_downloads_neu_haengt_danach_keine_rueckfrage() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    update_now(&mut state);
+
+    // Nach dem Neuladen führt das Fenster die Aktualisierung nicht mehr fort.
+    state.cancel_confirm(MAIN);
+    assert_eq!(state.phase, Phase::Downloading, "der Download läuft weiter");
+    state.finish_download();
+
+    assert_eq!(state.phase, Phase::Offered);
+    assert!(!state.start_install(MAIN));
+    assert!(
+        state.ask(OTHER),
+        "die Aktualisierung lässt sich erneut anstoßen"
+    );
+}
+
+#[test]
+fn ein_download_endet_nur_einmal() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    state.ask(MAIN);
+    assert!(!state.finish_download(), "ohne laufenden Download");
+
+    state.start_download(MAIN);
+    state.fail(FailureCause::Network, "timeout".into());
+    assert!(!state.finish_download(), "nach einem Fehlschlag");
+    assert_eq!(state.phase, Phase::Failed);
+}
+
+#[test]
 fn ein_weggeklickter_download_zeigt_nur_das_symbol() {
     let mut state = state();
     state.found("0.6.0".into());

@@ -48,6 +48,14 @@ export function hasReasons(reasons: UpdateReasons): boolean {
   return KINDS.some((kind) => reasons[kind] > 0);
 }
 
+/**
+ * Ob `now` einen Anlass hat, den `before` nicht hatte: eine Art mit mehr
+ * Fällen als zuvor. Weniger Fälle sind kein neuer Anlass.
+ */
+export function hasNewReasons(now: UpdateReasons, before: UpdateReasons): boolean {
+  return KINDS.some((kind) => now[kind] > before[kind]);
+}
+
 /** Die Texte zu jedem Anlass, in der Reihenfolge der Rückfrage. */
 const REASON_TEXTS: [keyof UpdateReasons, one: MessageKey, other: MessageKey][] = [
   ["workingAgents", "appUpdate.reason.workingAgents.one", "appUpdate.reason.workingAgents.other"],

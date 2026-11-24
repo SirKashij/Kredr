@@ -70,6 +70,9 @@ pub struct AppUpdateState {
     /// Die Phase vor der Rückfrage; „Später“ in der Rückfrage kehrt zu ihr zurück.
     #[serde(skip)]
     before_confirm: Phase,
+    /// Ob der Installer geladen ist und auf die Installation wartet.
+    #[serde(skip)]
+    installer_ready: bool,
 }
 
 impl AppUpdateState {
@@ -86,6 +89,7 @@ impl AppUpdateState {
             declined,
             asker: None,
             before_confirm: Phase::None,
+            installer_ready: false,
         }
     }
 
@@ -175,14 +179,22 @@ impl AppUpdateState {
     }
 
     /// „Später“ in der Rückfrage von `window`, oder `window` schließt sich
-    /// mit offener Rückfrage: Der Zustand kehrt zur Phase davor zurück. Gibt
-    /// zurück, ob sich der Zustand geändert hat.
+    /// oder lädt neu, solange es die Rückfrage hält: Der Zustand kehrt zur
+    /// Phase davor zurück. Während des Downloads läuft dieser weiter, aber
+    /// `window` bekommt die Rückfrage danach nicht zurück, denn es führt die
+    /// Aktualisierung nicht mehr fort. Gibt zurück, ob sich der Zustand
+    /// sichtbar geändert hat.
     pub fn cancel_confirm(&mut self, window: &str) -> bool {
+        if self.phase == Phase::Downloading && self.asker.as_deref() == Some(window) {
+            self.asker = None;
+            return false;
+        }
         let cancels = self.asks_in(window);
         if cancels {
             self.phase = self.before_confirm;
             self.hidden = false;
             self.asker = None;
+            self.installer_ready = false;
         }
         cancels
     }
@@ -193,11 +205,12 @@ impl AppUpdateState {
     }
 
     /// „Trotzdem aktualisieren“ in `window`, oder es gab keinen Anlass für
-    /// eine Rückfrage: Der Download beginnt, wenn `window` die Rückfrage hält.
+    /// eine Rückfrage: Der Download beginnt, wenn `window` die Rückfrage hält
+    /// und noch nichts geladen ist. `window` bekommt die Rückfrage nach dem
+    /// Download zurück.
     pub fn start_download(&mut self, window: &str) -> bool {
-        let starts = self.asks_in(window);
+        let starts = self.asks_in(window) && !self.installer_ready;
         if starts {
-            self.asker = None;
             self.phase = Phase::Downloading;
             self.progress = Some(0);
             self.cause = None;
@@ -220,15 +233,49 @@ impl AppUpdateState {
         changes
     }
 
-    /// Der Download ist fertig und geprüft; der Installer startet.
-    pub fn start_install(&mut self) {
-        self.phase = Phase::Installing;
-        self.progress = None;
+    /// Der Download ist fertig und geprüft. Das Fenster, das ihn angestoßen
+    /// hat, hält wieder die Rückfrage: Es prüft die Anlässe erneut, denn
+    /// während des Downloads können neue entstanden sein. Hat es sich
+    /// inzwischen geschlossen oder neu geladen, kehrt der Zustand zur Phase
+    /// vor der Rückfrage zurück. Gibt zurück, ob ein Download lief.
+    pub fn finish_download(&mut self) -> bool {
+        let finishes = self.phase == Phase::Downloading;
+        if finishes {
+            self.progress = None;
+            if self.asker.is_some() {
+                self.phase = Phase::Confirm;
+                self.installer_ready = true;
+            } else {
+                self.phase = self.before_confirm;
+                self.hidden = false;
+            }
+        }
+        finishes
+    }
+
+    /// Ob der geladene Installer darauf wartet, dass das fragende Fenster installiert.
+    pub fn installer_ready(&self) -> bool {
+        self.installer_ready
+    }
+
+    /// `window` hält die Rückfrage nach dem Download und installiert: Der
+    /// Installer startet. Gibt zurück, ob `window` das darf.
+    pub fn start_install(&mut self, window: &str) -> bool {
+        let starts = self.asks_in(window) && self.installer_ready;
+        if starts {
+            self.phase = Phase::Installing;
+            self.progress = None;
+            self.asker = None;
+            self.installer_ready = false;
+        }
+        starts
     }
 
     /// Die Aktualisierung ist gescheitert; der Hinweis nennt den Grund, und
     /// sie lässt sich erneut anstoßen.
     pub fn fail(&mut self, cause: FailureCause, error: String) {
+        self.installer_ready = false;
+        self.asker = None;
         self.phase = Phase::Failed;
         self.progress = None;
         self.hidden = false;
@@ -333,6 +380,9 @@ pub struct AppUpdates {
     /// Wo die abgelehnte Version liegt; ohne Benutzerdatenverzeichnis nirgends.
     dir: Option<PathBuf>,
     auto: Mutex<AutoCheck>,
+    /// Der geladene und geprüfte Installer, bis er installiert wird oder die
+    /// Rückfrage nach dem Download endet.
+    installer: Mutex<Option<Vec<u8>>>,
 }
 
 /// Merkt sich, ob die Suche von selbst an ist, damit Kredr beim Anschalten
@@ -364,6 +414,20 @@ impl AppUpdates {
             inner: Mutex::new((AppUpdateState::new(installed, declined), None)),
             dir,
             auto: Mutex::new(AutoCheck::new(auto_check)),
+            installer: Mutex::new(None),
+        }
+    }
+
+    /// Beendet die Rückfrage von `window`, wie mit „Später“; ein geladener
+    /// Installer wird verworfen.
+    fn cancel(&self, app: &AppHandle, window: &str) {
+        let mut cancelled = false;
+        self.change(app, |state, _| {
+            cancelled = state.cancel_confirm(window);
+            cancelled
+        });
+        if cancelled {
+            self.installer.lock().unwrap().take();
         }
     }
 
@@ -616,46 +680,46 @@ pub fn app_update_ask(
 /// davor zurück.
 #[tauri::command]
 pub fn app_update_cancel(app: AppHandle, window: tauri::Window, updates: State<'_, AppUpdates>) {
-    updates.change(&app, |state, _| state.cancel_confirm(window.label()));
+    updates.cancel(&app, window.label());
 }
 
 /// Ein Fenster hat sich geschlossen. Hielt es die Rückfrage, endet sie wie
 /// mit „Später“, damit kein Fenster in ihr hängen bleibt.
 pub fn window_closed(window: &tauri::Window) {
     if let Some(updates) = window.try_state::<AppUpdates>() {
-        updates.change(window.app_handle(), |state, _| {
-            state.cancel_confirm(window.label())
-        });
+        updates.cancel(window.app_handle(), window.label());
     }
 }
 
-/// Lädt die neue Version, prüft ihre Signatur und startet den Installer im
-/// Modus `passive`. Er beendet Kredr und startet es nach der Installation neu.
-/// Den Fortschritt des Downloads meldet der Zustand in ganzen Prozent.
-/// Scheitert ein Schritt, meldet der Zustand den eingeordneten Grund und den
-/// Originaltext. Nur das Fenster, das die Rückfrage hält, kann installieren.
-/// Ohne `Update` endet nur die Rückfrage; ein `Update` kommt nur aus einer
-/// Suche, die Entwicklungsfassung hat deshalb nie eins.
+/// Lädt die neue Version und prüft ihre Signatur. Den Fortschritt meldet der
+/// Zustand in ganzen Prozent. Danach hält `window` wieder die Rückfrage: Es
+/// prüft die Anlässe erneut, speichert die Aufteilungen und installiert mit
+/// `app_update_install`, oder es bricht ab. Gibt zurück, ob die Version
+/// bereitliegt. Scheitert der Download, meldet der Zustand den eingeordneten
+/// Grund und den Originaltext. Nur das Fenster, das die Rückfrage hält, kann
+/// laden. Ohne `Update` endet nur die Rückfrage; ein `Update` kommt nur aus
+/// einer Suche, die Entwicklungsfassung hat deshalb nie eins.
 #[tauri::command]
-pub async fn app_update_install(
+pub async fn app_update_download(
     app: AppHandle,
     window: tauri::Window,
     updates: State<'_, AppUpdates>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
+    let label = window.label().to_owned();
     let mut pending = None;
     updates.change(&app, |state, update| {
         let Some(update) = update.clone() else {
             // Ohne `Update` gibt es nichts zu laden; die Rückfrage darf nicht hängen bleiben.
-            return state.cancel_confirm(window.label());
+            return state.cancel_confirm(&label);
         };
-        let starts = state.start_download(window.label());
+        let starts = state.start_download(&label);
         if starts {
             pending = Some(update);
         }
         starts
     });
     let Some(update) = pending else {
-        return Ok(());
+        return Ok(false);
     };
     let mut done = 0u64;
     let downloaded = update
@@ -667,22 +731,58 @@ pub async fn app_update_install(
             || {},
         )
         .await;
-    let result = match downloaded {
+    match downloaded {
         Ok(bytes) => {
+            let mut ready = false;
             updates.change(&app, |state, _| {
-                state.start_install();
+                let finishes = state.finish_download();
+                ready = state.installer_ready();
+                // Im selben Schritt wie die Rückfrage, damit das Fenster nie
+                // ohne Installer installieren will.
+                if ready {
+                    *updates.installer.lock().unwrap() = Some(bytes);
+                }
+                finishes
+            });
+            Ok(ready)
+        }
+        Err(error) => {
+            updates.change(&app, |state, _| {
+                state.fail(failure_cause(&error, Step::Download), error.to_string());
                 true
             });
-            update
-                .install(bytes)
-                .map_err(|error| (failure_cause(&error, Step::Install), error))
+            Ok(false)
         }
-        Err(error) => Err((failure_cause(&error, Step::Download), error)),
+    }
+}
+
+/// Startet den geladenen Installer im Modus `passive`. Er beendet Kredr und
+/// startet es nach der Installation neu; unmittelbar davor merkt sich Kredr
+/// die offenen Fenster (`on_before_exit`). Nur das Fenster, das nach dem
+/// Download die Rückfrage hält, kann installieren. Scheitert der Start,
+/// meldet der Zustand den eingeordneten Grund und den Originaltext.
+#[tauri::command]
+pub async fn app_update_install(
+    app: AppHandle,
+    window: tauri::Window,
+    updates: State<'_, AppUpdates>,
+) -> Result<(), String> {
+    let mut pending = None;
+    updates.change(&app, |state, update| {
+        let mut installer = updates.installer.lock().unwrap();
+        let starts = update.is_some() && installer.is_some() && state.start_install(window.label());
+        if starts {
+            pending = update.clone().zip(installer.take());
+        }
+        starts
+    });
+    let Some((update, bytes)) = pending else {
+        return Ok(());
     };
-    if let Err((cause, error)) = result {
+    if let Err(error) = update.install(bytes) {
         crate::projects::forget_windows_for_restart(&app);
         updates.change(&app, |state, _| {
-            state.fail(cause, error.to_string());
+            state.fail(failure_cause(&error, Step::Install), error.to_string());
             true
         });
     }

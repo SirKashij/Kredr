@@ -6,7 +6,7 @@
  */
 
 import type { MessageKey, Translate } from "./i18n/i18n";
-import { hasReasons, sumReasons, type UpdateReasons } from "./updateReasons";
+import { hasNewReasons, hasReasons, sumReasons, type UpdateReasons } from "./updateReasons";
 
 /** Wie weit die Aktualisierung ist. */
 export type Phase =
@@ -67,8 +67,15 @@ export interface AppUpdatePort {
   /** Beendet die Rückfrage dieses Fensters; der Kern kehrt zur Phase davor zurück. */
   cancel(): Promise<void>;
   /**
-   * Lädt die neue Version, prüft ihre Signatur, installiert sie und startet
-   * Kredr neu. Nur aus der Rückfrage dieses Fensters heraus.
+   * Lädt die neue Version und prüft ihre Signatur. Nur aus der Rückfrage
+   * dieses Fensters heraus. `true` heißt: Sie liegt bereit, und das Fenster
+   * hält wieder die Rückfrage, bis es installiert oder abbricht. Bei `false`
+   * meldet der Kern den Fehlschlag, oder es gab nichts zu laden.
+   */
+  download(): Promise<boolean>;
+  /**
+   * Installiert die geladene Version und startet Kredr neu; der Kern merkt
+   * sich dabei die offenen Fenster. Nur nach `download` in diesem Fenster.
    */
   install(): Promise<void>;
   /** Die Anlässe jedes offenen Fensters; ein Fenster ohne Antwort als `SILENT_WINDOW`. */
@@ -210,11 +217,14 @@ export class AppUpdate {
    * „Jetzt aktualisieren“: lädt die neue Version und installiert sie; Kredr
    * beendet dabei alle Fenster und startet neu. Gibt es in einem Fenster etwas,
    * das verloren ginge oder abbräche, fasst eine Rückfrage die Anlässe aller
-   * Fenster zusammen; „Später“ bricht ab. Vorher speichert jedes Fenster seine
-   * Aufteilung. Den Fortschritt melden die Phasen des Kerns. Solange die
-   * Rückfrage offen ist, meldet der Kern sie allen Fenstern als `confirm` und
-   * lässt kein zweites Fenster fragen. Läuft schon eine Aktualisierung oder
-   * Rückfrage, geschieht nichts.
+   * Fenster zusammen; „Später“ bricht ab. Nach dem Download prüft Kredr die
+   * Anlässe erneut, denn er kann dauern: Ist ein neuer dazugekommen, kommt die
+   * Rückfrage noch einmal. Erst unmittelbar vor der Installation speichert
+   * jedes Fenster seine Aufteilung; gleich danach merkt sich der Kern beim
+   * Start des Installers die offenen Fenster. Den Fortschritt melden die Phasen des Kerns.
+   * Solange die Rückfrage offen ist, meldet der Kern sie allen Fenstern als
+   * `confirm` und lässt kein zweites Fenster fragen. Läuft schon eine
+   * Aktualisierung oder Rückfrage, geschieht nichts.
    */
   async updateNow(): Promise<void> {
     if (!offersActions(this.state)) return;
@@ -222,11 +232,13 @@ export class AppUpdate {
     try {
       if (!(await this.port.ask())) return;
       asking = true;
-      const reasons = sumReasons(await this.port.reasons());
-      if (hasReasons(reasons) && !(await this.port.confirm(reasons))) {
-        await this.port.cancel();
-        return;
-      }
+      const before = sumReasons(await this.port.reasons());
+      if (!(await this.confirmed(before, hasReasons(before)))) return;
+      asking = false;
+      if (!(await this.port.download())) return;
+      asking = true;
+      const after = sumReasons(await this.port.reasons());
+      if (!(await this.confirmed(after, hasNewReasons(after, before)))) return;
       // Die Aufteilung ist Komfort; an ihr scheitert die Aktualisierung nicht.
       await this.port.saveArrangements().catch(() => {});
       asking = false;
@@ -243,6 +255,16 @@ export class AppUpdate {
         error: String(reason),
       });
     }
+  }
+
+  /**
+   * Fragt mit den Anlässen `reasons` nach, wenn `ask` es verlangt. „Später“
+   * beendet die Rückfrage im Kern. Gibt zurück, ob die Aktualisierung weitergeht.
+   */
+  private async confirmed(reasons: UpdateReasons, ask: boolean): Promise<boolean> {
+    if (!ask || (await this.port.confirm(reasons))) return true;
+    await this.port.cancel();
+    return false;
   }
 
   /**

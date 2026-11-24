@@ -159,6 +159,7 @@ pub fn run() {
             app_update::app_update_state,
             app_update::app_update_later,
             app_update::app_update_check,
+            app_update::app_update_download,
             app_update::app_update_install,
             app_update::app_update_ask,
             app_update::app_update_cancel,

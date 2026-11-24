@@ -50,6 +50,7 @@ export function coreAppUpdatePort(t: () => Translate): AppUpdatePort {
     },
     ask: () => invoke<boolean>("app_update_ask"),
     cancel: () => invoke("app_update_cancel"),
+    download: () => invoke<boolean>("app_update_download"),
     install: () => invoke("app_update_install"),
     later: () => invoke("app_update_later"),
     openUrl,
@@ -88,8 +89,9 @@ const SIMULATED_ERRORS: Record<FailureCause, string> = {
 
 /**
  * Ein Port, der eine neue Version nur vorspielt: Er bietet `version` an,
- * fragt wie die echte Aktualisierung alle Fenster nach Anlässen, „lädt“ und
- * „installiert“ sie und kehrt dann zum Angebot zurück, statt neu zu starten.
+ * fragt wie die echte Aktualisierung alle Fenster nach Anlässen, „lädt“ sie,
+ * fragt erneut, lässt alle Fenster ihre Aufteilung speichern, „installiert“
+ * sie und kehrt dann zum Angebot zurück, statt neu zu starten.
  * Mit `failure` scheitert er an diesem Grund. Den Zustand hält nur das
  * Fenster, das ihn benutzt.
  */
@@ -109,6 +111,8 @@ export function simulatedAppUpdatePort(
   };
   /** Der Zustand vor der Rückfrage; „Später“ in ihr kehrt zu ihm zurück. */
   let beforeConfirm = state;
+  /** Ob die neue Version „geladen“ ist und auf die Installation wartet. */
+  let installerReady = false;
   const listeners = new Set<(state: AppUpdateState) => void>();
   const announce = (patch: Partial<AppUpdateState>) => {
     state = { ...state, ...patch };
@@ -139,10 +143,11 @@ export function simulatedAppUpdatePort(
       return true;
     },
     cancel: async () => {
+      installerReady = false;
       if (state.phase === "confirm") announce(beforeConfirm);
     },
-    install: async () => {
-      if (state.phase !== "confirm") return;
+    download: async () => {
+      if (state.phase !== "confirm" || installerReady) return false;
       announce({
         phase: "downloading",
         progress: 0,
@@ -151,9 +156,19 @@ export function simulatedAppUpdatePort(
       });
       for (let progress = SIMULATED_CHUNK; progress <= 100; progress += SIMULATED_CHUNK) {
         await wait(SIMULATED_CHUNK_EVERY);
-        if (failure && failure !== "installer" && progress > 50) return fail(failure);
+        if (failure && failure !== "installer" && progress > 50) {
+          fail(failure);
+          return false;
+        }
         announce({ progress });
       }
+      installerReady = true;
+      announce({ phase: "confirm", progress: null });
+      return true;
+    },
+    install: async () => {
+      if (state.phase !== "confirm" || !installerReady) return;
+      installerReady = false;
       announce({ phase: "installing", progress: null });
       await wait(SIMULATED_STEP);
       if (failure) return fail(failure);
