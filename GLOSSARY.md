@@ -97,7 +97,7 @@ Der Wechsel der installierten Kredr-Fassung auf eine neue Version. Kredr bietet 
 _Vermeiden_: Update, Upgrade, Patch
 
 **Fenster für den Neustart**:
-Die Notiz, welche Fenster offen waren, als Kredr sich für eine Aktualisierung beendete, einzelne Projekte wie Workspaces. Der Neustart danach öffnet genau diese einmal wieder und verwirft die Notiz; ein gewöhnlicher Start kennt sie nicht. Im Code heißt sie `RestartWindow`.
+Die Notiz, welche Fenster offen waren, als Kredr sich für eine Aktualisierung beendete, einzelne Projekte wie Workspaces. Der Neustart danach öffnet genau diese einmal wieder und verwirft die Notiz; ein gewöhnlicher Start kennt sie nicht. Die Notiz nennt die neue Version; startet eine andere, weil der Installer scheiterte, verwirft Kredr sie ungelesen. Im Code heißt sie `RestartWindow`.
 _Vermeiden_: Sitzung, Session-Restore
 
 **Neue Version**:
@@ -112,7 +112,7 @@ _Vermeiden_: Changelog, Release Notes, Patchnotes
 Die Frage an GitHub, ob es eine neue Version gibt. Von selbst sucht Kredr kurz nach dem Start, sofort beim Anschalten und danach alle 3 Stunden, solange die Einstellung „Nach Aktualisierungen suchen“ an ist; eine gescheiterte Suche von selbst bleibt stumm. „Jetzt suchen“ in den Einstellungen sucht immer und nennt das Ergebnis: neue Version, aktuell oder gescheitert mit Grund. Eine gescheiterte Suche ist kein Fehlschlag. Die Entwicklungsfassung sucht nie; „Jetzt suchen“ sagt ihr das.
 
 **Entwicklungsfassung**:
-Kredr aus `npm run tauri dev`, im Gegensatz zur installierten Fassung. Sie sucht nie nach einer neuen Version und installiert keine, damit sie sich nicht selbst überschreibt; eine Aktualisierung spielt sie höchstens vor. Im Code heißt die laufende Fassung `Edition`.
+Kredr aus `npm run tauri dev`, im Gegensatz zur installierten Fassung. Sie sucht nie nach einer neuen Version und installiert keine, damit sie sich nicht selbst überschreibt; eine Aktualisierung spielt sie höchstens vor. Im **vorgespielten Ablauf** bietet sie eine Version an, die nur zum Abnehmen der Oberfläche existiert: im Kern über die Umgebungsvariable `KREDR_SIMULATED_UPDATE`, dann über alle Fenster mit Rückfrage, aber ohne Download und Installation; oder nur in einem Fenster über den `localStorage`-Schlüssel `kredr.simulierteAktualisierung`, dann mit vorgespieltem Download, vorgespielter Installation und auf Wunsch einem vorgespielten Fehlschlag (`kredr.simulierterFehler`). Im Code heißt die laufende Fassung `Edition`.
 _Vermeiden_: Dev-Build, Debug-Version
 
 **Abgelehnte Version**:
@@ -124,7 +124,7 @@ Der Pfeil nach oben mit Punkt unmittelbar über dem Zahnrad der Aktivitätsleist
 _Vermeiden_: Badge, Update-Icon
 
 **Fehlschlag**:
-Eine von der Person ausgelöste Aktualisierung, die beim Herunterladen, bei der Signaturprüfung oder beim Start des Installers scheiterte. Ein Hinweis bietet „Erneut versuchen“ und nennt unter „Mehr Infos“ den Grund in einem Satz, den Originaltext zum Aufklappen. Eine gescheiterte automatische Suche ist kein Fehlschlag; sie bleibt stumm. Im Code heißt der eingeordnete Grund `FailureCause`.
+Eine von der Person ausgelöste Aktualisierung, die beim Herunterladen, bei der Signaturprüfung oder beim Start des Installers scheiterte, oder an einem Schritt im fragenden Fenster, etwa an der Rundfrage. Den Fehlschlag hält der Kern; er erscheint in allen Fenstern. Ein Hinweis bietet „Erneut versuchen“ und nennt unter „Mehr Infos“ den Grund in einem Satz, den Originaltext zum Aufklappen. Eine gescheiterte automatische Suche ist kein Fehlschlag; sie bleibt stumm. Im Code heißt der eingeordnete Grund `FailureCause`.
 _Vermeiden_: Update-Fehler, Crash
 
 **Anlass**:

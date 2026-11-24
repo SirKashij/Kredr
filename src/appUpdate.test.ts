@@ -94,6 +94,24 @@ function fakeCore(
         installerReady = false;
         announce(beforeConfirm);
       },
+      fail: async (error) => {
+        // Wie im Kern: nur das fragende Fenster, und nicht während des Downloads.
+        const leads = ["confirm", "installing"].includes(state.phase) && asker === window;
+        if (!leads) return false;
+        calls.push(named("fail"));
+        asker = null;
+        installerReady = false;
+        await Promise.resolve();
+        announce({
+          ...state,
+          phase: "failed",
+          progress: null,
+          hidden: false,
+          cause: "unknown",
+          error,
+        });
+        return true;
+      },
       download: async () => {
         calls.push(named("download"));
         if (!holds() || installerReady) return false;
@@ -110,7 +128,6 @@ function fakeCore(
       install: async () => {
         calls.push(named("install"));
         if (!holds() || !installerReady) return;
-        asker = null;
         await Promise.resolve();
         announce({ ...state, phase: "installing", progress: null });
       },
@@ -574,17 +591,56 @@ test("eine Rückfrage aus dem Symbol zeigt in den anderen Fenstern nur das Symbo
   expect(offersActions(second.snapshot())).toBe(false);
 });
 
-test("scheitert die Rundfrage, endet die Rückfrage im Kern", async () => {
+test("scheitert die Rundfrage, zeigen alle Fenster den Fehlschlag", async () => {
   const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
   const core = fakeCore(offered);
   core.port.reasons = () => Promise.reject(new Error("IPC kaputt"));
+  const update = new AppUpdate(core.port);
+  const other = new AppUpdate(core.portFor("zweites"));
+  await settled();
+
+  await update.updateNow();
+  await settled();
+
+  expect(core.calls).toEqual(["ask", "fail"]);
+  for (const window of [update, other]) {
+    expect(window.snapshot()).toMatchObject({
+      phase: "failed",
+      cause: "unknown",
+      error: "Error: IPC kaputt",
+    });
+  }
+  // Die Rückfrage hängt nicht; das andere Fenster kann es erneut versuchen.
+  expect(offersActions(other.snapshot())).toBe(true);
+});
+
+test("scheitert der Dialog der Rückfrage, zeigen alle Fenster den Fehlschlag", async () => {
+  const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
+  const core = fakeCore(offered, [], [{ ...quiet, unsavedFiles: 1 }], () =>
+    Promise.reject(new Error("Dialog kaputt")),
+  );
+  const update = new AppUpdate(core.port);
+  const other = new AppUpdate(core.portFor("zweites"));
+  await settled();
+
+  await update.updateNow();
+  await settled();
+
+  expect(other.snapshot()).toMatchObject({ phase: "failed", error: "Error: Dialog kaputt" });
+});
+
+test("erreicht der Fehlschlag den Kern nicht, zeigt ihn wenigstens dieses Fenster", async () => {
+  const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
+  const core = fakeCore(offered);
+  core.port.reasons = () => Promise.reject(new Error("IPC kaputt"));
+  core.port.fail = () => Promise.reject(new Error("Kern weg"));
   const update = new AppUpdate(core.port);
   await settled();
 
   await update.updateNow();
 
   expect(core.calls).toEqual(["ask", "cancel"]);
-  expect(update.snapshot().phase).toBe("failed");
+  expect(update.snapshot()).toMatchObject({ phase: "failed", error: "Error: IPC kaputt" });
 });
 
 test("lädt das fragende Fenster neu, endet seine Rückfrage", async () => {

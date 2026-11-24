@@ -31,8 +31,11 @@ static OPENING: Mutex<()> = Mutex::new(());
 /// Projekt aus den Programmargumenten (`kredr <Ordner>`).
 pub fn start(app: &AppHandle) -> tauri::Result<()> {
     app.manage(ArrangementStore::new(crate::data_dir(app)?));
-    // Die Notiz gilt nur für diesen einen Start, auch wenn sie unbenutzt bleibt.
-    let restart = app.state::<ArrangementStore>().take_restart_windows();
+    // Die Notiz gilt nur für diesen einen Start, auch wenn sie unbenutzt
+    // bleibt, und nur, wenn die neue Version läuft.
+    let restart = app
+        .state::<ArrangementStore>()
+        .take_restart_windows(&app.package_info().version.to_string());
     let args: Vec<String> = std::env::args_os()
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
@@ -299,8 +302,10 @@ pub fn window_closed(window: &Window) {
 /// Merkt sich vor dem Beenden durch eine Aktualisierung alle offenen
 /// Fenster, Projekte wie Workspaces, damit sie nach dem Neustart
 /// wiederkommen. Ihre Aufteilung und Fenstergeometrie haben die Fenster
-/// vorher selbst gespeichert.
-pub fn remember_windows_for_restart(app: &AppHandle) {
+/// vorher selbst gespeichert. Die Notiz gilt nur, wenn danach `target`, die
+/// neue Version, startet; scheitert der Installer, kennt der nächste Start sie
+/// nicht.
+pub fn remember_windows_for_restart(app: &AppHandle, target: &str) {
     let windows: Vec<RestartWindow> = app
         .state::<ProjectWindows>()
         .contents()
@@ -313,7 +318,7 @@ pub fn remember_windows_for_restart(app: &AppHandle) {
         .collect();
     if let Err(error) = app
         .state::<ArrangementStore>()
-        .remember_restart_windows(&windows)
+        .remember_restart_windows(&windows, target)
     {
         eprintln!("Fenster für den Neustart konnten nicht gespeichert werden: {error}");
     }

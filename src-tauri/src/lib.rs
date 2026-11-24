@@ -163,6 +163,7 @@ pub fn run() {
             app_update::app_update_install,
             app_update::app_update_ask,
             app_update::app_update_cancel,
+            app_update::app_update_fail,
             project_files_commands::project_files_list_folder,
             project_files_commands::project_files_list_all,
             project_files_commands::project_files_read,

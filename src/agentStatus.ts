@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { plural, type MessageKey, type Translate } from "./i18n/i18n";
+import { plural, type MessageKey, type Translate } from "./i18n/translate";
 
 /**
  * Die Zustände eines erkannten Agenten; ohne Eintrag ist der Status

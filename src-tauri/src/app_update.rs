@@ -259,13 +259,13 @@ impl AppUpdateState {
     }
 
     /// `window` hält die Rückfrage nach dem Download und installiert: Der
-    /// Installer startet. Gibt zurück, ob `window` das darf.
+    /// Installer startet. `window` bleibt das fragende Fenster, damit nur es
+    /// einen Fehlschlag dabei meldet. Gibt zurück, ob `window` das darf.
     pub fn start_install(&mut self, window: &str) -> bool {
         let starts = self.asks_in(window) && self.installer_ready;
         if starts {
             self.phase = Phase::Installing;
             self.progress = None;
-            self.asker = None;
             self.installer_ready = false;
         }
         starts
@@ -281,6 +281,21 @@ impl AppUpdateState {
         self.hidden = false;
         self.cause = Some(cause);
         self.error = Some(error);
+    }
+
+    /// Ein Aufruf in `window` ist während der Aktualisierung gescheitert,
+    /// etwa die Rundfrage nach den Anlässen: Der Fehlschlag gilt für alle
+    /// Fenster. Das zählt nur, solange `window` die Rückfrage hält oder den
+    /// Installer startet. Während des Downloads meldet der Kern einen
+    /// Fehlschlag selbst, sonst liefe der Download weiter. Gibt zurück, ob
+    /// der Fehlschlag gilt.
+    pub fn window_failed(&mut self, window: &str, error: String) -> bool {
+        let leads = matches!(self.phase, Phase::Confirm | Phase::Installing)
+            && self.asker.as_deref() == Some(window);
+        if leads {
+            self.fail(FailureCause::Unknown, error);
+        }
+        leads
     }
 }
 
@@ -431,6 +446,21 @@ impl AppUpdates {
         }
     }
 
+    /// Ein Aufruf in `window` ist gescheitert; der Fehlschlag gilt für alle
+    /// Fenster, wenn `window` die Aktualisierung führt. Ein geladener
+    /// Installer wird verworfen. Gibt zurück, ob der Fehlschlag gilt.
+    fn fail(&self, app: &AppHandle, window: &str, error: String) -> bool {
+        let mut failed = false;
+        self.change(app, |state, _| {
+            failed = state.window_failed(window, error);
+            failed
+        });
+        if failed {
+            self.installer.lock().unwrap().take();
+        }
+        failed
+    }
+
     fn state(&self) -> AppUpdateState {
         self.inner.lock().unwrap().0.clone()
     }
@@ -500,9 +530,7 @@ pub fn start(app: &AppHandle) {
     std::thread::spawn(move || {
         std::thread::sleep(FIRST_CHECK_AFTER);
         loop {
-            if app.state::<SettingsStore>().get().check_for_updates {
-                tauri::async_runtime::block_on(check(&app));
-            }
+            tauri::async_runtime::block_on(check(&app));
             std::thread::sleep(CHECK_EVERY);
         }
     });
@@ -543,10 +571,14 @@ pub fn settings_changed(app: &AppHandle, settings: &Settings) {
     }
 }
 
-/// Sucht von selbst einmal nach einer neuen Version. Ohne Netz oder bei einer
-/// kaputten `latest.json` bleibt es still; die nächste Suche versucht es erneut.
+/// Sucht von selbst einmal nach einer neuen Version, wenn die Einstellung es
+/// erlaubt. Ohne Netz oder bei einer kaputten `latest.json` bleibt es still;
+/// die nächste Suche versucht es erneut.
 async fn check(app: &AppHandle) {
-    let SearchOutcome::Found(found) = search(app).await else {
+    let enabled = app.state::<SettingsStore>().get().check_for_updates;
+    let Some(SearchOutcome::Found(found)) =
+        auto_search_with(enabled, Edition::current(), || ask_github(app)).await
+    else {
         return;
     };
     app.state::<AppUpdates>().change(app, |state, update| {
@@ -596,6 +628,24 @@ where
     }
 }
 
+/// Sucht von selbst nach einer neuen Version, aber nur, solange `enabled`,
+/// die Einstellung „Nach Aktualisierungen suchen“, an ist. Sonst fragt sie
+/// den Updater nicht und ergibt `None`.
+pub async fn auto_search_with<T, Ask, Asking>(
+    enabled: bool,
+    edition: Edition,
+    ask: Ask,
+) -> Option<SearchOutcome<T>>
+where
+    Ask: FnOnce() -> Asking,
+    Asking: Future<Output = Result<Option<T>, tauri_plugin_updater::Error>>,
+{
+    if !enabled {
+        return None;
+    }
+    Some(search_with(edition, ask).await)
+}
+
 /// Sucht in der laufenden Fassung nach einer neuen Version.
 async fn search(app: &AppHandle) -> SearchOutcome<Update> {
     search_with(Edition::current(), || ask_github(app)).await
@@ -606,12 +656,15 @@ async fn ask_github(app: &AppHandle) -> Result<Option<Update>, tauri_plugin_upda
     let handle = app.clone();
     // Unter Windows beendet der Updater Kredr nach dem Start des Installers
     // mit `std::process::exit`; dabei schließt kein Fenster mehr regulär.
-    // Vorher merkt sich Kredr die offenen Fenster für den Neustart und räumt
-    // auf wie das Plugin ohne eigenen Hook.
+    // Vorher merkt sich Kredr die offenen Fenster für den Neustart mit der
+    // Version, die gerade installiert wird, und räumt auf wie das Plugin ohne
+    // eigenen Hook.
     let updater = app
         .updater_builder()
         .on_before_exit(move || {
-            crate::projects::remember_windows_for_restart(&handle);
+            if let Some(target) = handle.state::<AppUpdates>().state().version {
+                crate::projects::remember_windows_for_restart(&handle, &target);
+            }
             handle.cleanup_before_exit();
         })
         .build()?;
@@ -681,6 +734,21 @@ pub fn app_update_ask(
 #[tauri::command]
 pub fn app_update_cancel(app: AppHandle, window: tauri::Window, updates: State<'_, AppUpdates>) {
     updates.cancel(&app, window.label());
+}
+
+/// Ein Aufruf in einem Fenster ist während der Aktualisierung gescheitert,
+/// etwa die Rundfrage oder der Dialog der Rückfrage: Alle Fenster zeigen den
+/// Fehlschlag mit `error` als Originaltext, ein geladener Installer wird
+/// verworfen. Gibt zurück, ob der Fehlschlag gilt; nicht, wenn das Fenster
+/// die Aktualisierung gar nicht führt.
+#[tauri::command]
+pub fn app_update_fail(
+    app: AppHandle,
+    window: tauri::Window,
+    updates: State<'_, AppUpdates>,
+    error: String,
+) -> bool {
+    updates.fail(&app, window.label(), error)
 }
 
 /// Ein Fenster hat sich geschlossen. Hielt es die Rückfrage, endet sie wie

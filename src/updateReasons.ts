@@ -3,7 +3,7 @@
  * Fenster verloren ginge oder abbräche, gezählt und als Text für den Dialog.
  */
 
-import { plural, type MessageKey, type Translate } from "./i18n/i18n";
+import { plural, type MessageKey, type Translate } from "./i18n/translate";
 
 /** Die Anlässe eines Fensters oder aller Fenster zusammen. */
 export interface UpdateReasons {

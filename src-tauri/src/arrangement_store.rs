@@ -65,6 +65,11 @@ impl From<&RestartWindow> for StoredEntry {
 #[derive(Serialize, Deserialize)]
 struct StoredRestartWindows {
     version: u32,
+    /// Die neue Version, auf die die Aktualisierung wechselt. Fassungen bis
+    /// 0.6.1 schrieben keine; ihre Notiz sieht eine neuere Fassung nur nach
+    /// gelungener Installation.
+    #[serde(default)]
+    target: Option<String>,
     /// In Reihenfolge, im Format der Zuletzt-Liste.
     windows: Vec<StoredEntry>,
 }
@@ -401,11 +406,16 @@ impl ArrangementStore {
     }
 
     /// Merkt sich die Fenster, die nach dem Neustart einer Aktualisierung
-    /// wiederkommen sollen, in Reihenfolge.
-    pub fn remember_restart_windows(&self, windows: &[RestartWindow]) -> io::Result<()> {
+    /// auf `target`, die neue Version, wiederkommen sollen, in Reihenfolge.
+    pub fn remember_restart_windows(
+        &self,
+        windows: &[RestartWindow],
+        target: &str,
+    ) -> io::Result<()> {
         let _guard = self.lock.lock();
         let stored = StoredRestartWindows {
             version: VERSION,
+            target: Some(target.to_owned()),
             windows: windows.iter().map(StoredEntry::from).collect(),
         };
         let json = serde_json::to_vec_pretty(&stored).map_err(io::Error::other)?;
@@ -413,8 +423,10 @@ impl ArrangementStore {
     }
 
     /// Die Fenster für den Neustart, genau einmal: Die Notiz ist danach
-    /// verworfen. Eine fehlende, kaputte oder veraltete Notiz ergibt keine.
-    pub fn take_restart_windows(&self) -> Vec<RestartWindow> {
+    /// verworfen. `running` ist die laufende Version. Gilt die Notiz einer
+    /// anderen, ist der Installer gescheitert, und es kommt kein Fenster
+    /// wieder. Eine fehlende, kaputte oder veraltete Notiz ergibt keine.
+    pub fn take_restart_windows(&self, running: &str) -> Vec<RestartWindow> {
         let _guard = self.lock.lock();
         let file = self.dir.join(RESTART_WINDOWS_FILE);
         let Ok(bytes) = std::fs::read(&file) else {
@@ -425,11 +437,19 @@ impl ArrangementStore {
             return Vec::new();
         }
         match serde_json::from_slice::<StoredRestartWindows>(&bytes) {
-            Ok(stored) if stored.version == VERSION => stored
-                .windows
-                .into_iter()
-                .map(RestartWindow::from)
-                .collect(),
+            Ok(stored)
+                if stored.version == VERSION
+                    && stored
+                        .target
+                        .as_deref()
+                        .is_none_or(|target| target == running) =>
+            {
+                stored
+                    .windows
+                    .into_iter()
+                    .map(RestartWindow::from)
+                    .collect()
+            }
             _ => Vec::new(),
         }
     }

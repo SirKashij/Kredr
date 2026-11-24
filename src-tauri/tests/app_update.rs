@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use kredr_lib::app_update::{
-    failure_cause, load_declined, save_declined, search_with, AppUpdateState, AutoCheck, Edition,
-    FailureCause, Phase, SearchOutcome, Step,
+    auto_search_with, failure_cause, load_declined, save_declined, search_with, AppUpdateState,
+    AutoCheck, Edition, FailureCause, Phase, SearchOutcome, Step,
 };
 use tauri::async_runtime::block_on;
 use tauri_plugin_updater::Error;
@@ -489,4 +489,68 @@ fn der_grund_eines_fehlschlags_wird_eingeordnet() {
     for (error, step, cause) in cases {
         assert_eq!(failure_cause(&error, step), cause, "{error}");
     }
+}
+
+#[test]
+fn abgeschaltete_suche_fragt_den_updater_von_selbst_nie() {
+    let off = block_on(auto_search_with(false, Edition::Installed, never_asked));
+    let on = block_on(auto_search_with(true, Edition::Installed, || async {
+        Ok(Some("0.6.0".to_owned()))
+    }));
+
+    assert_eq!(off, None);
+    assert_eq!(on, Some(SearchOutcome::Found("0.6.0".to_owned())));
+}
+
+#[test]
+fn ein_fehlschlag_im_fragenden_fenster_gilt_fuer_alle() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    assert!(state.ask(MAIN));
+
+    assert!(state.window_failed(MAIN, "IPC kaputt".into()));
+
+    assert_eq!(state.phase, Phase::Failed);
+    assert_eq!(state.cause, Some(FailureCause::Unknown));
+    assert_eq!(state.error.as_deref(), Some("IPC kaputt"));
+    // Die Rückfrage hängt nicht; jedes Fenster kann es erneut versuchen.
+    assert!(state.ask(OTHER));
+}
+
+#[test]
+fn ein_fehlschlag_beim_installieren_gilt_fuer_alle() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    update_now(&mut state);
+    state.finish_download();
+    assert!(state.start_install(MAIN));
+
+    assert!(!state.window_failed(OTHER, "zu spät".into()));
+    assert_eq!(state.phase, Phase::Installing);
+    assert!(state.window_failed(MAIN, "IPC kaputt".into()));
+    assert_eq!(state.phase, Phase::Failed);
+}
+
+#[test]
+fn waehrend_des_downloads_meldet_nur_der_kern_einen_fehlschlag() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    update_now(&mut state);
+
+    // Sonst liefe der Download weiter und könnte einen neuen Versuch beenden.
+    assert!(!state.window_failed(MAIN, "IPC kaputt".into()));
+    assert_eq!(state.phase, Phase::Downloading);
+}
+
+#[test]
+fn ein_fremdes_fenster_meldet_keinen_fehlschlag() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    assert!(!state.window_failed(MAIN, "zu spät".into()));
+    assert_eq!(state.phase, Phase::Offered);
+
+    state.ask(MAIN);
+    assert!(!state.window_failed(OTHER, "zu spät".into()));
+    assert_eq!(state.phase, Phase::Confirm);
+    assert_eq!(state.error, None);
 }

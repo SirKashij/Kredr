@@ -8,7 +8,7 @@ import {
   type CheckResult,
   type FailureCause,
 } from "./appUpdate";
-import type { Translate } from "./i18n/i18n";
+import type { Translate } from "./i18n/translate";
 import { openUrl } from "./openExternally";
 import { NO_REASONS, SILENT_WINDOW, updateQuestion, type UpdateReasons } from "./updateReasons";
 import { pollAllWindows } from "./windowPoll";
@@ -50,6 +50,7 @@ export function coreAppUpdatePort(t: () => Translate): AppUpdatePort {
     },
     ask: () => invoke<boolean>("app_update_ask"),
     cancel: () => invoke("app_update_cancel"),
+    fail: (error) => invoke<boolean>("app_update_fail", { error }),
     download: () => invoke<boolean>("app_update_download"),
     install: () => invoke("app_update_install"),
     later: () => invoke("app_update_later"),
@@ -145,6 +146,12 @@ export function simulatedAppUpdatePort(
     cancel: async () => {
       installerReady = false;
       if (state.phase === "confirm") announce(beforeConfirm);
+    },
+    fail: async (error) => {
+      if (!["confirm", "installing"].includes(state.phase)) return false;
+      installerReady = false;
+      announce({ phase: "failed", progress: null, hidden: false, cause: "unknown", error });
+      return true;
     },
     download: async () => {
       if (state.phase !== "confirm" || installerReady) return false;

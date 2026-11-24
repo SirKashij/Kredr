@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { languageFor, type Language, type MessageKey } from "./i18n/i18n";
+import { languageFor, type Language, type MessageKey } from "./i18n/translate";
 
 export type Shell = "powershell" | "gitBash";
 

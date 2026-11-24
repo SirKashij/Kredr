@@ -5,7 +5,7 @@
  * daher für alle.
  */
 
-import type { MessageKey, Translate } from "./i18n/i18n";
+import type { MessageKey, Translate } from "./i18n/translate";
 import { hasNewReasons, hasReasons, sumReasons, type UpdateReasons } from "./updateReasons";
 
 /** Wie weit die Aktualisierung ist. */
@@ -66,6 +66,12 @@ export interface AppUpdatePort {
   ask(): Promise<boolean>;
   /** Beendet die Rückfrage dieses Fensters; der Kern kehrt zur Phase davor zurück. */
   cancel(): Promise<void>;
+  /**
+   * Ein Aufruf in diesem Fenster ist gescheitert; der Kern meldet allen
+   * Fenstern den Fehlschlag mit `error` als Originaltext und beendet die
+   * Rückfrage. `false` heißt: Dieses Fenster führt die Aktualisierung nicht.
+   */
+  fail(error: string): Promise<boolean>;
   /**
    * Lädt die neue Version und prüft ihre Signatur. Nur aus der Rückfrage
    * dieses Fensters heraus. `true` heißt: Sie liegt bereit, und das Fenster
@@ -244,17 +250,27 @@ export class AppUpdate {
       asking = false;
       await this.port.install();
     } catch (reason) {
-      // Die Rückfrage darf im Kern nicht hängen bleiben.
-      if (asking) await this.port.cancel().catch(() => {});
-      this.set({
-        ...this.state,
-        phase: "failed",
-        progress: null,
-        hidden: false,
-        cause: "unknown",
-        error: String(reason),
-      });
+      await this.failed(String(reason), asking);
     }
+  }
+
+  /**
+   * Ein Aufruf ist mit `error` gescheitert. Der Kern meldet den Fehlschlag
+   * allen Fenstern und beendet dabei die Rückfrage. Erreicht ihn die Meldung
+   * nicht, zeigt nur dieses Fenster den Fehlschlag; eine Rückfrage, die es
+   * hält (`asking`), darf im Kern trotzdem nicht hängen bleiben.
+   */
+  private async failed(error: string, asking: boolean): Promise<void> {
+    if (await this.port.fail(error).catch(() => false)) return;
+    if (asking) await this.port.cancel().catch(() => {});
+    this.set({
+      ...this.state,
+      phase: "failed",
+      progress: null,
+      hidden: false,
+      cause: "unknown",
+      error,
+    });
   }
 
   /**
