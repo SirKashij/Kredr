@@ -109,7 +109,7 @@ Die Release-Seite einer neuen Version auf GitHub mit ihrem Release-Text. Kredr �
 _Vermeiden_: Changelog, Release Notes, Patchnotes
 
 **Suche nach einer neuen Version**:
-Die Frage an GitHub, ob es eine neue Version gibt. Von selbst sucht Kredr kurz nach dem Start und danach alle 3 Stunden, solange die Einstellung „Nach Aktualisierungen suchen“ an ist; eine gescheiterte Suche von selbst bleibt stumm. „Jetzt suchen“ in den Einstellungen sucht immer und nennt das Ergebnis: neue Version, aktuell oder gescheitert mit Grund. Eine gescheiterte Suche ist kein Fehlschlag.
+Die Frage an GitHub, ob es eine neue Version gibt. Von selbst sucht Kredr kurz nach dem Start, sofort beim Anschalten und danach alle 3 Stunden, solange die Einstellung „Nach Aktualisierungen suchen“ an ist; eine gescheiterte Suche von selbst bleibt stumm. „Jetzt suchen“ in den Einstellungen sucht immer und nennt das Ergebnis: neue Version, aktuell oder gescheitert mit Grund. Eine gescheiterte Suche ist kein Fehlschlag.
 
 **Abgelehnte Version**:
 Die neue Version, die die Person mit „Später“ aufgeschoben hat. Kredr merkt sie sich im Benutzerdatenverzeichnis und bietet sie nicht wieder als Hinweis an, auch nach einem Neustart nicht; eine andere neue Version schon. Sucht die Person selbst mit „Jetzt suchen“ in den Einstellungen, bietet Kredr auch die abgelehnte Version wieder an. Im Code heißt sie `declined`.

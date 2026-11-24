@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use kredr_lib::app_update::{
-    failure_cause, load_declined, save_declined, AppUpdateState, FailureCause, Phase, Step,
+    failure_cause, load_declined, save_declined, AppUpdateState, AutoCheck, FailureCause, Phase,
+    Step,
 };
 
 fn state() -> AppUpdateState {
@@ -105,6 +106,27 @@ fn jetzt_suchen_ordnet_den_fehler_wie_beim_download_ein() {
     let error = tauri_plugin_updater::Error::ReleaseNotFound;
 
     assert_eq!(failure_cause(&error, Step::Check), FailureCause::Network);
+}
+
+#[test]
+fn angeschaltete_suche_sucht_sofort_einmal() {
+    let mut auto = AutoCheck::new(false);
+
+    assert!(
+        auto.setting_changed(true),
+        "Anschalten sollte sofort suchen"
+    );
+    // Eine andere Einstellung ändert sich, die Suche bleibt an.
+    assert!(!auto.setting_changed(true));
+    assert!(!auto.setting_changed(false));
+    assert!(auto.setting_changed(true));
+}
+
+#[test]
+fn eine_von_anfang_an_angeschaltete_suche_sucht_nicht_zusaetzlich() {
+    let mut auto = AutoCheck::new(true);
+
+    assert!(!auto.setting_changed(true));
 }
 
 #[test]

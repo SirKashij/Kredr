@@ -158,7 +158,7 @@
   "settings.resumeAgents": "Resume agents on open",
   "settings.resumeAgents.hint": "When a project opens, the agents that were running when it closed start in their place and resume their conversation. When off, their tabs come back as plain terminals.",
   "settings.checkForUpdates": "Check for updates",
-  "settings.checkForUpdates.hint": "Kredr checks for a new version shortly after starting and every 3 hours after that, and offers it in the bottom right. “Check now” works even when this is off.",
+  "settings.checkForUpdates.hint": "Kredr checks for a new version shortly after starting, when you turn this on, and every 3 hours, and offers it in the bottom right. “Check now” works even when this is off.",
   "settings.licenses": "Third-party licenses",
   "settings.licenses.hint": "Kredr is built on open-source packages. They are listed here with their licenses.",
   "settings.licenses.missing": "The list is only created when the installer is built.",

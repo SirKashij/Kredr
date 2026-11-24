@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-use crate::settings::SettingsStore;
+use crate::settings::{Settings, SettingsStore};
 
 /// Meldet allen Fenstern den neuen Zustand.
 const CHANGED: &str = "app-update-changed";
@@ -260,14 +260,38 @@ pub struct AppUpdates {
     inner: Mutex<(AppUpdateState, Option<Update>)>,
     /// Wo die abgelehnte Version liegt; ohne Benutzerdatenverzeichnis nirgends.
     dir: Option<PathBuf>,
+    auto: Mutex<AutoCheck>,
+}
+
+/// Merkt sich, ob die Suche von selbst an ist, damit Kredr beim Anschalten
+/// sofort sucht statt erst nach dem nächsten Abstand von drei Stunden.
+pub struct AutoCheck {
+    enabled: bool,
+}
+
+impl AutoCheck {
+    /// `enabled` ist die Einstellung beim Start.
+    pub fn new(enabled: bool) -> Self {
+        Self { enabled }
+    }
+
+    /// Die Einstellungen haben sich geändert; `enabled` ist die Suche von
+    /// selbst. Gibt zurück, ob sie gerade angeschaltet wurde und Kredr
+    /// deshalb sofort sucht.
+    pub fn setting_changed(&mut self, enabled: bool) -> bool {
+        let switched_on = enabled && !self.enabled;
+        self.enabled = enabled;
+        switched_on
+    }
 }
 
 impl AppUpdates {
-    fn new(installed: String, dir: Option<PathBuf>) -> Self {
+    fn new(installed: String, dir: Option<PathBuf>, auto_check: bool) -> Self {
         let declined = dir.as_deref().and_then(load_declined);
         Self {
             inner: Mutex::new((AppUpdateState::new(installed, declined), None)),
             dir,
+            auto: Mutex::new(AutoCheck::new(auto_check)),
         }
     }
 
@@ -326,6 +350,7 @@ pub fn start(app: &AppHandle) {
     app.manage(AppUpdates::new(
         app.package_info().version.to_string(),
         crate::data_dir(app).ok(),
+        app.state::<SettingsStore>().get().check_for_updates,
     ));
     if cfg!(debug_assertions) {
         return;
@@ -340,6 +365,24 @@ pub fn start(app: &AppHandle) {
             std::thread::sleep(CHECK_EVERY);
         }
     });
+}
+
+/// Meldet der Aktualisierung neue Einstellungen. Schaltet die Person die
+/// Suche von selbst an, sucht die installierte Fassung sofort einmal; der
+/// Abstand von drei Stunden läuft unverändert weiter.
+pub fn settings_changed(app: &AppHandle, settings: &Settings) {
+    let Some(updates) = app.try_state::<AppUpdates>() else {
+        return;
+    };
+    let switched_on = updates
+        .auto
+        .lock()
+        .unwrap()
+        .setting_changed(settings.check_for_updates);
+    if switched_on && !cfg!(debug_assertions) {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move { check(&app).await });
+    }
 }
 
 /// Sucht von selbst einmal nach einer neuen Version. Ohne Netz oder bei einer

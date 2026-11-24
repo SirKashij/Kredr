@@ -158,7 +158,7 @@
   "settings.resumeAgents": "Agenten beim Öffnen fortsetzen",
   "settings.resumeAgents.hint": "Beim Öffnen eines Projekts starten die Agenten, die beim Schließen liefen, an ihrem Platz und setzen ihr Gespräch fort. Ausgeschaltet kommen ihre Tabs als gewöhnliche Terminals zurück.",
   "settings.checkForUpdates": "Nach Aktualisierungen suchen",
-  "settings.checkForUpdates.hint": "Kredr sucht kurz nach dem Start und danach alle 3 Stunden nach einer neuen Version und bietet sie unten rechts an. „Jetzt suchen“ geht auch ausgeschaltet.",
+  "settings.checkForUpdates.hint": "Kredr sucht kurz nach dem Start, beim Anschalten und danach alle 3 Stunden nach einer neuen Version und bietet sie unten rechts an. „Jetzt suchen“ geht auch ausgeschaltet.",
   "settings.licenses": "Lizenzen von Drittsoftware",
   "settings.licenses.hint": "Kredr baut auf quelloffenen Paketen auf. Hier stehen sie mit ihren Lizenzen.",
   "settings.licenses.missing": "Die Liste entsteht erst beim Bauen des Installers.",

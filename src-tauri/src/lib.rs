@@ -130,6 +130,7 @@ pub fn run() {
             let settings = SettingsStore::open(data_dir(app.handle())?, move |settings| {
                 // Scheitert das Senden, ist kein Fenster mehr offen.
                 let _ = handle.emit("settings-changed", settings);
+                app_update::settings_changed(&handle, settings);
             });
             app.manage(settings);
             projects::start(app.handle())?;
