@@ -18,7 +18,7 @@ Installierte Fassungen aktualisieren sich über das Tauri-Updater-Plugin (ADR 00
 
 Signiert wird mit dem minisign-Schlüssel des Updaters, nicht mit Authenticode. Den privaten Schlüssel und sein Passwort hält das Repository als Secrets `TAURI_SIGNING_PRIVATE_KEY` und `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Eine Kopie liegt außerhalb von GitHub. Geht der Schlüssel verloren, kann keine installierte Fassung mehr automatisch aktualisieren.
 
-Die Dateien entstehen nur im Workflow, denn nur er baut mit der Überlagerung `src-tauri/tauri.updater.conf.json`. `npm run check`, `npm run tauri build` und `npm run installieren` brauchen deshalb keinen Schlüssel. Ein manueller Lauf des Workflows (`gh workflow run release.yml --ref <zweig>`) legt kein Release an, sondern lädt die drei Dateien als Artefakt `installer` hoch.
+Die Dateien entstehen nur im Workflow, denn nur er baut mit der Überlagerung `src-tauri/tauri.updater.conf.json`, die `createUpdaterArtifacts` einschaltet. Öffentlicher Schlüssel, Adresse der `latest.json` und Installationsmodus stehen unter `plugins.updater` in `tauri.conf.json`, weil das Plugin sie in jedem Build braucht. `npm run check`, `npm run tauri build` und `npm run installieren` brauchen deshalb keinen Schlüssel. Ein manueller Lauf des Workflows (`gh workflow run release.yml --ref <zweig>`) legt kein Release an, sondern lädt die drei Dateien als Artefakt `installer` hoch.
 
 Installierte Fassungen lesen `releases/latest/download/latest.json`. Diese Adresse zeigt nur auf veröffentlichte, stabile Releases. Solange das Release ein Entwurf oder als „Pre-release“ markiert ist, bietet Kredr die Version nicht an. Erst das Veröffentlichen gibt sie frei.
 

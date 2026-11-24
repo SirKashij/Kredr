@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod agent_status;
+pub mod app_update;
 pub mod arrangement_store;
 pub mod dialog_answers;
 pub mod external;
@@ -116,6 +117,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Terminals::default())
         .manage(agent_status)
         .manage(ProjectWatchers::default())
@@ -132,6 +134,7 @@ pub fn run() {
             app.manage(settings);
             projects::start(app.handle())?;
             waiting_alerts::start(app.handle());
+            app_update::start(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -151,6 +154,9 @@ pub fn run() {
             settings_get,
             settings_set,
             available_shells,
+            app_update::app_update_state,
+            app_update::app_update_later,
+            app_update::app_update_install,
             project_files_commands::project_files_list_folder,
             project_files_commands::project_files_list_all,
             project_files_commands::project_files_read,

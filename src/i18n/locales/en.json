@@ -307,5 +307,14 @@
   "agentStatus.count.done.other": "{count} done",
   "duration.seconds": "{count} s",
   "duration.minutes": "{count} min",
-  "duration.hours": "{hours} h {minutes} min"
+  "duration.hours": "{hours} h {minutes} min",
+  "appUpdate.available": "Kredr {version} is available.",
+  "appUpdate.installed": "You have {version}.",
+  "appUpdate.updateNow": "Update now",
+  "appUpdate.later": "Later",
+  "appUpdate.releaseNotes": "What's new",
+  "appUpdate.downloading": "Downloading Kredr {version} …",
+  "appUpdate.installing": "Installing Kredr {version}, Kredr restarts shortly …",
+  "appUpdate.failed": "Updating to Kredr {version} failed.",
+  "appUpdate.retry": "Try again"
 }

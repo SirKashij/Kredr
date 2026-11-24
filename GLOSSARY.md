@@ -95,3 +95,7 @@ _Vermeiden_: Update, Upgrade, Patch
 **Neue Version**:
 Ein veröffentlichtes, stabiles Release, das neuer ist als die installierte Fassung. Entwürfe und Vorabversionen zählen nicht.
 _Vermeiden_: Update (für die Version selbst), Build
+
+**Neuerungen**:
+Die Release-Seite einer neuen Version auf GitHub mit ihrem Release-Text. Kredr öffnet sie im Browser.
+_Vermeiden_: Changelog, Release Notes, Patchnotes

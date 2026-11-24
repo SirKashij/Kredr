@@ -70,6 +70,7 @@ import {
   type WindowContent,
 } from "./workspace";
 import { Notice, type NoticeContent } from "./Notice";
+import { AppUpdateNotice } from "./AppUpdateNotice";
 import { ProjectPicker } from "./ProjectPicker";
 
 /** Eine Datei, die als Dateiansicht geöffnet werden soll. */
@@ -835,7 +836,10 @@ export function App() {
           onClose={closeQuickPick}
         />
       )}
-      {notice && <Notice notice={notice} onClose={closeNotice} />}
+      <div className="notices">
+        <AppUpdateNotice />
+        {notice && <Notice notice={notice} onClose={closeNotice} />}
+      </div>
       <footer className="status">
         {active && (
           <ProjectScope project={active}>

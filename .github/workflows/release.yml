@@ -41,8 +41,8 @@ jobs:
           }
 
       # Die Überlagerung schaltet die Dateien für die Aktualisierung nur hier ein. Lokale Builds
-      # und `npm run check` brauchen dadurch keinen privaten Schlüssel. Sie trägt auch den
-      # öffentlichen Schlüssel, ohne den der Bundler nicht signiert.
+      # und `npm run check` brauchen dadurch keinen privaten Schlüssel. Den öffentlichen
+      # Schlüssel trägt tauri.conf.json, denn das Plugin braucht ihn in jedem Build.
       - name: Installer bauen und signieren
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
