@@ -2700,7 +2700,16 @@ fn kehrt_claude_in_git_bash_zurueck_kommt_das_ende_der_sitzung_an() {
 
 /// Ein Test-Ersatz für Git Bash, der die Windows-Kennung seines Prozesses in
 /// `pid.txt` neben sich schreibt und dann wartet.
-const BASH_CLAUDE_WAITING: &str = "cat /proc/$$/winpid > \"$(dirname \"$0\")/pid.txt\"\nsleep 60";
+///
+/// Ab dem Schreiben startet er kein Programm mehr, sondern nutzt nur
+/// Builtins; gewartet wird mit `read` auf das Terminal. Mit einem Kind wie
+/// `cat` oder `sleep` überlebte er manchmal Strg+C: Trifft das Signal das
+/// Kind, während es startet oder endet, stirbt es nicht daran, und Bash
+/// beendet das Skript dann auch nicht.
+const BASH_CLAUDE_WAITING: &str = "folder=\"$(dirname \"$0\")\"\n\
+                                   read -r winpid < /proc/$$/winpid\n\
+                                   echo \"$winpid\" > \"$folder/pid.txt\"\n\
+                                   read -r -t 60";
 
 /// Wartet, bis der Test-Ersatz aus `BASH_CLAUDE_WAITING` läuft.
 fn wait_for_waiting_claude(shell: &ShellWithClaude) -> String {
