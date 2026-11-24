@@ -40,14 +40,42 @@ jobs:
             throw "Tag ${{ github.ref_name }} passt nicht zur Version $version in package.json."
           }
 
-      - name: Installer bauen
-        run: npm run tauri build
+      # Die Überlagerung schaltet die Dateien für die Aktualisierung nur hier ein. Lokale Builds
+      # und `npm run check` brauchen dadurch keinen privaten Schlüssel.
+      - name: Installer bauen und signieren
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- --config src-tauri/tauri.updater.conf.json
+
+      # latest.json zeigt auf den Installer im Release des Tags. Über
+      # releases/latest/download/latest.json ist sie erst nach dem Veröffentlichen erreichbar.
+      - name: latest.json schreiben
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $nsis = "src-tauri/target/release/bundle/nsis"
+          $installer = @(Get-ChildItem "$nsis/*-setup.exe")
+          if ($installer.Count -ne 1) { throw "Erwartet genau einen Installer, gefunden: $($installer.Count)." }
+          $installer = $installer[0]
+          $signature = (Get-Content "$($installer.FullName).sig" -Raw).Trim()
+          $url = "https://github.com/${{ github.repository }}/releases/download/v$version/$($installer.Name)"
+          $platform = @{ signature = $signature; url = $url }
+          [ordered]@{
+            version = $version
+            notes = ""
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{ "windows-x86_64" = $platform; "windows-x86_64-nsis" = $platform }
+          } | ConvertTo-Json -Depth 5 | Set-Content "$nsis/latest.json" -Encoding utf8NoBOM
 
       - name: Installer hochladen
         uses: actions/upload-artifact@v7
         with:
           name: installer
-          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/nsis/*-setup.exe.sig
+            src-tauri/target/release/bundle/nsis/latest.json
           if-no-files-found: error
 
   veroeffentlichen:
@@ -67,6 +95,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >
-          gh release create "${{ github.ref_name }}" installer/*-setup.exe
+          gh release create "${{ github.ref_name }}"
+          installer/*-setup.exe installer/*-setup.exe.sig installer/latest.json
           --repo "${{ github.repository }}" --draft --generate-notes
           --title "Kredr ${GITHUB_REF_NAME#v}"
