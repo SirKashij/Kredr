@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { createPortal } from "react-dom";
 import {
   AppUpdate,
+  checkResultText,
   downloadingText,
   failureSentence,
   showsIcon,
   showsNotice,
   type AppUpdateState,
+  type CheckResult,
 } from "./appUpdate";
 import { appUpdatePort } from "./appUpdatePort";
 import { ContextMenu } from "./ContextMenu";
@@ -113,6 +115,47 @@ export function AppUpdateButton() {
           document.body,
         )}
     </>
+  );
+}
+
+/**
+ * Die installierte Version und „Jetzt suchen“ auf der Einstellungsseite. Die
+ * Suche geht auch bei abgeschalteter Suche; daneben steht ihr Ergebnis. Eine
+ * neue Version bietet sich zusätzlich wie gewohnt unten rechts an.
+ */
+export function AppUpdateCheck() {
+  const t = useT();
+  const { update, state } = useAppUpdate();
+  const [searching, setSearching] = useState(false);
+  const [result, setResult] = useState<CheckResult | null>(null);
+  return (
+    <div className="setting app-update-check">
+      {/* Bis der Kern antwortet, ist die installierte Fassung unbekannt. */}
+      {state.installed && (
+        <span className="setting-hint">
+          {t("appUpdate.installed", { version: state.installed })}
+        </span>
+      )}
+      <div className="setting-actions">
+        <button
+          className="btn ghost"
+          disabled={searching}
+          onClick={() => {
+            setSearching(true);
+            setResult(null);
+            void update.checkNow().then((checked) => {
+              setResult(checked);
+              setSearching(false);
+            });
+          }}
+        >
+          {t("appUpdate.check")}
+        </button>
+        <span role="status">
+          {searching ? t("appUpdate.check.searching") : result && checkResultText(t, result)}
+        </span>
+      </div>
+    </div>
   );
 }
 

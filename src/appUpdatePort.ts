@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { confirm } from "@tauri-apps/plugin-dialog";
-import type { AppUpdatePort, AppUpdateState, FailureCause } from "./appUpdate";
+import type { AppUpdatePort, AppUpdateState, CheckResult, FailureCause } from "./appUpdate";
 import type { Translate } from "./i18n/i18n";
 import { openUrl } from "./openExternally";
 import { NO_REASONS, SILENT_WINDOW, updateQuestion, type UpdateReasons } from "./updateReasons";
@@ -36,6 +36,7 @@ function beforeInstall(
 export function coreAppUpdatePort(t: () => Translate): AppUpdatePort {
   return {
     current: () => invoke<AppUpdateState>("app_update_state"),
+    check: () => invoke<CheckResult>("app_update_check"),
     onChange: (listener) => {
       listen<AppUpdateState>("app-update-changed", (event) => listener(event.payload)).catch(
         () => {},
@@ -114,6 +115,10 @@ export function simulatedAppUpdatePort(
     });
   return {
     current: async () => state,
+    check: async () => {
+      if (state.phase === "later") announce({ phase: "offered" });
+      return { outcome: "found", version };
+    },
     onChange: (listener) => {
       listeners.add(listener);
     },

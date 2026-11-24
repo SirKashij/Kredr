@@ -31,10 +31,21 @@ export interface AppUpdateState {
   error: string | null;
 }
 
+/** Was „Jetzt suchen“ ergab. */
+export type CheckResult =
+  | { outcome: "found"; version: string }
+  | { outcome: "current" }
+  | { outcome: "failed"; cause: FailureCause; error: string };
+
 /** Was der Ablauf vom Kern und vom Rechner braucht. */
 export interface AppUpdatePort {
   /** Der Zustand, den der Kern gerade hält. */
   current(): Promise<AppUpdateState>;
+  /**
+   * Sucht sofort nach einer neuen Version, auch bei abgeschalteter Suche.
+   * Eine gefundene bietet der Kern in allen Fenstern an.
+   */
+  check(): Promise<CheckResult>;
   /** Meldet jeden neuen Zustand des Kerns, solange das Fenster lebt. */
   onChange(listener: (state: AppUpdateState) => void): void;
   /** Lädt die neue Version, prüft ihre Signatur, installiert sie und startet Kredr neu. */
@@ -96,6 +107,18 @@ const CAUSE_TEXTS: Record<FailureCause, MessageKey> = {
 /** Der Grund eines Fehlschlags in einem Satz, für „Mehr Infos“. */
 export function failureSentence(t: Translate, state: AppUpdateState): string {
   return t(CAUSE_TEXTS[state.cause ?? "unknown"]);
+}
+
+/** Das Ergebnis von „Jetzt suchen“ als Satz; ein Fehlschlag mit dem Grund wie bei „Mehr Infos“. */
+export function checkResultText(t: Translate, result: CheckResult): string {
+  switch (result.outcome) {
+    case "found":
+      return t("appUpdate.available", { version: result.version });
+    case "current":
+      return t("appUpdate.check.current");
+    case "failed":
+      return t("appUpdate.check.failed", { reason: t(CAUSE_TEXTS[result.cause]) });
+  }
 }
 
 /** Aus diesen Phasen heraus lässt sich die Aktualisierung anstoßen. */
@@ -172,6 +195,17 @@ export class AppUpdate {
     } finally {
       this.started = false;
     }
+  }
+
+  /**
+   * „Jetzt suchen“: sucht sofort nach einer neuen Version, auch bei
+   * abgeschalteter Suche. Eine gefundene meldet der Kern allen Fenstern als
+   * Angebot. Erreicht die Frage den Kern nicht, gilt die Suche als gescheitert.
+   */
+  checkNow(): Promise<CheckResult> {
+    return this.port
+      .check()
+      .catch((reason) => ({ outcome: "failed", cause: "unknown", error: String(reason) }));
   }
 
   /** „Neuerungen“: öffnet die Release-Seite der neuen Version im Browser. */

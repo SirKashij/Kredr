@@ -1,7 +1,8 @@
 //! Die Aktualisierung von Kredr: sucht kurz nach dem Start und danach alle
-//! drei Stunden nach einer neuen Version, hält den Zustand für alle Fenster
-//! und meldet jede Änderung mit dem Ereignis `app-update-changed`. Die
-//! Entwicklungsfassung sucht nie.
+//! drei Stunden nach einer neuen Version, solange die Einstellung es erlaubt,
+//! und auf Wunsch mit „Jetzt suchen“. Hält den Zustand für alle Fenster und
+//! meldet jede Änderung mit dem Ereignis `app-update-changed`. Die
+//! Entwicklungsfassung sucht nur auf Wunsch.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -11,6 +12,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
+
+use crate::settings::SettingsStore;
 
 /// Meldet allen Fenstern den neuen Zustand.
 const CHANGED: &str = "app-update-changed";
@@ -104,6 +107,26 @@ impl AppUpdateState {
         changes
     }
 
+    /// „Jetzt suchen“ fand `version`. Die Person hat selbst gefragt, deshalb
+    /// erscheint das Angebot auch für eine Version, die sie auf „Später“
+    /// gestellt hat, und nach einem Fehlschlag. Eine laufende Aktualisierung
+    /// bleibt unberührt. Gibt
+    /// zurück, ob sich der Zustand geändert hat.
+    pub fn found_on_request(&mut self, version: String) -> bool {
+        let same = self.version.as_deref() == Some(version.as_str());
+        let changes = if same && matches!(self.phase, Phase::Later | Phase::Failed) {
+            self.cause = None;
+            self.error = None;
+            true
+        } else {
+            self.found(version)
+        };
+        if changes {
+            self.phase = Phase::Offered;
+        }
+        changes
+    }
+
     /// „Später“: schließt das Angebot und merkt sich die Version. Während
     /// des Downloads blendet es nur den Hinweis aus; das Symbol zeigt dann
     /// den Fortschritt. Gibt zurück, ob sich der Zustand geändert hat.
@@ -185,6 +208,8 @@ pub enum FailureCause {
 /// Der Schritt der Aktualisierung, in dem ein Fehler auftrat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
+    /// „Jetzt suchen“; eingeordnet wie der Download, denn beide fragen GitHub.
+    Check,
     Download,
     Install,
 }
@@ -282,7 +307,21 @@ impl AppUpdates {
     }
 }
 
-/// Richtet die Aktualisierung ein. Nur die installierte Fassung sucht.
+/// Was „Jetzt suchen“ ergab.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "outcome", rename_all = "camelCase")]
+pub enum CheckResult {
+    /// Es gibt eine neue Version; das Angebot steht in allen Fenstern.
+    Found { version: String },
+    /// Kredr ist aktuell.
+    Current,
+    /// Die Suche scheiterte, mit eingeordnetem Grund und Originaltext.
+    Failed { cause: FailureCause, error: String },
+}
+
+/// Richtet die Aktualisierung ein. Nur die installierte Fassung sucht von
+/// selbst, und nur, solange die Einstellung „Nach Aktualisierungen suchen“
+/// an ist. Sie gilt bei jeder Suche neu.
 pub fn start(app: &AppHandle) {
     app.manage(AppUpdates::new(
         app.package_info().version.to_string(),
@@ -295,31 +334,18 @@ pub fn start(app: &AppHandle) {
     std::thread::spawn(move || {
         std::thread::sleep(FIRST_CHECK_AFTER);
         loop {
-            tauri::async_runtime::block_on(check(&app));
+            if app.state::<SettingsStore>().get().check_for_updates {
+                tauri::async_runtime::block_on(check(&app));
+            }
             std::thread::sleep(CHECK_EVERY);
         }
     });
 }
 
-/// Sucht einmal nach einer neuen Version. Ohne Netz oder bei einer kaputten
-/// `latest.json` bleibt es still; die nächste Suche versucht es erneut.
+/// Sucht von selbst einmal nach einer neuen Version. Ohne Netz oder bei einer
+/// kaputten `latest.json` bleibt es still; die nächste Suche versucht es erneut.
 async fn check(app: &AppHandle) {
-    let handle = app.clone();
-    // Unter Windows beendet der Updater Kredr nach dem Start des Installers
-    // mit `std::process::exit`; dabei schließt kein Fenster mehr regulär.
-    // Vorher merkt sich Kredr die offenen Fenster für den Neustart und räumt
-    // auf wie das Plugin ohne eigenen Hook.
-    let updater = app
-        .updater_builder()
-        .on_before_exit(move || {
-            crate::projects::remember_windows_for_restart(&handle);
-            handle.cleanup_before_exit();
-        })
-        .build();
-    let Ok(updater) = updater else {
-        return;
-    };
-    let Ok(Some(found)) = updater.check().await else {
+    let Ok(Some(found)) = search(app).await else {
         return;
     };
     app.state::<AppUpdates>().change(app, |state, update| {
@@ -331,9 +357,56 @@ async fn check(app: &AppHandle) {
     });
 }
 
+/// Fragt GitHub nach einer neuen Version.
+async fn search(app: &AppHandle) -> Result<Option<Update>, tauri_plugin_updater::Error> {
+    let handle = app.clone();
+    // Unter Windows beendet der Updater Kredr nach dem Start des Installers
+    // mit `std::process::exit`; dabei schließt kein Fenster mehr regulär.
+    // Vorher merkt sich Kredr die offenen Fenster für den Neustart und räumt
+    // auf wie das Plugin ohne eigenen Hook.
+    let updater = app
+        .updater_builder()
+        .on_before_exit(move || {
+            crate::projects::remember_windows_for_restart(&handle);
+            handle.cleanup_before_exit();
+        })
+        .build()?;
+    updater.check().await
+}
+
 #[tauri::command]
 pub fn app_update_state(updates: State<'_, AppUpdates>) -> AppUpdateState {
     updates.state()
+}
+
+/// „Jetzt suchen“ aus den Einstellungen: sucht sofort, auch wenn die Suche
+/// von selbst abgeschaltet ist. Eine neue Version bietet sich in allen
+/// Fenstern an, auch eine, die die Person auf „Später“ gestellt hat. Ein
+/// Fehlschlag kommt als Ergebnis zurück, nie als Fehler; das `Result`
+/// verlangt Tauri von asynchronen Befehlen mit `State`.
+#[tauri::command]
+pub async fn app_update_check(
+    app: AppHandle,
+    updates: State<'_, AppUpdates>,
+) -> Result<CheckResult, String> {
+    Ok(match search(&app).await {
+        Ok(Some(found)) => {
+            let version = found.version.clone();
+            updates.change(&app, |state, update| {
+                let offered = state.found_on_request(found.version.clone());
+                if offered {
+                    *update = Some(found);
+                }
+                offered
+            });
+            CheckResult::Found { version }
+        }
+        Ok(None) => CheckResult::Current,
+        Err(error) => CheckResult::Failed {
+            cause: failure_cause(&error, Step::Check),
+            error: error.to_string(),
+        },
+    })
 }
 
 /// „Später“ aus einem Fenster gilt für alle. Die Version merkt sich Kredr

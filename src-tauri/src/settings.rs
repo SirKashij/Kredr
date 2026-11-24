@@ -51,6 +51,9 @@ pub struct Settings {
     /// Ob Agenten beim Öffnen eines Projekts mit ihrem Gespräch
     /// zurückkommen. Aus: Ihre Tabs kommen als gewöhnliche Terminals zurück.
     pub resume_agents: bool,
+    /// Ob Kredr von selbst nach einer neuen Version sucht, kurz nach dem
+    /// Start und danach alle drei Stunden. „Jetzt suchen“ geht immer.
+    pub check_for_updates: bool,
 }
 
 impl Default for Settings {
@@ -64,6 +67,7 @@ impl Default for Settings {
             notifications: true,
             show_assignment: true,
             resume_agents: true,
+            check_for_updates: true,
         }
     }
 }
@@ -88,6 +92,8 @@ impl Settings {
             notifications: field(&file, "notifications").unwrap_or(defaults.notifications),
             show_assignment: field(&file, "showAssignment").unwrap_or(defaults.show_assignment),
             resume_agents: field(&file, "resumeAgents").unwrap_or(defaults.resume_agents),
+            check_for_updates: field(&file, "checkForUpdates")
+                .unwrap_or(defaults.check_for_updates),
         }
         .corrected()
     }

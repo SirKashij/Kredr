@@ -33,6 +33,8 @@ export interface Settings {
   showAssignment: boolean;
   /** Ob Agenten beim Öffnen eines Projekts mit ihrem Gespräch zurückkommen. */
   resumeAgents: boolean;
+  /** Ob Kredr von selbst nach einer neuen Version sucht; „Jetzt suchen“ geht immer. */
+  checkForUpdates: boolean;
 }
 
 /** Gilt nur, bis die Einstellungen aus dem Kern geladen sind. */
@@ -45,6 +47,7 @@ export const defaultSettings: Settings = {
   notifications: true,
   showAssignment: true,
   resumeAgents: true,
+  checkForUpdates: true,
 };
 
 export const fontSizeRange = { min: 6, max: 32 };

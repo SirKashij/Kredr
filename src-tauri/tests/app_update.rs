@@ -75,6 +75,49 @@ fn nach_spaeter_bietet_dieselbe_version_sich_nicht_erneut_an() {
 }
 
 #[test]
+fn jetzt_suchen_bietet_auch_eine_auf_spaeter_gestellte_version_an() {
+    let mut state = AppUpdateState::new("0.5.0", Some("0.6.0".into()));
+
+    assert!(state.found_on_request("0.6.0".into()));
+    assert_eq!(state.phase, Phase::Offered);
+    assert_eq!(state.version.as_deref(), Some("0.6.0"));
+
+    state.later();
+    assert!(state.found_on_request("0.6.0".into()));
+    assert_eq!(state.phase, Phase::Offered);
+}
+
+#[test]
+fn jetzt_suchen_bietet_nach_einem_fehlschlag_dieselbe_version_wieder_an() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    state.start_download();
+    state.fail(FailureCause::Network, "keine Verbindung".into());
+
+    assert!(state.found_on_request("0.6.0".into()));
+    assert_eq!(state.phase, Phase::Offered);
+    assert_eq!(state.cause, None);
+    assert_eq!(state.error, None);
+}
+
+#[test]
+fn jetzt_suchen_ordnet_den_fehler_wie_beim_download_ein() {
+    let error = tauri_plugin_updater::Error::ReleaseNotFound;
+
+    assert_eq!(failure_cause(&error, Step::Check), FailureCause::Network);
+}
+
+#[test]
+fn jetzt_suchen_stoert_keine_laufende_aktualisierung() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    state.start_download();
+
+    assert!(!state.found_on_request("0.6.0".into()));
+    assert_eq!(state.phase, Phase::Downloading);
+}
+
+#[test]
 fn aktualisieren_laesst_sich_nur_mit_angebot_anstossen() {
     let mut state = state();
     assert!(!state.start_download());

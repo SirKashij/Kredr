@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import {
   AppUpdate,
+  checkResultText,
   failureSentence,
   showsIcon,
   showsNotice,
@@ -43,6 +44,10 @@ function fakeCore(
   const announce = (state: AppUpdateState) => listeners.forEach((listener) => listener(state));
   const port: AppUpdatePort = {
     current: async () => initial,
+    check: async () => {
+      calls.push("check");
+      throw new Error("Kern nicht erreichbar");
+    },
     onChange: (listener) => {
       listeners.add(listener);
     },
@@ -71,6 +76,21 @@ function fakeCore(
 
 /** Wartet, bis alle anstehenden Antworten des Kerns angekommen sind. */
 const settled = () => new Promise((resolve) => setTimeout(resolve));
+
+test("erreicht „Jetzt suchen“ den Kern nicht, gilt die Suche als gescheitert", async () => {
+  const core = fakeCore(none);
+  const update = new AppUpdate(core.port);
+
+  const result = await update.checkNow();
+
+  expect(core.calls).toEqual(["check"]);
+  expect(result).toEqual({
+    outcome: "failed",
+    cause: "unknown",
+    error: "Error: Kern nicht erreichbar",
+  });
+  expect(checkResultText(de, result)).toBe("Suche fehlgeschlagen. Unerwarteter Fehler.");
+});
 
 test("eine neue Version ergibt ein Angebot", async () => {
   const core = fakeCore(none);

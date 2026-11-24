@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { AppUpdateCheck } from "./AppUpdateNotice";
 import { useT, type Language, type MessageKey } from "./i18n/i18n";
 import { useSettings } from "./settings";
 import {
@@ -134,6 +135,14 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             onChange={(event) => change({ resumeAgents: event.target.checked })}
           />
         </SettingRow>
+        <SettingRow label={t("settings.checkForUpdates")} hint={t("settings.checkForUpdates.hint")}>
+          <input
+            type="checkbox"
+            checked={settings.checkForUpdates}
+            onChange={(event) => change({ checkForUpdates: event.target.checked })}
+          />
+        </SettingRow>
+        <AppUpdateCheck />
         <ThirdPartyLicenses />
       </div>
     </section>

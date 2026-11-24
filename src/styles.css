@@ -1625,6 +1625,16 @@ button {
   max-width: 100px;
 }
 
+.setting-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-update-check {
+  padding-top: 0;
+}
+
 .setting input[type="checkbox"] {
   width: 16px;
   height: 16px;

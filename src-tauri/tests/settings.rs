@@ -35,6 +35,7 @@ fn changed() -> Settings {
         notifications: false,
         show_assignment: false,
         resume_agents: false,
+        check_for_updates: false,
     }
 }
 
@@ -53,6 +54,26 @@ fn ohne_datei_gelten_die_standardwerte() {
     assert!(settings.notifications);
     assert!(settings.show_assignment);
     assert!(settings.resume_agents);
+    assert!(settings.check_for_updates);
+}
+
+#[test]
+fn eine_alte_datei_ohne_suche_nach_aktualisierungen_sucht() {
+    let dir = temp_dir("suche-alt");
+    write_file(&dir, r#"{ "version": 1, "notifications": false }"#);
+
+    assert!(open(&dir).get().check_for_updates);
+}
+
+#[test]
+fn eine_abgeschaltete_suche_nach_aktualisierungen_bleibt_abgeschaltet() {
+    let dir = temp_dir("suche-aus");
+    write_file(&dir, r#"{ "version": 1, "checkForUpdates": false }"#);
+
+    let settings = open(&dir).get();
+
+    assert!(!settings.check_for_updates);
+    assert!(settings.notifications);
 }
 
 #[test]
