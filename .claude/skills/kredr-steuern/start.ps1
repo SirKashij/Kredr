@@ -9,6 +9,8 @@ param(
   [switch]$FrischeDaten,
   # Startet ohne Projekt wie aus dem Startmenü: Startseite oder die zuletzt offenen Workspaces.
   [switch]$OhneProjekt,
+  # Version, die der Kern allen Fenstern als neu anbietet, etwa 0.6.0; geladen wird nichts.
+  [string]$Aktualisierung = "",
   [int]$Port = 9333
 )
 $ErrorActionPreference = "Stop"
@@ -63,7 +65,8 @@ $env:KREDR_DATA_DIR = $daten
 Get-ChildItem Env: | Where-Object Name -like "CLAUDE_CODE_*" | ForEach-Object { Remove-Item "Env:$($_.Name)" }
 Remove-Item Env:CLAUDECODE -ErrorAction SilentlyContinue
 # Ordnerdialoge beantwortet Kredr selbst; ohne Angabe erscheint der Windows-Dialog.
-$env:KREDR_TEST_FOLDERS = ($Ordner | ForEach-Object { (Resolve-Path $_).Path }) -join ";"
+$env:KREDR_SIMULATED_UPDATE = $Aktualisierung
+$env:KREDR_TEST_FOLDERS =($Ordner | ForEach-Object { (Resolve-Path $_).Path }) -join ";"
 $kredr = if ($OhneProjekt) {
   Start-Process $exe -PassThru
 } else {

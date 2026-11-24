@@ -1,7 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { confirm } from "@tauri-apps/plugin-dialog";
-import type { AppUpdatePort, AppUpdateState, CheckResult, FailureCause } from "./appUpdate";
+import {
+  offersActions,
+  type AppUpdatePort,
+  type AppUpdateState,
+  type CheckResult,
+  type FailureCause,
+} from "./appUpdate";
 import type { Translate } from "./i18n/i18n";
 import { openUrl } from "./openExternally";
 import { NO_REASONS, SILENT_WINDOW, updateQuestion, type UpdateReasons } from "./updateReasons";
@@ -42,6 +48,8 @@ export function coreAppUpdatePort(t: () => Translate): AppUpdatePort {
         () => {},
       );
     },
+    ask: () => invoke<boolean>("app_update_ask"),
+    cancel: () => invoke("app_update_cancel"),
     install: () => invoke("app_update_install"),
     later: () => invoke("app_update_later"),
     openUrl,
@@ -99,6 +107,8 @@ export function simulatedAppUpdatePort(
     cause: null,
     error: null,
   };
+  /** Der Zustand vor der Rückfrage; „Später“ in ihr kehrt zu ihm zurück. */
+  let beforeConfirm = state;
   const listeners = new Set<(state: AppUpdateState) => void>();
   const announce = (patch: Partial<AppUpdateState>) => {
     state = { ...state, ...patch };
@@ -122,11 +132,20 @@ export function simulatedAppUpdatePort(
     onChange: (listener) => {
       listeners.add(listener);
     },
+    ask: async () => {
+      if (!offersActions(state)) return false;
+      beforeConfirm = state;
+      announce({ phase: "confirm", hidden: state.phase === "later" });
+      return true;
+    },
+    cancel: async () => {
+      if (state.phase === "confirm") announce(beforeConfirm);
+    },
     install: async () => {
+      if (state.phase !== "confirm") return;
       announce({
         phase: "downloading",
         progress: 0,
-        hidden: state.phase === "later",
         cause: null,
         error: null,
       });

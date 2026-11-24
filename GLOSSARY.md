@@ -120,7 +120,7 @@ Die neue Version, die die Person mit „Später“ aufgeschoben hat. Kredr merkt
 _Vermeiden_: ignorierte Version, übersprungene Version
 
 **Symbol der Aktualisierung**:
-Der Pfeil nach oben mit Punkt unmittelbar über dem Zahnrad der Aktivitätsleiste. Er steht nach „Später“ oder einem Fehlschlag, bis aktualisiert ist, und öffnet ein Menü zum Aktualisieren und zu den Neuerungen. Ist der Hinweis zu einem laufenden Download weggeklickt, zeigt er den Fortschritt als Ring. Im Code heißt er `AppUpdateButton`.
+Der Pfeil nach oben mit Punkt unmittelbar über dem Zahnrad der Aktivitätsleiste. Er steht nach „Später“ oder einem Fehlschlag, bis aktualisiert ist, und öffnet ein Menü zum Aktualisieren und zu den Neuerungen; während der Rückfrage ist es ohne Menü. Ist der Hinweis zu einem laufenden Download weggeklickt, zeigt er den Fortschritt als Ring. Im Code heißt er `AppUpdateButton`.
 _Vermeiden_: Badge, Update-Icon
 
 **Fehlschlag**:
@@ -132,7 +132,7 @@ Etwas, das beim Beenden eines Fensters verloren ginge oder abbräche: eine unges
 _Vermeiden_: Grund, Blocker, Warnung
 
 **Rückfrage vor der Aktualisierung**:
-Der eine Dialog, der vor einer Aktualisierung die Anlässe aller Fenster zusammengezählt nennt, mit „Später“ (bricht ab) und „Trotzdem aktualisieren“. Ohne Anlass entfällt er.
+Der eine Dialog, der vor einer Aktualisierung die Anlässe aller Fenster zusammengezählt nennt, mit „Später“ (bricht ab) und „Trotzdem aktualisieren“. Ohne Anlass entfällt er. Der Kern führt sie als Phase `confirm`, sobald ein Fenster „Jetzt aktualisieren“ auslöst, auch wenn der Dialog dann entfällt: Nur dieses **fragende Fenster** darf sie beenden oder den Download beginnen, alle anderen zeigen sie ohne Aktionen. Schließt sich das fragende Fenster, endet sie wie mit „Später“.
 _Vermeiden_: Warnung, Popup
 
 **Rundfrage**:

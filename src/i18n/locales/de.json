@@ -319,6 +319,7 @@
   "appUpdate.downloadingProgress": "Lade Kredr {version} … {progress} %",
   "appUpdate.hide": "Ausblenden",
   "appUpdate.installing": "Installiere Kredr {version}, Kredr startet gleich neu …",
+  "appUpdate.confirming": "Kredr {version}: Vor der Aktualisierung wartet eine Rückfrage auf Antwort.",
   "appUpdate.failed": "Aktualisierung fehlgeschlagen",
   "appUpdate.retry": "Erneut versuchen",
   "appUpdate.moreInfo": "Mehr Infos",

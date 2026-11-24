@@ -16,6 +16,121 @@ fn state() -> AppUpdateState {
     AppUpdateState::new("0.5.0", None)
 }
 
+/// Das Fenster, in dem die Person klickt.
+const MAIN: &str = "main";
+/// Ein zweites Fenster.
+const OTHER: &str = "projekt-2";
+
+/// „Jetzt aktualisieren“ in `MAIN`, ohne Anlass für eine Rückfrage.
+fn update_now(state: &mut AppUpdateState) -> bool {
+    state.ask(MAIN) && state.start_download(MAIN)
+}
+
+#[test]
+fn jetzt_aktualisieren_meldet_die_rueckfrage_allen_fenstern() {
+    let mut state = state();
+    state.found("0.6.0".into());
+
+    assert!(state.ask(MAIN));
+
+    assert_eq!(state.phase, Phase::Confirm);
+    assert_eq!(state.version.as_deref(), Some("0.6.0"));
+    assert!(!state.hidden);
+}
+
+#[test]
+fn waehrend_der_rueckfrage_fragt_kein_zweites_fenster() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    state.ask(MAIN);
+
+    assert!(!state.ask(OTHER), "ein zweites Fenster sollte nicht fragen");
+    assert!(!state.ask(MAIN), "ein zweiter Klick sollte nicht fragen");
+    // Auch Download, „Später“ und das Ende der Rückfrage gehören dem fragenden Fenster.
+    assert!(!state.start_download(OTHER));
+    assert!(!state.cancel_confirm(OTHER));
+    assert!(!state.later());
+    assert_eq!(state.phase, Phase::Confirm);
+}
+
+#[test]
+fn spaeter_in_der_rueckfrage_fuehrt_zum_angebot_zurueck() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    state.ask(MAIN);
+
+    assert!(state.cancel_confirm(MAIN));
+
+    assert_eq!(state.phase, Phase::Offered);
+    // Das Angebot lässt sich danach erneut anstoßen, auch aus einem anderen Fenster.
+    assert!(state.ask(OTHER));
+}
+
+#[test]
+fn schliesst_das_fragende_fenster_endet_die_rueckfrage() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    state.ask(MAIN);
+
+    assert!(state.cancel_confirm(MAIN));
+    assert_eq!(state.phase, Phase::Offered);
+    // Ohne laufende Rückfrage ändert das Schließen eines Fensters nichts.
+    assert!(!state.cancel_confirm(MAIN));
+}
+
+#[test]
+fn aus_dem_symbol_kehrt_die_rueckfrage_zum_symbol_zurueck() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    state.later();
+    state.ask(MAIN);
+    assert_eq!(state.phase, Phase::Confirm);
+    assert!(
+        state.hidden,
+        "aus dem Symbol sollte kein Hinweis aufspringen"
+    );
+
+    state.cancel_confirm(MAIN);
+
+    assert_eq!(state.phase, Phase::Later);
+    assert!(!state.hidden);
+}
+
+#[test]
+fn nach_einem_fehlschlag_kehrt_die_rueckfrage_zum_fehlschlag_zurueck() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    update_now(&mut state);
+    state.fail(FailureCause::Network, "timeout".into());
+    state.ask(MAIN);
+
+    state.cancel_confirm(MAIN);
+
+    assert_eq!(state.phase, Phase::Failed);
+    assert_eq!(state.cause, Some(FailureCause::Network));
+}
+
+#[test]
+fn eine_suche_waehrend_der_rueckfrage_aendert_nichts() {
+    let mut state = state();
+    state.found("0.6.0".into());
+    state.ask(MAIN);
+
+    assert!(!state.found("0.7.0".into()));
+    assert!(!state.found_on_request("0.7.0".into()));
+    assert_eq!(state.phase, Phase::Confirm);
+    assert_eq!(state.version.as_deref(), Some("0.6.0"));
+}
+
+#[test]
+fn ohne_rueckfrage_beginnt_kein_download() {
+    let mut state = state();
+    state.found("0.6.0".into());
+
+    assert!(!state.start_download(MAIN));
+    assert_eq!(state.phase, Phase::Offered);
+}
+
 /// Was Kredr beim Start aus `dir`, dem Benutzerdatenverzeichnis, über die
 /// abgelehnte Version weiß.
 fn started_from(dir: &Path) -> AppUpdateState {
@@ -99,7 +214,7 @@ fn jetzt_suchen_bietet_auch_eine_auf_spaeter_gestellte_version_an() {
 fn jetzt_suchen_bietet_nach_einem_fehlschlag_dieselbe_version_wieder_an() {
     let mut state = state();
     state.found("0.6.0".into());
-    state.start_download();
+    update_now(&mut state);
     state.fail(FailureCause::Network, "keine Verbindung".into());
 
     assert!(state.found_on_request("0.6.0".into()));
@@ -178,7 +293,7 @@ fn eine_von_anfang_an_angeschaltete_suche_sucht_nicht_zusaetzlich() {
 fn jetzt_suchen_stoert_keine_laufende_aktualisierung() {
     let mut state = state();
     state.found("0.6.0".into());
-    state.start_download();
+    update_now(&mut state);
 
     assert!(!state.found_on_request("0.6.0".into()));
     assert_eq!(state.phase, Phase::Downloading);
@@ -187,13 +302,13 @@ fn jetzt_suchen_stoert_keine_laufende_aktualisierung() {
 #[test]
 fn aktualisieren_laesst_sich_nur_mit_angebot_anstossen() {
     let mut state = state();
-    assert!(!state.start_download());
+    assert!(!update_now(&mut state));
 
     state.found("0.6.0".into());
-    assert!(state.start_download());
+    assert!(update_now(&mut state));
     assert_eq!(state.phase, Phase::Downloading);
     // Ein zweiter Klick, auch aus einem anderen Fenster, startet nichts.
-    assert!(!state.start_download());
+    assert!(!update_now(&mut state));
     // Während des Downloads ändert eine Suche nichts.
     assert!(!state.found("0.7.0".into()));
     // „Später“ blendet dann nur den Hinweis aus.
@@ -205,14 +320,14 @@ fn aktualisieren_laesst_sich_nur_mit_angebot_anstossen() {
 fn scheitert_die_aktualisierung_laesst_sie_sich_erneut_anstossen() {
     let mut state = state();
     state.found("0.6.0".into());
-    state.start_download();
+    update_now(&mut state);
 
     state.fail(FailureCause::Signature, "Signatur ungültig".into());
 
     assert_eq!(state.phase, Phase::Failed);
     assert_eq!(state.cause, Some(FailureCause::Signature));
     assert_eq!(state.error.as_deref(), Some("Signatur ungültig"));
-    assert!(state.start_download());
+    assert!(update_now(&mut state));
     assert_eq!(state.error, None);
     assert_eq!(state.cause, None);
 }
@@ -221,7 +336,7 @@ fn scheitert_die_aktualisierung_laesst_sie_sich_erneut_anstossen() {
 fn der_download_meldet_den_fortschritt_in_ganzen_prozent() {
     let mut state = state();
     state.found("0.6.0".into());
-    state.start_download();
+    update_now(&mut state);
     assert_eq!(state.progress, Some(0));
 
     // Nur ein neuer ganzer Prozentwert ist eine Änderung.
@@ -237,7 +352,7 @@ fn der_download_meldet_den_fortschritt_in_ganzen_prozent() {
 fn ein_weggeklickter_download_zeigt_nur_das_symbol() {
     let mut state = state();
     state.found("0.6.0".into());
-    state.start_download();
+    update_now(&mut state);
     assert!(!state.hidden);
 
     assert!(state.later());
@@ -257,7 +372,7 @@ fn aus_dem_symbol_angestossen_bleibt_der_hinweis_weg() {
     state.found("0.6.0".into());
     state.later();
 
-    state.start_download();
+    update_now(&mut state);
 
     assert!(state.hidden);
 }

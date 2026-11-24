@@ -87,6 +87,7 @@ fn release_window(window: &tauri::Window) {
     let label = window.label();
     projects::window_closed(window);
     waiting_alerts::window_closed(window);
+    app_update::window_closed(window);
     window.state::<Terminals>().close_all_of(label);
     // Vor den Beobachtern, damit auch der Beobachter der Projektdateien enden kann.
     window.state::<VersionControls>().close_all_of(label);
@@ -159,6 +160,8 @@ pub fn run() {
             app_update::app_update_later,
             app_update::app_update_check,
             app_update::app_update_install,
+            app_update::app_update_ask,
+            app_update::app_update_cancel,
             project_files_commands::project_files_list_folder,
             project_files_commands::project_files_list_all,
             project_files_commands::project_files_read,

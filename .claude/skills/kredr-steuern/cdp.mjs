@@ -57,10 +57,19 @@ export class GrauerScreen extends Error {
   }
 }
 
-export async function verbinden({ port = laufenderPort() } = {}) {
+/** Die Kredr-Fenster, die gerade über CDP erreichbar sind. */
+export async function fenster({ port = laufenderPort() } = {}) {
   const ziele = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
-  const seite = ziele.find((z) => z.type === "page" && z.url.includes("localhost:1420"));
-  if (!seite) throw new Error("Keine Kredr-Seite auf Port " + port);
+  return ziele.filter((z) => z.type === "page" && z.url.includes("localhost:1420"));
+}
+
+/**
+ * Verbindet sich mit einem Kredr-Fenster; `nummer` wählt eines aus `fenster()`.
+ * Welches Fenster es ist, sagt `auswerten("__TAURI_INTERNALS__.metadata.currentWindow.label")`.
+ */
+export async function verbinden({ port = laufenderPort(), nummer = 0 } = {}) {
+  const seite = (await fenster({ port }))[nummer];
+  if (!seite) throw new Error(`Kein Kredr-Fenster Nummer ${nummer} auf Port ${port}`);
 
   const ws = new WebSocket(seite.webSocketDebuggerUrl);
   await new Promise((fertig, fehler) => {

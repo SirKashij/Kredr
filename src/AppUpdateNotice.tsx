@@ -5,6 +5,7 @@ import {
   checkResultText,
   downloadingText,
   failureSentence,
+  offersActions,
   showsIcon,
   showsNotice,
   type AppUpdateState,
@@ -65,10 +66,19 @@ export function AppUpdateButton() {
     return (
       <div className="app-update downloading" title={title} role="img" aria-label={title}>
         <ProgressRing progress={state.progress} />
-        <svg viewBox="0 0 24 24">
-          <path d="M12 16V6M7.5 10.5 12 6l4.5 4.5M7 19h10" />
-        </svg>
+        <UpArrow />
       </div>
+    );
+  }
+
+  if (!offersActions(state)) {
+    // Die Rückfrage läuft in einem Fenster; bis zur Antwort gibt es kein Menü.
+    const title = t("appUpdate.confirming", version);
+    return (
+      <button className="app-update" title={title} aria-label={title} disabled>
+        <UpArrow />
+        <span className="badge dot" />
+      </button>
     );
   }
 
@@ -87,9 +97,7 @@ export function AppUpdateButton() {
           setMenuAt({ x: box.right + 4, y: box.top });
         }}
       >
-        <svg viewBox="0 0 24 24">
-          <path d="M12 16V6M7.5 10.5 12 6l4.5 4.5M7 19h10" />
-        </svg>
+        <UpArrow />
         <span className="badge dot" />
       </button>
       {menuAt &&
@@ -156,6 +164,15 @@ export function AppUpdateCheck() {
         </span>
       </div>
     </div>
+  );
+}
+
+/** Der Pfeil nach oben im Symbol der Aktualisierung. */
+function UpArrow() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M12 16V6M7.5 10.5 12 6l4.5 4.5M7 19h10" />
+    </svg>
   );
 }
 
@@ -230,6 +247,9 @@ export function AppUpdateNotice() {
           </div>
         </PinnedNotice>
       );
+    case "confirm":
+      // Die Rückfrage läuft in einem Fenster; ihre Antwort gilt für alle.
+      return <PinnedNotice actions={[]}>{t("appUpdate.confirming", version)}</PinnedNotice>;
     case "installing":
       return <PinnedNotice actions={[]}>{t("appUpdate.installing", version)}</PinnedNotice>;
     case "failed":

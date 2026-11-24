@@ -9,7 +9,15 @@ import type { MessageKey, Translate } from "./i18n/i18n";
 import { hasReasons, sumReasons, type UpdateReasons } from "./updateReasons";
 
 /** Wie weit die Aktualisierung ist. */
-export type Phase = "none" | "offered" | "later" | "downloading" | "installing" | "failed";
+export type Phase =
+  | "none"
+  | "offered"
+  | "later"
+  /** Ein Fenster fragt nach den Anlässen; alle anderen zeigen das nur. */
+  | "confirm"
+  | "downloading"
+  | "installing"
+  | "failed";
 
 /** Warum eine Aktualisierung scheiterte, eingeordnet vom Kern. */
 export type FailureCause = "network" | "signature" | "installer" | "unknown";
@@ -50,7 +58,18 @@ export interface AppUpdatePort {
   check(): Promise<CheckResult>;
   /** Meldet jeden neuen Zustand des Kerns, solange das Fenster lebt. */
   onChange(listener: (state: AppUpdateState) => void): void;
-  /** Lädt die neue Version, prüft ihre Signatur, installiert sie und startet Kredr neu. */
+  /**
+   * Beginnt die Rückfrage in diesem Fenster; der Kern meldet sie allen
+   * Fenstern. `false` heißt: Ein anderes Fenster fragt schon, oder die
+   * Aktualisierung läuft.
+   */
+  ask(): Promise<boolean>;
+  /** Beendet die Rückfrage dieses Fensters; der Kern kehrt zur Phase davor zurück. */
+  cancel(): Promise<void>;
+  /**
+   * Lädt die neue Version, prüft ihre Signatur, installiert sie und startet
+   * Kredr neu. Nur aus der Rückfrage dieses Fensters heraus.
+   */
   install(): Promise<void>;
   /** Die Anlässe jedes offenen Fensters; ein Fenster ohne Antwort als `SILENT_WINDOW`. */
   reasons(): Promise<UpdateReasons[]>;
@@ -70,12 +89,19 @@ export function releasePage(version: string): string {
 }
 
 /**
+ * In diesen Phasen entscheidet `hidden`, ob der Hinweis oder das Symbol
+ * steht: nach dem Wegklicken des Downloads und bei einer Rückfrage aus dem
+ * Symbol heraus.
+ */
+const MAY_HIDE = new Set<Phase>(["confirm", "downloading"]);
+
+/**
  * Ob unten rechts der Hinweis zur Aktualisierung steht: vom Angebot an, bis
  * die Person „Später“ wählt oder Kredr neu startet. Den Hinweis zum Download
  * kann sie wegklicken, den zur Installation nicht.
  */
 export function showsNotice(state: AppUpdateState): boolean {
-  if (state.phase === "downloading") return !state.hidden;
+  if (MAY_HIDE.has(state.phase)) return !state.hidden;
   return state.phase !== "none" && state.phase !== "later";
 }
 
@@ -83,11 +109,20 @@ export function showsNotice(state: AppUpdateState): boolean {
  * Ob über dem Zahnrad der Aktivitätsleiste das Symbol der Aktualisierung
  * steht: nach „Später“ und nach einem Fehlschlag, bis aktualisiert ist, und
  * mit dem Fortschritt als Ring, solange ein weggeklickter Download läuft.
+ * Eine Rückfrage aus dem Symbol heraus zeigt es weiter.
  */
 export function showsIcon(state: AppUpdateState): boolean {
   if (state.version === null) return false;
-  if (state.phase === "downloading") return state.hidden;
+  if (MAY_HIDE.has(state.phase)) return state.hidden;
   return state.phase === "later" || state.phase === "failed";
+}
+
+/**
+ * Ob Hinweis und Symbol „Jetzt aktualisieren“ und „Später“ anbieten. Während
+ * der Rückfrage nicht: Sie läuft schon in einem Fenster.
+ */
+export function offersActions(state: AppUpdateState): boolean {
+  return CAN_START.has(state.phase);
 }
 
 /** Wie weit der Download ist, als Text für Hinweis und Symbol; ohne bekannte Größe ohne Prozent. */
@@ -145,14 +180,15 @@ export class AppUpdate {
   private readonly listeners = new Set<() => void>();
   /** Ob schon eine Meldung des Kerns kam; die erste Antwort ist dann veraltet. */
   private heard = false;
-  /** Ob dieses Fenster gerade eine Aktualisierung angestoßen hat. */
-  private started = false;
 
   constructor(private readonly port: AppUpdatePort) {
     port.onChange((state) => {
       this.heard = true;
       this.set(state);
     });
+    // Nach dem Neuladen ist die Rückfrage dieses Fensters verloren; im Kern
+    // darf sie nicht hängen bleiben. Hält das Fenster keine, ändert das nichts.
+    port.cancel().catch(() => {});
     port
       .current()
       .then((state) => {
@@ -175,19 +211,29 @@ export class AppUpdate {
    * beendet dabei alle Fenster und startet neu. Gibt es in einem Fenster etwas,
    * das verloren ginge oder abbräche, fasst eine Rückfrage die Anlässe aller
    * Fenster zusammen; „Später“ bricht ab. Vorher speichert jedes Fenster seine
-   * Aufteilung. Den Fortschritt melden die Phasen des Kerns. Läuft schon eine
-   * Aktualisierung, geschieht nichts.
+   * Aufteilung. Den Fortschritt melden die Phasen des Kerns. Solange die
+   * Rückfrage offen ist, meldet der Kern sie allen Fenstern als `confirm` und
+   * lässt kein zweites Fenster fragen. Läuft schon eine Aktualisierung oder
+   * Rückfrage, geschieht nichts.
    */
   async updateNow(): Promise<void> {
-    if (this.started || !CAN_START.has(this.state.phase)) return;
-    this.started = true;
+    if (!offersActions(this.state)) return;
+    let asking = false;
     try {
+      if (!(await this.port.ask())) return;
+      asking = true;
       const reasons = sumReasons(await this.port.reasons());
-      if (hasReasons(reasons) && !(await this.port.confirm(reasons))) return;
+      if (hasReasons(reasons) && !(await this.port.confirm(reasons))) {
+        await this.port.cancel();
+        return;
+      }
       // Die Aufteilung ist Komfort; an ihr scheitert die Aktualisierung nicht.
       await this.port.saveArrangements().catch(() => {});
+      asking = false;
       await this.port.install();
     } catch (reason) {
+      // Die Rückfrage darf im Kern nicht hängen bleiben.
+      if (asking) await this.port.cancel().catch(() => {});
       this.set({
         ...this.state,
         phase: "failed",
@@ -196,8 +242,6 @@ export class AppUpdate {
         cause: "unknown",
         error: String(reason),
       });
-    } finally {
-      this.started = false;
     }
   }
 
@@ -220,8 +264,10 @@ export class AppUpdate {
   /**
    * „Später“: schließt das Angebot in allen Fenstern. Während des Downloads
    * blendet es nur den Hinweis aus; das Symbol zeigt dann den Fortschritt.
+   * Während der Rückfrage gilt nur ihr eigenes „Später“.
    */
-  later(): Promise<void> {
+  async later(): Promise<void> {
+    if (this.state.phase === "confirm") return;
     return this.port.later().catch(() => {});
   }
 

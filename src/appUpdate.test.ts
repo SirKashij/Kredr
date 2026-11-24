@@ -3,6 +3,7 @@ import {
   AppUpdate,
   checkResultText,
   failureSentence,
+  offersActions,
   showsIcon,
   showsNotice,
   type AppUpdatePort,
@@ -30,48 +31,84 @@ const none: AppUpdateState = {
  * Ein Kern, den der Test steuert: `announce` meldet allen Fenstern einen neuen
  * Zustand, `installSteps` sind die Zustände, die er beim Aktualisieren meldet.
  * `windows` sind die Anlässe der offenen Fenster, `answer` ist die Antwort der
- * Person auf die Rückfrage.
+ * Person auf die Rückfrage. Wie der echte Kern lässt er nur ein Fenster
+ * zugleich fragen und meldet die Rückfrage allen Fenstern. `portFor` ist der
+ * Port eines weiteren Fensters.
  */
 function fakeCore(
   initial: AppUpdateState,
   installSteps: AppUpdateState[] = [],
   windows: UpdateReasons[] = [quiet],
-  answer = true,
+  answer: boolean | (() => Promise<boolean>) = true,
 ) {
   const listeners = new Set<(state: AppUpdateState) => void>();
   const calls: string[] = [];
   const asked: UpdateReasons[] = [];
-  const announce = (state: AppUpdateState) => listeners.forEach((listener) => listener(state));
-  const port: AppUpdatePort = {
-    current: async () => initial,
-    check: async () => {
-      calls.push("check");
-      throw new Error("Kern nicht erreichbar");
-    },
-    onChange: (listener) => {
-      listeners.add(listener);
-    },
-    install: async () => {
-      calls.push("install");
-      for (const step of installSteps) {
-        await Promise.resolve();
-        announce(step);
-      }
-    },
-    later: async () => {
-      calls.push("later");
-    },
-    openUrl: (url) => calls.push(`open ${url}`),
-    reasons: async () => windows,
-    confirm: async (reasons) => {
-      asked.push(reasons);
-      return answer;
-    },
-    saveArrangements: async () => {
-      calls.push("save");
-    },
+  let state = initial;
+  // Beginnt er in der Rückfrage, kam sie aus dem Angebot.
+  let beforeConfirm: AppUpdateState =
+    initial.phase === "confirm" ? { ...initial, phase: "offered" } : initial;
+  /** Das Fenster, das die Rückfrage hält. */
+  let asker: string | null = initial.phase === "confirm" ? "main" : null;
+  const announce = (next: AppUpdateState) => {
+    state = next;
+    listeners.forEach((listener) => listener(next));
   };
-  return { port, announce, calls, asked };
+  const portFor = (window: string): AppUpdatePort => {
+    const named = (call: string) => (window === "main" ? call : `${call} ${window}`);
+    return {
+      current: async () => state,
+      check: async () => {
+        calls.push(named("check"));
+        throw new Error("Kern nicht erreichbar");
+      },
+      onChange: (listener) => {
+        listeners.add(listener);
+      },
+      ask: async () => {
+        calls.push(named("ask"));
+        if (!["offered", "later", "failed"].includes(state.phase)) return false;
+        beforeConfirm = state;
+        asker = window;
+        const confirm: AppUpdateState = {
+          ...state,
+          phase: "confirm",
+          hidden: state.phase === "later",
+        };
+        state = confirm;
+        // Wie ein Ereignis des Kerns kommt die Meldung erst etwas später an.
+        await Promise.resolve();
+        announce(confirm);
+        return true;
+      },
+      cancel: async () => {
+        if (state.phase !== "confirm" || asker !== window) return;
+        calls.push(named("cancel"));
+        asker = null;
+        announce(beforeConfirm);
+      },
+      install: async () => {
+        calls.push(named("install"));
+        for (const step of installSteps) {
+          await Promise.resolve();
+          announce(step);
+        }
+      },
+      later: async () => {
+        calls.push(named("later"));
+      },
+      openUrl: (url) => calls.push(`open ${url}`),
+      reasons: async () => windows,
+      confirm: async (reasons) => {
+        asked.push(reasons);
+        return typeof answer === "boolean" ? answer : answer();
+      },
+      saveArrangements: async () => {
+        calls.push(named("save"));
+      },
+    };
+  };
+  return { port: portFor("main"), portFor, announce, calls, asked };
 }
 
 /** Wartet, bis alle anstehenden Antworten des Kerns angekommen sind. */
@@ -125,8 +162,8 @@ test("„Jetzt aktualisieren“ führt über den Download zur Installation", asy
 
   await update.updateNow();
 
-  expect(core.calls).toEqual(["save", "install"]);
-  expect(phases).toEqual(["downloading", "installing"]);
+  expect(core.calls).toEqual(["ask", "save", "install"]);
+  expect(phases).toEqual(["confirm", "downloading", "installing"]);
   expect(showsNotice(update.snapshot())).toBe(true);
 });
 
@@ -139,7 +176,7 @@ test("ein zweiter Klick während des Downloads startet keine zweite Aktualisieru
   await update.updateNow();
   await update.updateNow();
 
-  expect(core.calls).toEqual(["save", "install"]);
+  expect(core.calls).toEqual(["ask", "save", "install"]);
 });
 
 test("scheitert der Aufruf des Kerns, zeigt der Hinweis den Fehlschlag mit Originaltext", async () => {
@@ -171,7 +208,7 @@ test("der Fortschritt des Downloads kommt im Hinweis an", async () => {
 
   await update.updateNow();
 
-  expect(progress).toEqual([0, 42]);
+  expect(progress).toEqual([null, 0, 42]);
   expect(showsNotice(update.snapshot())).toBe(true);
   expect(showsIcon(update.snapshot())).toBe(false);
 });
@@ -234,7 +271,7 @@ test("„Erneut versuchen“ startet Download und Installation neu", async () =>
 
   await update.updateNow();
 
-  expect(core.calls).toEqual(["save", "install"]);
+  expect(core.calls).toEqual(["ask", "save", "install"]);
   expect(update.snapshot().phase).toBe("downloading");
 });
 
@@ -321,6 +358,7 @@ test("aus dem Menü des Symbols lässt sich aktualisieren und die Neuerungen öf
 
   expect(core.calls).toEqual([
     "open https://github.com/SirKashij/Kredr/releases/tag/v0.6.0",
+    "ask",
     "save",
     "install",
   ]);
@@ -335,7 +373,7 @@ test("ohne Anlass in einem Fenster aktualisiert Kredr ohne Rückfrage", async ()
   await update.updateNow();
 
   expect(core.asked).toEqual([]);
-  expect(core.calls).toEqual(["save", "install"]);
+  expect(core.calls).toEqual(["ask", "save", "install"]);
 });
 
 test("Anlässe aus mehreren Fenstern erscheinen zusammen in einer Rückfrage", async () => {
@@ -363,7 +401,7 @@ test("Anlässe aus mehreren Fenstern erscheinen zusammen in einer Rückfrage", a
       silentWindows: 0,
     },
   ]);
-  expect(core.calls).toEqual(["save", "install"]);
+  expect(core.calls).toEqual(["ask", "save", "install"]);
 });
 
 test("ein Fenster, das nicht antwortet, verlangt die Rückfrage", async () => {
@@ -375,7 +413,7 @@ test("ein Fenster, das nicht antwortet, verlangt die Rückfrage", async () => {
   await update.updateNow();
 
   expect(core.asked).toEqual([{ ...quiet, silentWindows: 1 }]);
-  expect(core.calls).toEqual([]);
+  expect(core.calls).toEqual(["ask", "cancel"]);
 });
 
 const de: Translate = (key, values) => translate("de", key, values);
@@ -408,6 +446,96 @@ test("„Später“ in der Rückfrage bricht die Aktualisierung ab", async () =>
   await update.updateNow();
 
   expect(core.asked).toHaveLength(1);
-  expect(core.calls).toEqual([]);
+  expect(core.calls).toEqual(["ask", "cancel"]);
   expect(update.snapshot().phase).toBe("offered");
+});
+
+/** Eine Antwort auf die Rückfrage, die der Test erst später gibt. */
+function pendingAnswer() {
+  let give: (yes: boolean) => void = () => {};
+  const answer = new Promise<boolean>((resolve) => (give = resolve));
+  return { answer: () => answer, give };
+}
+
+test("während der Rückfrage zeigt ein zweites Fenster sie ohne Aktionen und fragt nicht erneut", async () => {
+  const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
+  const person = pendingAnswer();
+  const core = fakeCore(offered, [], [{ ...quiet, workingAgents: 1 }], person.answer);
+  const first = new AppUpdate(core.port);
+  const second = new AppUpdate(core.portFor("zweites"));
+  await settled();
+
+  const updating = first.updateNow();
+  await settled();
+
+  expect(second.snapshot().phase).toBe("confirm");
+  expect(showsNotice(second.snapshot())).toBe(true);
+  expect(offersActions(second.snapshot())).toBe(false);
+  await second.updateNow();
+  await second.later();
+  expect(core.asked).toHaveLength(1);
+  expect(core.calls).toEqual(["ask"]);
+
+  person.give(false);
+  await updating;
+  expect(second.snapshot().phase).toBe("offered");
+  expect(offersActions(second.snapshot())).toBe(true);
+});
+
+test("fragt schon ein anderes Fenster, öffnet ein Klick keine zweite Rückfrage", async () => {
+  const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
+  const core = fakeCore(offered, [], [{ ...quiet, workingAgents: 1 }]);
+  const first = new AppUpdate(core.port);
+  const second = new AppUpdate(core.portFor("zweites"));
+  await settled();
+
+  // Beide klicken, bevor die Meldung des Kerns das zweite Fenster erreicht.
+  await Promise.all([first.updateNow(), second.updateNow()]);
+
+  expect(core.asked).toHaveLength(1);
+  expect(core.calls).toEqual(["ask", "ask zweites", "save", "install"]);
+});
+
+test("eine Rückfrage aus dem Symbol zeigt in den anderen Fenstern nur das Symbol, ohne Menü", async () => {
+  const later: AppUpdateState = { ...none, phase: "later", version: "0.6.0" };
+  const core = fakeCore(later, [], [{ ...quiet, unsavedFiles: 1 }], pendingAnswer().answer);
+  const first = new AppUpdate(core.port);
+  const second = new AppUpdate(core.portFor("zweites"));
+  await settled();
+
+  void first.updateNow();
+  await settled();
+
+  expect(second.snapshot().phase).toBe("confirm");
+  expect(showsNotice(second.snapshot())).toBe(false);
+  expect(showsIcon(second.snapshot())).toBe(true);
+  expect(offersActions(second.snapshot())).toBe(false);
+});
+
+test("scheitert die Rundfrage, endet die Rückfrage im Kern", async () => {
+  const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
+  const core = fakeCore(offered);
+  core.port.reasons = () => Promise.reject(new Error("IPC kaputt"));
+  const update = new AppUpdate(core.port);
+  await settled();
+
+  await update.updateNow();
+
+  expect(core.calls).toEqual(["ask", "cancel"]);
+  expect(update.snapshot().phase).toBe("failed");
+});
+
+test("lädt das fragende Fenster neu, endet seine Rückfrage", async () => {
+  const offered: AppUpdateState = { ...none, phase: "offered", version: "0.6.0" };
+  const core = fakeCore({ ...offered, phase: "confirm" });
+  const other = new AppUpdate(core.portFor("zweites"));
+  await settled();
+  expect(core.calls).toEqual([]);
+
+  // Das fragende Fenster beginnt nach dem Neuladen mit einem neuen Ablauf.
+  new AppUpdate(core.port);
+  await settled();
+
+  expect(core.calls).toEqual(["cancel"]);
+  expect(other.snapshot().phase).toBe("offered");
 });

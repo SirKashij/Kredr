@@ -34,6 +34,9 @@ pub enum Phase {
     None,
     Offered,
     Later,
+    /// Ein Fenster fragt vor der Aktualisierung nach den Anlässen aller
+    /// Fenster. Solange lässt sich die Aktualisierung nirgends anstoßen.
+    Confirm,
     Downloading,
     Installing,
     Failed,
@@ -61,6 +64,12 @@ pub struct AppUpdateState {
     /// sich nicht wieder als Hinweis an, auch nach einem Neustart nicht.
     #[serde(skip)]
     declined: Option<String>,
+    /// Das Fenster, das während `Confirm` die Rückfrage zeigt.
+    #[serde(skip)]
+    asker: Option<String>,
+    /// Die Phase vor der Rückfrage; „Später“ in der Rückfrage kehrt zu ihr zurück.
+    #[serde(skip)]
+    before_confirm: Phase,
 }
 
 impl AppUpdateState {
@@ -75,6 +84,8 @@ impl AppUpdateState {
             cause: None,
             error: None,
             declined,
+            asker: None,
+            before_confirm: Phase::None,
         }
     }
 
@@ -93,7 +104,7 @@ impl AppUpdateState {
             Phase::Offered | Phase::Later | Phase::Failed => {
                 self.version.as_deref() != Some(version.as_str())
             }
-            Phase::Downloading | Phase::Installing => false,
+            Phase::Confirm | Phase::Downloading | Phase::Installing => false,
         };
         if changes {
             self.phase = if self.declined.as_deref() == Some(version.as_str()) {
@@ -146,13 +157,47 @@ impl AppUpdateState {
         }
     }
 
-    /// „Jetzt aktualisieren“: beginnt den Download, wenn eine neue Version
-    /// angeboten ist und noch keine Aktualisierung läuft. Aus dem Symbol
-    /// angestoßen, zeigt nur das Symbol den Fortschritt.
-    pub fn start_download(&mut self) -> bool {
-        let starts = matches!(self.phase, Phase::Offered | Phase::Later | Phase::Failed);
-        if starts {
+    /// „Jetzt aktualisieren“ in `window`: Die Rückfrage beginnt, wenn eine
+    /// neue Version angeboten ist und noch keine Aktualisierung läuft. Bis sie
+    /// endet, lässt sich die Aktualisierung in keinem Fenster erneut anstoßen.
+    /// Nach „Später“ angestoßen, springt kein Hinweis auf, und nur das Symbol
+    /// zeigt später den Fortschritt; nach einem Fehlschlag steht der Hinweis
+    /// ohnehin. Gibt zurück, ob `window` fragen darf.
+    pub fn ask(&mut self, window: &str) -> bool {
+        let asks = matches!(self.phase, Phase::Offered | Phase::Later | Phase::Failed);
+        if asks {
+            self.before_confirm = self.phase;
             self.hidden = self.phase == Phase::Later;
+            self.phase = Phase::Confirm;
+            self.asker = Some(window.to_owned());
+        }
+        asks
+    }
+
+    /// „Später“ in der Rückfrage von `window`, oder `window` schließt sich
+    /// mit offener Rückfrage: Der Zustand kehrt zur Phase davor zurück. Gibt
+    /// zurück, ob sich der Zustand geändert hat.
+    pub fn cancel_confirm(&mut self, window: &str) -> bool {
+        let cancels = self.asks_in(window);
+        if cancels {
+            self.phase = self.before_confirm;
+            self.hidden = false;
+            self.asker = None;
+        }
+        cancels
+    }
+
+    /// Ob `window` gerade die Rückfrage zeigt.
+    fn asks_in(&self, window: &str) -> bool {
+        self.phase == Phase::Confirm && self.asker.as_deref() == Some(window)
+    }
+
+    /// „Trotzdem aktualisieren“ in `window`, oder es gab keinen Anlass für
+    /// eine Rückfrage: Der Download beginnt, wenn `window` die Rückfrage hält.
+    pub fn start_download(&mut self, window: &str) -> bool {
+        let starts = self.asks_in(window);
+        if starts {
+            self.asker = None;
             self.phase = Phase::Downloading;
             self.progress = Some(0);
             self.cause = None;
@@ -384,6 +429,7 @@ pub fn start(app: &AppHandle) {
     // Die Suche sperrt die Entwicklungsfassung ohnehin; sie braucht deshalb
     // auch den Thread nicht, der alle drei Stunden aufwacht.
     if !Edition::current().may_update() {
+        offer_simulated(app);
         return;
     }
     let app = app.clone();
@@ -396,6 +442,23 @@ pub fn start(app: &AppHandle) {
             std::thread::sleep(CHECK_EVERY);
         }
     });
+}
+
+/// Nennt diese Variable der Entwicklungsfassung eine Version, etwa `0.6.0`,
+/// bietet der Kern sie allen Fenstern an. Ohne `Update` des Updaters lädt und
+/// installiert er nichts: „Trotzdem aktualisieren“ führt zum Angebot zurück.
+/// So lässt sich die Rückfrage über mehrere Fenster abnehmen.
+const SIMULATED_UPDATE: &str = "KREDR_SIMULATED_UPDATE";
+
+/// Bietet in der Entwicklungsfassung die Version aus `SIMULATED_UPDATE` an.
+fn offer_simulated(app: &AppHandle) {
+    if let Some(version) = std::env::var(SIMULATED_UPDATE)
+        .ok()
+        .filter(|v| !v.is_empty())
+    {
+        app.state::<AppUpdates>()
+            .change(app, |state, _| state.found(version));
+    }
 }
 
 /// Meldet der Aktualisierung neue Einstellungen. Schaltet die Person die
@@ -532,23 +595,60 @@ pub fn app_update_later(app: AppHandle, updates: State<'_, AppUpdates>) {
     updates.later(&app);
 }
 
+/// „Jetzt aktualisieren“ in einem Fenster: Es bekommt die Rückfrage, alle
+/// Fenster zeigen sie als laufend. Gibt zurück, ob das Fenster fragen darf;
+/// hält schon ein anderes die Rückfrage oder läuft die Aktualisierung, nicht.
+#[tauri::command]
+pub fn app_update_ask(
+    app: AppHandle,
+    window: tauri::Window,
+    updates: State<'_, AppUpdates>,
+) -> bool {
+    let mut asks = false;
+    updates.change(&app, |state, _| {
+        asks = state.ask(window.label());
+        asks
+    });
+    asks
+}
+
+/// „Später“ in der Rückfrage: Der Zustand kehrt in allen Fenstern zur Phase
+/// davor zurück.
+#[tauri::command]
+pub fn app_update_cancel(app: AppHandle, window: tauri::Window, updates: State<'_, AppUpdates>) {
+    updates.change(&app, |state, _| state.cancel_confirm(window.label()));
+}
+
+/// Ein Fenster hat sich geschlossen. Hielt es die Rückfrage, endet sie wie
+/// mit „Später“, damit kein Fenster in ihr hängen bleibt.
+pub fn window_closed(window: &tauri::Window) {
+    if let Some(updates) = window.try_state::<AppUpdates>() {
+        updates.change(window.app_handle(), |state, _| {
+            state.cancel_confirm(window.label())
+        });
+    }
+}
+
 /// Lädt die neue Version, prüft ihre Signatur und startet den Installer im
 /// Modus `passive`. Er beendet Kredr und startet es nach der Installation neu.
 /// Den Fortschritt des Downloads meldet der Zustand in ganzen Prozent.
 /// Scheitert ein Schritt, meldet der Zustand den eingeordneten Grund und den
-/// Originaltext. Ohne Angebot tut es nichts; ein `Update` kommt nur aus einer
+/// Originaltext. Nur das Fenster, das die Rückfrage hält, kann installieren.
+/// Ohne `Update` endet nur die Rückfrage; ein `Update` kommt nur aus einer
 /// Suche, die Entwicklungsfassung hat deshalb nie eins.
 #[tauri::command]
 pub async fn app_update_install(
     app: AppHandle,
+    window: tauri::Window,
     updates: State<'_, AppUpdates>,
 ) -> Result<(), String> {
     let mut pending = None;
     updates.change(&app, |state, update| {
         let Some(update) = update.clone() else {
-            return false;
+            // Ohne `Update` gibt es nichts zu laden; die Rückfrage darf nicht hängen bleiben.
+            return state.cancel_confirm(window.label());
         };
-        let starts = state.start_download();
+        let starts = state.start_download(window.label());
         if starts {
             pending = Some(update);
         }
