@@ -2,7 +2,7 @@
 //! verbindet die Benachrichtigungen und das Taskleisten-Symbol mit den
 //! Fenstern von Kredr. Wann das fällig ist, entscheidet die Oberfläche.
 
-use tauri::{AppHandle, Emitter, Manager, State, UserAttentionType, Window};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State, UserAttentionType, Window};
 
 use crate::notifications::Notifications;
 
@@ -69,6 +69,6 @@ pub fn waiting_alert_clear(window: Window, notifications: State<'_, Notification
 }
 
 /// Die Benachrichtigung eines geschlossenen Fensters führte nirgends mehr hin.
-pub fn window_closed(window: &Window) {
+pub fn window_closed<R: Runtime>(window: &Window<R>) {
     window.state::<Notifications>().clear(window.label());
 }

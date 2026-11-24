@@ -21,11 +21,13 @@ pub mod version_control;
 mod version_control_commands;
 mod waiting_alerts;
 pub mod window_geometry;
+#[cfg(test)]
+mod window_wiring_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri::{Emitter, Manager, State};
+use tauri::{Emitter, Manager, Runtime, State, Window, WindowEvent};
 
 use agent_status::AgentStatus;
 use project_files_commands::ProjectWatchers;
@@ -84,7 +86,7 @@ pub(crate) fn data_dir(app: &tauri::AppHandle) -> tauri::Result<PathBuf> {
 
 /// Gibt alles frei, was zu einem geschlossenen Fenster gehört. Die eine
 /// Stelle dafür: Was künftig an einem Fenster hängt, kommt hier dazu.
-fn release_window(window: &tauri::Window) {
+fn release_window<R: Runtime>(window: &Window<R>) {
     let label = window.label();
     projects::window_closed(window);
     waiting_alerts::window_closed(window);
@@ -95,6 +97,24 @@ fn release_window(window: &tauri::Window) {
     window.state::<ProjectWatchers>().close_all_of(label);
     window.state::<Searches>().close_all_of(label);
     orphaned_dialogs::close_orphaned_dialogs();
+}
+
+/// Verwaltet, was einzelnen Fenstern gehört und `release_window` freigibt.
+/// Benachrichtigungen und Aktualisierung entstehen erst beim Start.
+fn manage_per_window<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
+        .manage(Terminals::default())
+        .manage(ProjectWatchers::default())
+        .manage(Searches::default())
+        .manage(VersionControls::default())
+        .manage(project_windows::ProjectWindows::default())
+}
+
+/// Was Kredr bei Ereignissen eines Fensters tut.
+fn on_window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
+    if let WindowEvent::Destroyed = event {
+        release_window(window);
+    }
 }
 
 pub fn run() {
@@ -117,16 +137,11 @@ pub fn run() {
             projects::open_from_second_instance,
         ));
     }
-    builder
+    manage_per_window(builder)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(Terminals::default())
         .manage(agent_status)
-        .manage(ProjectWatchers::default())
-        .manage(Searches::default())
-        .manage(VersionControls::default())
-        .manage(project_windows::ProjectWindows::default())
         .manage(dialog_answers::DialogAnswers::from_env())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -141,11 +156,7 @@ pub fn run() {
             app_update::start(app.handle());
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                release_window(window);
-            }
-        })
+        .on_window_event(on_window_event)
         .invoke_handler(tauri::generate_handler![
             terminal_commands::terminal_open,
             terminal_commands::terminal_write,

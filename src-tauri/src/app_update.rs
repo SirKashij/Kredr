@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::settings::{Settings, SettingsStore};
@@ -423,7 +423,7 @@ impl AutoCheck {
 }
 
 impl AppUpdates {
-    fn new(installed: String, dir: Option<PathBuf>, auto_check: bool) -> Self {
+    pub(crate) fn new(installed: String, dir: Option<PathBuf>, auto_check: bool) -> Self {
         let declined = dir.as_deref().and_then(load_declined);
         Self {
             inner: Mutex::new((AppUpdateState::new(installed, declined), None)),
@@ -435,7 +435,7 @@ impl AppUpdates {
 
     /// Beendet die Rückfrage von `window`, wie mit „Später“; ein geladener
     /// Installer wird verworfen.
-    fn cancel(&self, app: &AppHandle, window: &str) {
+    fn cancel<R: Runtime>(&self, app: &AppHandle<R>, window: &str) {
         let mut cancelled = false;
         self.change(app, |state, _| {
             cancelled = state.cancel_confirm(window);
@@ -461,7 +461,7 @@ impl AppUpdates {
         failed
     }
 
-    fn state(&self) -> AppUpdateState {
+    pub(crate) fn state(&self) -> AppUpdateState {
         self.inner.lock().unwrap().0.clone()
     }
 
@@ -483,9 +483,9 @@ impl AppUpdates {
     }
 
     /// Ändert den Zustand und meldet ihn allen Fenstern, wenn `change` es sagt.
-    fn change(
+    pub(crate) fn change<R: Runtime>(
         &self,
-        app: &AppHandle,
+        app: &AppHandle<R>,
         change: impl FnOnce(&mut AppUpdateState, &mut Option<Update>) -> bool,
     ) {
         let mut inner = self.inner.lock().unwrap();
@@ -753,7 +753,7 @@ pub fn app_update_fail(
 
 /// Ein Fenster hat sich geschlossen. Hielt es die Rückfrage, endet sie wie
 /// mit „Später“, damit kein Fenster in ihr hängen bleibt.
-pub fn window_closed(window: &tauri::Window) {
+pub fn window_closed<R: Runtime>(window: &tauri::Window<R>) {
     if let Some(updates) = window.try_state::<AppUpdates>() {
         updates.cancel(window.app_handle(), window.label());
     }
@@ -828,17 +828,22 @@ pub async fn app_update_download(
 /// startet es nach der Installation neu; unmittelbar davor merkt sich Kredr
 /// die offenen Fenster (`on_before_exit`). Nur das Fenster, das nach dem
 /// Download die Rückfrage hält, kann installieren. Scheitert der Start,
-/// meldet der Zustand den eingeordneten Grund und den Originaltext.
+/// meldet der Zustand den eingeordneten Grund und den Originaltext. Ohne
+/// `Update` endet nur die Rückfrage, wie beim Download.
 #[tauri::command]
-pub async fn app_update_install(
-    app: AppHandle,
-    window: tauri::Window,
+pub async fn app_update_install<R: Runtime>(
+    app: AppHandle<R>,
+    window: tauri::Window<R>,
     updates: State<'_, AppUpdates>,
 ) -> Result<(), String> {
     let mut pending = None;
     updates.change(&app, |state, update| {
         let mut installer = updates.installer.lock().unwrap();
-        let starts = update.is_some() && installer.is_some() && state.start_install(window.label());
+        if update.is_none() {
+            installer.take();
+            return state.cancel_confirm(window.label());
+        }
+        let starts = installer.is_some() && state.start_install(window.label());
         if starts {
             pending = update.clone().zip(installer.take());
         }

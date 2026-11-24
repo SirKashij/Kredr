@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Runtime, State, WebviewWindow,
     WebviewWindowBuilder, Window,
 };
 
@@ -289,7 +289,7 @@ fn remember_workspace(store: &ArrangementStore, id: &str) {
 }
 
 /// Vergisst ein geschlossenes Fenster; seine Projekte gelten danach nicht mehr als offen.
-pub fn window_closed(window: &Window) {
+pub fn window_closed<R: Runtime>(window: &Window<R>) {
     let windows = window.state::<ProjectWindows>();
     windows.release(window.label());
     // Schließt das letzte Fenster, beendet sich Kredr: Dessen Workspaces
@@ -326,14 +326,14 @@ pub fn remember_windows_for_restart(app: &AppHandle, target: &str) {
 
 /// Verwirft die Notiz, wenn die Aktualisierung doch nicht neu startet;
 /// sonst kämen die Fenster beim nächsten gewöhnlichen Start zurück.
-pub fn forget_windows_for_restart(app: &AppHandle) {
+pub fn forget_windows_for_restart<R: Runtime>(app: &AppHandle<R>) {
     if let Err(error) = app.state::<ArrangementStore>().discard_restart_windows() {
         eprintln!("Fenster für den Neustart konnten nicht verworfen werden: {error}");
     }
 }
 
 /// Merkt sich, welche Workspaces gerade in einem Fenster offen sind.
-fn remember_open_workspaces(app: &AppHandle) {
+fn remember_open_workspaces<R: Runtime>(app: &AppHandle<R>) {
     let ids = app.state::<ProjectWindows>().workspace_ids();
     if let Err(error) = app
         .state::<ArrangementStore>()
