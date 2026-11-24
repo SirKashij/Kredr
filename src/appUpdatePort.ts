@@ -94,7 +94,8 @@ const SIMULATED_ERRORS: Record<FailureCause, string> = {
  * fragt erneut, lässt alle Fenster ihre Aufteilung speichern, „installiert“
  * sie und kehrt dann zum Angebot zurück, statt neu zu starten.
  * Mit `failure` scheitert er an diesem Grund. Den Zustand hält nur das
- * Fenster, das ihn benutzt.
+ * Fenster, das ihn benutzt. Dass er dem Kern folgt, prüfen die gemeinsamen
+ * Abläufe aus `appUpdateScenarios.json`.
  */
 export function simulatedAppUpdatePort(
   version: string,
@@ -181,8 +182,10 @@ export function simulatedAppUpdatePort(
       if (failure) return fail(failure);
       announce({ phase: "offered" });
     },
-    later: async () =>
-      announce(state.phase === "downloading" ? { hidden: true } : { phase: "later" }),
+    later: async () => {
+      if (state.phase === "offered" || state.phase === "failed") announce({ phase: "later" });
+      else if (state.phase === "downloading" && !state.hidden) announce({ hidden: true });
+    },
     openUrl: (url) => console.info(`Würde ${url} öffnen.`),
     ...beforeInstall(t),
   };

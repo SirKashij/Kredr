@@ -14,3 +14,5 @@ Diese Signatur ist unabhängig von der Authenticode-Signatur, auf die Kredr bewu
 - Geht der private Schlüssel verloren, kann keine installierte Fassung mehr automatisch aktualisieren. Wer installiert hat, muss den neuen Installer dann einmal von Hand ausführen. Deshalb liegt der Schlüssel zusätzlich außerhalb von GitHub gesichert.
 - Ein Schlüsselwechsel braucht eine Übergangsversion, die noch mit dem alten Schlüssel signiert ist und den neuen öffentlichen Schlüssel mitbringt.
 - Fassungen vor Einführung des Updaters (bis 0.5.x) erfahren nichts von neuen Versionen. Sie müssen einmal von Hand aktualisiert werden.
+- Das Plugin startet Kredr nach der Installation mit den Argumenten des ersten Starts neu (`current_exe_args` aus `args_os`, an den Installer über `/ARGS`). Nach `kredr <Ordner>` kommt also wieder dieser Ordner an. Deshalb geht die Notiz für den Neustart dem Projektargument vor (`start_windows` in `project_windows.rs`).
+- Unter Windows beendet das Plugin Kredr mit `std::process::exit(0)`, ohne dass `on_window_event` noch läuft. Was vor dem Neustart gespeichert sein muss, gehört in `on_before_exit`.

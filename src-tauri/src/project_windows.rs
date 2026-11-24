@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::arrangement_store::RestartWindow;
 use crate::paths;
 
 /// Was ein Fenster zeigt; die Oberfläche hält denselben Typ.
@@ -167,6 +168,30 @@ pub fn project_from_args(args: &[String], cwd: &Path) -> Option<PathBuf> {
         None => argument.clone(),
     };
     project_folder(&cwd.join(folder))
+}
+
+/// Womit Kredr beim Start seine Fenster füllt.
+#[derive(Debug, PartialEq, Eq)]
+pub enum StartWindows {
+    /// Nach einer Aktualisierung alle Fenster, die vorher offen waren.
+    Restart(Vec<RestartWindow>),
+    /// Das Projekt aus den Programmargumenten (`kredr <Ordner>`).
+    Project(PathBuf),
+    /// Die Startseite und die Workspaces, die beim Beenden offen waren.
+    OpenWorkspaces,
+}
+
+/// Die Fenster für diesen Start. Die Notiz für den Neustart geht dem
+/// Projektargument vor: Der Updater startet Kredr mit den Argumenten des
+/// ersten Starts neu, nach `kredr <Ordner>` also wieder mit diesem Ordner.
+pub fn start_windows(project: Option<PathBuf>, restart: Vec<RestartWindow>) -> StartWindows {
+    if !restart.is_empty() {
+        return StartWindows::Restart(restart);
+    }
+    match project {
+        Some(folder) => StartWindows::Project(folder),
+        None => StartWindows::OpenWorkspaces,
+    }
 }
 
 /// Der vollständige Pfad des Ordners, wenn es ihn gibt.

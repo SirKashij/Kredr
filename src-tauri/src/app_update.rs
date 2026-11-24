@@ -75,6 +75,9 @@ pub struct AppUpdateState {
     installer_ready: bool,
 }
 
+/// Der vorgespielte Port und der Kern der Vitest-Tests bilden diese Abläufe
+/// nach; `src/appUpdateScenarios.json` hält die gemeinsamen Fälle, gegen die
+/// alle drei geprüft werden.
 impl AppUpdateState {
     /// `declined` ist die Version, die die Person früher auf „Später“ gestellt hat.
     pub fn new(installed: impl Into<String>, declined: Option<String>) -> Self {
