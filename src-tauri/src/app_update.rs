@@ -227,7 +227,19 @@ pub fn start(app: &AppHandle) {
 /// Sucht einmal nach einer neuen Version. Ohne Netz oder bei einer kaputten
 /// `latest.json` bleibt es still; die nächste Suche versucht es erneut.
 async fn check(app: &AppHandle) {
-    let Ok(updater) = app.updater() else {
+    let handle = app.clone();
+    // Unter Windows beendet der Updater Kredr nach dem Start des Installers
+    // mit `std::process::exit`; dabei schließt kein Fenster mehr regulär.
+    // Vorher merkt sich Kredr die offenen Fenster für den Neustart und räumt
+    // auf wie das Plugin ohne eigenen Hook.
+    let updater = app
+        .updater_builder()
+        .on_before_exit(move || {
+            crate::projects::remember_windows_for_restart(&handle);
+            handle.cleanup_before_exit();
+        })
+        .build();
+    let Ok(updater) = updater else {
         return;
     };
     let Ok(Some(found)) = updater.check().await else {
@@ -286,6 +298,7 @@ pub async fn app_update_install(
     }
     .await;
     if let Err(error) = result {
+        crate::projects::forget_windows_for_restart(&app);
         updates.change(&app, |state, _| {
             state.fail(error.to_string());
             true

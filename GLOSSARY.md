@@ -96,6 +96,10 @@ _Vermeiden_: Toast, Popup, Benachrichtigung (das ist die Meldung von Windows)
 Der Wechsel der installierten Kredr-Fassung auf eine neue Version. Kredr bietet sie an, die Person löst sie aus, danach startet Kredr neu.
 _Vermeiden_: Update, Upgrade, Patch
 
+**Fenster für den Neustart**:
+Die Notiz, welche Fenster offen waren, als Kredr sich für eine Aktualisierung beendete, einzelne Projekte wie Workspaces. Der Neustart danach öffnet genau diese einmal wieder und verwirft die Notiz; ein gewöhnlicher Start kennt sie nicht. Im Code heißt sie `RestartWindow`.
+_Vermeiden_: Sitzung, Session-Restore
+
 **Neue Version**:
 Ein veröffentlichtes, stabiles Release, das neuer ist als die installierte Fassung. Entwürfe und Vorabversionen zählen nicht.
 _Vermeiden_: Update (für die Version selbst), Build

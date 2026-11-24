@@ -121,6 +121,25 @@ impl ProjectWindows {
         ids
     }
 
+    /// Was die offenen Fenster zeigen, in der Reihenfolge, in der sie
+    /// entstanden: das erste Fenster zuerst.
+    pub fn contents(&self) -> Vec<WindowContent> {
+        let mut open: Vec<(u32, WindowContent)> = self
+            .lock()
+            .iter()
+            .map(|(label, content)| {
+                // Das erste Fenster heißt anders und hat keine Nummer.
+                let number = label
+                    .strip_prefix("window-")
+                    .and_then(|number| number.parse().ok())
+                    .unwrap_or(0);
+                (number, content.clone())
+            })
+            .collect();
+        open.sort_by_key(|(number, _)| *number);
+        open.into_iter().map(|(_, content)| content).collect()
+    }
+
     /// Ein Fenster, das noch die Startseite zeigt.
     pub fn start_page_window(&self) -> Option<String> {
         self.lock()

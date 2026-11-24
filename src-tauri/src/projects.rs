@@ -12,7 +12,9 @@ use tauri::{
     WebviewWindowBuilder, Window,
 };
 
-use crate::arrangement_store::{ArrangementStore, ProjectState, RecentEntry, WorkspaceState};
+use crate::arrangement_store::{
+    ArrangementStore, ProjectState, RecentEntry, RestartWindow, WorkspaceState,
+};
 use crate::paths;
 use crate::project_windows::{project_folder, project_from_args, ProjectWindows, WindowContent};
 use crate::window_geometry::{Observed, Screen, WindowGeometry};
@@ -29,6 +31,8 @@ static OPENING: Mutex<()> = Mutex::new(());
 /// Projekt aus den Programmargumenten (`kredr <Ordner>`).
 pub fn start(app: &AppHandle) -> tauri::Result<()> {
     app.manage(ArrangementStore::new(crate::data_dir(app)?));
+    // Die Notiz gilt nur für diesen einen Start, auch wenn sie unbenutzt bleibt.
+    let restart = app.state::<ArrangementStore>().take_restart_windows();
     let args: Vec<String> = std::env::args_os()
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
@@ -40,31 +44,57 @@ pub fn start(app: &AppHandle) -> tauri::Result<()> {
     }
     app.state::<ProjectWindows>()
         .assign(FIRST_WINDOW, content_for(project.clone()));
-    // Ohne Projekt kommen die Workspaces zurück, die beim Beenden offen waren.
+    // Ohne Projekt kommen nach einer Aktualisierung alle Fenster zurück, die
+    // vorher offen waren, sonst die Workspaces, die beim Beenden offen waren.
     if project.is_none() {
-        reopen_workspaces(app);
+        let store = app.state::<ArrangementStore>();
+        let windows: Vec<_> = if restart.is_empty() {
+            store
+                .open_workspaces()
+                .into_iter()
+                .filter_map(|id| workspace_window(&store, id))
+                .collect()
+        } else {
+            restart
+                .into_iter()
+                .filter_map(|window| match window {
+                    RestartWindow::Project(path) => {
+                        let path = project_folder(&path)?;
+                        let geometry = store.project_state(&path).window;
+                        Some((WindowContent::Project { path }, geometry))
+                    }
+                    RestartWindow::Workspace(id) => workspace_window(&store, id),
+                })
+                .collect()
+        };
+        reopen(app, windows);
     }
     Ok(())
 }
 
-/// Öffnet die beim Beenden offenen Workspaces wieder: den ersten im ersten
-/// Fenster, jeden weiteren in einem neuen.
-fn reopen_workspaces(app: &AppHandle) {
-    let store = app.state::<ArrangementStore>();
+/// Der gespeicherte Workspace als Fensterinhalt samt Fenstergeometrie.
+fn workspace_window(
+    store: &ArrangementStore,
+    id: String,
+) -> Option<(WindowContent, Option<WindowGeometry>)> {
+    let state = store.workspace_state(&id)?;
+    let content = WindowContent::Workspace {
+        id,
+        name: state.name,
+        projects: state.projects,
+    };
+    Some((content, state.window))
+}
+
+/// Öffnet die Inhalte wieder: den ersten im ersten Fenster, jeden weiteren
+/// in einem neuen, jeweils mit seiner Fenstergeometrie.
+fn reopen(app: &AppHandle, contents: Vec<(WindowContent, Option<WindowGeometry>)>) {
     let windows = app.state::<ProjectWindows>();
     let mut first = true;
-    for id in store.open_workspaces() {
-        let Some(state) = store.workspace_state(&id) else {
-            continue;
-        };
-        let content = WindowContent::Workspace {
-            id,
-            name: state.name,
-            projects: state.projects,
-        };
+    for (content, geometry) in contents {
         if first {
             if windows.claim(FIRST_WINDOW, content).is_ok() {
-                place(app, FIRST_WINDOW, state.window);
+                place(app, FIRST_WINDOW, geometry);
                 first = false;
             }
             continue;
@@ -77,7 +107,7 @@ fn reopen_workspaces(app: &AppHandle) {
         // Ein Fenster darf unter Windows nicht aus dem Hauptthread heraus
         // entstehen, während dieser ein Ereignis bearbeitet.
         std::thread::spawn(move || {
-            if let Err(error) = open_window(&app, &label, state.window) {
+            if let Err(error) = open_window(&app, &label, geometry) {
                 app.state::<ProjectWindows>().release(&label);
                 eprintln!("Fenster konnte nicht geöffnet werden: {error}");
             }
@@ -263,6 +293,37 @@ pub fn window_closed(window: &Window) {
     // bleiben gemerkt und kommen beim nächsten Start zurück.
     if windows.any_open() {
         remember_open_workspaces(window.app_handle());
+    }
+}
+
+/// Merkt sich vor dem Beenden durch eine Aktualisierung alle offenen
+/// Fenster, Projekte wie Workspaces, damit sie nach dem Neustart
+/// wiederkommen. Ihre Aufteilung und Fenstergeometrie haben die Fenster
+/// vorher selbst gespeichert.
+pub fn remember_windows_for_restart(app: &AppHandle) {
+    let windows: Vec<RestartWindow> = app
+        .state::<ProjectWindows>()
+        .contents()
+        .into_iter()
+        .filter_map(|content| match content {
+            WindowContent::StartPage => None,
+            WindowContent::Project { path } => Some(RestartWindow::Project(path)),
+            WindowContent::Workspace { id, .. } => Some(RestartWindow::Workspace(id)),
+        })
+        .collect();
+    if let Err(error) = app
+        .state::<ArrangementStore>()
+        .remember_restart_windows(&windows)
+    {
+        eprintln!("Fenster für den Neustart konnten nicht gespeichert werden: {error}");
+    }
+}
+
+/// Verwirft die Notiz, wenn die Aktualisierung doch nicht neu startet;
+/// sonst kämen die Fenster beim nächsten gewöhnlichen Start zurück.
+pub fn forget_windows_for_restart(app: &AppHandle) {
+    if let Err(error) = app.state::<ArrangementStore>().discard_restart_windows() {
+        eprintln!("Fenster für den Neustart konnten nicht verworfen werden: {error}");
     }
 }
 

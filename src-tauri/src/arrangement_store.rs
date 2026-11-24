@@ -4,7 +4,8 @@
 //! Projekt seine Aufteilung samt Fenstergeometrie (je eine Datei unter
 //! `arrangements/`),
 //! pro Workspace Name, Projekte, Aufteilung und Fenstergeometrie (je eine
-//! Datei unter `workspaces/`) und die beim Beenden offenen Workspaces.
+//! Datei unter `workspaces/`), die beim Beenden offenen Workspaces und vor
+//! einer Aktualisierung alle offenen Fenster für den einen Neustart danach.
 //! Jedes Projekt hat seine eigene Datei, damit das laufende Speichern eines
 //! Fensters weder die Projektliste noch die Aufteilung eines anderen
 //! Projekts neu schreibt und eine beschädigte Datei nur ein Projekt trifft.
@@ -29,6 +30,44 @@ const ARRANGEMENTS_DIR: &str = "arrangements";
 const WORKSPACES_DIR: &str = "workspaces";
 /// Die Workspaces, die offen waren, als das letzte Fenster schloss.
 const OPEN_WORKSPACES_FILE: &str = "open-workspaces.json";
+/// Die Fenster, die vor einer Aktualisierung offen waren.
+const RESTART_WINDOWS_FILE: &str = "restart-windows.json";
+
+/// Ein Fenster, das nach dem Neustart einer Aktualisierung wiederkommt: ein
+/// einzelnes Projekt oder ein Workspace. Aufteilung und Fenstergeometrie
+/// stehen in dessen eigener Datei.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestartWindow {
+    Project(PathBuf),
+    Workspace(String),
+}
+
+impl From<StoredEntry> for RestartWindow {
+    fn from(entry: StoredEntry) -> Self {
+        match entry {
+            StoredEntry::Project { path } => RestartWindow::Project(path),
+            StoredEntry::Workspace { workspace } => RestartWindow::Workspace(workspace),
+        }
+    }
+}
+
+impl From<&RestartWindow> for StoredEntry {
+    fn from(window: &RestartWindow) -> Self {
+        match window {
+            RestartWindow::Project(path) => StoredEntry::Project { path: path.clone() },
+            RestartWindow::Workspace(id) => StoredEntry::Workspace {
+                workspace: id.clone(),
+            },
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct StoredRestartWindows {
+    version: u32,
+    /// In Reihenfolge, im Format der Zuletzt-Liste.
+    windows: Vec<StoredEntry>,
+}
 
 /// Was Kredr sich zu einem Workspace merkt: Name, Projekte in Reihenfolge,
 /// Aufteilung und Fenstergeometrie. Die Kennung steht nicht darin; unter ihr
@@ -359,6 +398,49 @@ impl ArrangementStore {
         };
         let json = serde_json::to_vec_pretty(&stored).map_err(io::Error::other)?;
         paths::write_whole(&self.dir.join(OPEN_WORKSPACES_FILE), json)
+    }
+
+    /// Merkt sich die Fenster, die nach dem Neustart einer Aktualisierung
+    /// wiederkommen sollen, in Reihenfolge.
+    pub fn remember_restart_windows(&self, windows: &[RestartWindow]) -> io::Result<()> {
+        let _guard = self.lock.lock();
+        let stored = StoredRestartWindows {
+            version: VERSION,
+            windows: windows.iter().map(StoredEntry::from).collect(),
+        };
+        let json = serde_json::to_vec_pretty(&stored).map_err(io::Error::other)?;
+        paths::write_whole(&self.dir.join(RESTART_WINDOWS_FILE), json)
+    }
+
+    /// Die Fenster für den Neustart, genau einmal: Die Notiz ist danach
+    /// verworfen. Eine fehlende, kaputte oder veraltete Notiz ergibt keine.
+    pub fn take_restart_windows(&self) -> Vec<RestartWindow> {
+        let _guard = self.lock.lock();
+        let file = self.dir.join(RESTART_WINDOWS_FILE);
+        let Ok(bytes) = std::fs::read(&file) else {
+            return Vec::new();
+        };
+        // Scheitert das Löschen, kämen die Fenster bei jedem Start wieder.
+        if std::fs::remove_file(&file).is_err() {
+            return Vec::new();
+        }
+        match serde_json::from_slice::<StoredRestartWindows>(&bytes) {
+            Ok(stored) if stored.version == VERSION => stored
+                .windows
+                .into_iter()
+                .map(RestartWindow::from)
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Verwirft die Notiz der Fenster für den Neustart, ohne sie zu lesen.
+    pub fn discard_restart_windows(&self) -> io::Result<()> {
+        let _guard = self.lock.lock();
+        match std::fs::remove_file(self.dir.join(RESTART_WINDOWS_FILE)) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
     }
 
     /// Die Datei des Projekts. Ihr Name folgt aus dem Projektpfad, gleich in
