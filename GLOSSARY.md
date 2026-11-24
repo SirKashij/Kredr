@@ -88,6 +88,10 @@ _Vermeiden_: Source Control, Git-Panel
 Eine geänderte, neue, gelöschte oder umbenannte Datei des Projekts gegenüber dem letzten Commit. Eine Änderung ist ausgewählt, wenn sie in den nächsten Commit kommt. Im Code und in der englischen Oberfläche heißt „ausgewählt“ wie in Git „staged“, „auswählen“ „stage“.
 _Vermeiden_: gestagt, Stage, Index
 
+**Hinweis**:
+Eine kurze Meldung unten rechts im Fenster. Ein gewöhnlicher Hinweis verschwindet nach 8 s oder wenn die Person ihn schließt. Ein stehender Hinweis bleibt, bis eine seiner Aktionen ihn erledigt, etwa das Angebot einer neuen Version. Im Code heißt er `PinnedNotice`.
+_Vermeiden_: Toast, Popup, Benachrichtigung (das ist die Meldung von Windows)
+
 **Aktualisierung**:
 Der Wechsel der installierten Kredr-Fassung auf eine neue Version. Kredr bietet sie an, die Person löst sie aus, danach startet Kredr neu.
 _Vermeiden_: Update, Upgrade, Patch
