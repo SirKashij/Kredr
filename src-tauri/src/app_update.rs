@@ -4,6 +4,7 @@
 //! meldet jede Änderung mit dem Ereignis `app-update-changed`. Die
 //! Entwicklungsfassung sucht und installiert nie.
 
+use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -380,6 +381,8 @@ pub fn start(app: &AppHandle) {
         crate::data_dir(app).ok(),
         app.state::<SettingsStore>().get().check_for_updates,
     ));
+    // Die Suche sperrt die Entwicklungsfassung ohnehin; sie braucht deshalb
+    // auch den Thread nicht, der alle drei Stunden aufwacht.
     if !Edition::current().may_update() {
         return;
     }
@@ -407,7 +410,7 @@ pub fn settings_changed(app: &AppHandle, settings: &Settings) {
         .lock()
         .unwrap()
         .setting_changed(settings.check_for_updates);
-    if switched_on && Edition::current().may_update() {
+    if switched_on {
         let app = app.clone();
         tauri::async_runtime::spawn(async move { check(&app).await });
     }
@@ -416,7 +419,7 @@ pub fn settings_changed(app: &AppHandle, settings: &Settings) {
 /// Sucht von selbst einmal nach einer neuen Version. Ohne Netz oder bei einer
 /// kaputten `latest.json` bleibt es still; die nächste Suche versucht es erneut.
 async fn check(app: &AppHandle) {
-    let Ok(Some(found)) = search(app).await else {
+    let SearchOutcome::Found(found) = search(app).await else {
         return;
     };
     app.state::<AppUpdates>().change(app, |state, update| {
@@ -428,8 +431,51 @@ async fn check(app: &AppHandle) {
     });
 }
 
-/// Fragt GitHub nach einer neuen Version.
-async fn search(app: &AppHandle) -> Result<Option<Update>, tauri_plugin_updater::Error> {
+/// Was eine Suche nach einer neuen Version ergab. `T` ist die gefundene
+/// Version, im Kern das `Update` des Updaters.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SearchOutcome<T> {
+    Found(T),
+    /// Kredr ist aktuell.
+    Current,
+    /// Die Suche scheiterte, mit eingeordnetem Grund und Originaltext.
+    Failed {
+        cause: FailureCause,
+        error: String,
+    },
+    /// Diese Fassung darf nicht suchen; der Updater wurde nicht gefragt.
+    Locked,
+}
+
+/// Fragt mit `ask` nach einer neuen Version, wenn `edition` es darf. Jede
+/// Suche geht hier durch, und ein `Update` zum Installieren gibt es nur aus
+/// einer Suche. So erreicht die Entwicklungsfassung den Updater auf keinem
+/// Weg.
+pub async fn search_with<T, Ask, Asking>(edition: Edition, ask: Ask) -> SearchOutcome<T>
+where
+    Ask: FnOnce() -> Asking,
+    Asking: Future<Output = Result<Option<T>, tauri_plugin_updater::Error>>,
+{
+    if !edition.may_update() {
+        return SearchOutcome::Locked;
+    }
+    match ask().await {
+        Ok(Some(found)) => SearchOutcome::Found(found),
+        Ok(None) => SearchOutcome::Current,
+        Err(error) => SearchOutcome::Failed {
+            cause: failure_cause(&error, Step::Check),
+            error: error.to_string(),
+        },
+    }
+}
+
+/// Sucht in der laufenden Fassung nach einer neuen Version.
+async fn search(app: &AppHandle) -> SearchOutcome<Update> {
+    search_with(Edition::current(), || ask_github(app)).await
+}
+
+/// Fragt GitHub nach einer neuen Version. Nur `search_with` ruft das auf.
+async fn ask_github(app: &AppHandle) -> Result<Option<Update>, tauri_plugin_updater::Error> {
     let handle = app.clone();
     // Unter Windows beendet der Updater Kredr nach dem Start des Installers
     // mit `std::process::exit`; dabei schließt kein Fenster mehr regulär.
@@ -460,11 +506,8 @@ pub async fn app_update_check(
     app: AppHandle,
     updates: State<'_, AppUpdates>,
 ) -> Result<CheckResult, String> {
-    if !Edition::current().may_update() {
-        return Ok(CheckResult::Development);
-    }
     Ok(match search(&app).await {
-        Ok(Some(found)) => {
+        SearchOutcome::Found(found) => {
             let version = found.version.clone();
             updates.change(&app, |state, update| {
                 let offered = state.found_on_request(found.version.clone());
@@ -475,11 +518,9 @@ pub async fn app_update_check(
             });
             CheckResult::Found { version }
         }
-        Ok(None) => CheckResult::Current,
-        Err(error) => CheckResult::Failed {
-            cause: failure_cause(&error, Step::Check),
-            error: error.to_string(),
-        },
+        SearchOutcome::Current => CheckResult::Current,
+        SearchOutcome::Failed { cause, error } => CheckResult::Failed { cause, error },
+        SearchOutcome::Locked => CheckResult::Development,
     })
 }
 
@@ -495,17 +536,13 @@ pub fn app_update_later(app: AppHandle, updates: State<'_, AppUpdates>) {
 /// Modus `passive`. Er beendet Kredr und startet es nach der Installation neu.
 /// Den Fortschritt des Downloads meldet der Zustand in ganzen Prozent.
 /// Scheitert ein Schritt, meldet der Zustand den eingeordneten Grund und den
-/// Originaltext.
+/// Originaltext. Ohne Angebot tut es nichts; ein `Update` kommt nur aus einer
+/// Suche, die Entwicklungsfassung hat deshalb nie eins.
 #[tauri::command]
 pub async fn app_update_install(
     app: AppHandle,
     updates: State<'_, AppUpdates>,
 ) -> Result<(), String> {
-    // Ohne Suche bietet die Entwicklungsfassung nie eine Version an; die
-    // Sperre hält auch einen Aufruf ohne Angebot vom Updater fern.
-    if !Edition::current().may_update() {
-        return Ok(());
-    }
     let mut pending = None;
     updates.change(&app, |state, update| {
         let Some(update) = update.clone() else {

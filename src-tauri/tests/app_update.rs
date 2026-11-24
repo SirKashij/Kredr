@@ -1,9 +1,16 @@
 use std::path::Path;
 
 use kredr_lib::app_update::{
-    failure_cause, load_declined, save_declined, AppUpdateState, AutoCheck, Edition, FailureCause,
-    Phase, Step,
+    failure_cause, load_declined, save_declined, search_with, AppUpdateState, AutoCheck, Edition,
+    FailureCause, Phase, SearchOutcome, Step,
 };
+use tauri::async_runtime::block_on;
+use tauri_plugin_updater::Error;
+
+/// Eine Suche bei GitHub, die nie gefragt werden darf.
+async fn never_asked() -> Result<Option<String>, Error> {
+    panic!("die Entwicklungsfassung hat den Updater gefragt")
+}
 
 fn state() -> AppUpdateState {
     AppUpdateState::new("0.5.0", None)
@@ -109,11 +116,41 @@ fn jetzt_suchen_ordnet_den_fehler_wie_beim_download_ein() {
 }
 
 #[test]
-fn die_entwicklungsfassung_sucht_und_installiert_nie() {
-    // Die Tests laufen ohne Optimierung, wie `npm run tauri dev`.
+fn die_entwicklungsfassung_fragt_den_updater_nie() {
+    let outcome = block_on(search_with(Edition::Development, never_asked));
+
+    assert_eq!(outcome, SearchOutcome::Locked);
+}
+
+#[test]
+fn die_installierte_fassung_fragt_den_updater() {
+    let found = block_on(search_with(Edition::Installed, || async {
+        Ok(Some("0.6.0".to_owned()))
+    }));
+    let current = block_on(search_with(Edition::Installed, || async {
+        Ok(None::<String>)
+    }));
+    let failed = block_on(search_with(Edition::Installed, || async {
+        Err::<Option<String>, _>(Error::ReleaseNotFound)
+    }));
+
+    assert_eq!(found, SearchOutcome::Found("0.6.0".to_owned()));
+    assert_eq!(current, SearchOutcome::Current);
+    assert!(matches!(
+        failed,
+        SearchOutcome::Failed {
+            cause: FailureCause::Network,
+            ..
+        }
+    ));
+}
+
+/// Ohne Optimierung gebaut läuft die Entwicklungsfassung, wie bei
+/// `npm run tauri dev`; ein Release-Build prüft das nicht.
+#[cfg(debug_assertions)]
+#[test]
+fn ohne_optimierung_laeuft_die_entwicklungsfassung() {
     assert_eq!(Edition::current(), Edition::Development);
-    assert!(!Edition::Development.may_update());
-    assert!(Edition::Installed.may_update());
 }
 
 #[test]
