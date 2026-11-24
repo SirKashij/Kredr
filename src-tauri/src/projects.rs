@@ -16,7 +16,9 @@ use crate::arrangement_store::{
     ArrangementStore, ProjectState, RecentEntry, RestartWindow, WorkspaceState,
 };
 use crate::paths;
-use crate::project_windows::{project_folder, project_from_args, ProjectWindows, WindowContent};
+use crate::project_windows::{
+    project_folder, project_from_args, start_windows, ProjectWindows, StartWindows, WindowContent,
+};
 use crate::window_geometry::{Observed, Screen, WindowGeometry};
 
 /// Das beim Start aus der Konfiguration angelegte Fenster.
@@ -27,8 +29,9 @@ const CONTENT_OPENED: &str = "window-content-opened";
 /// Zwei gleichzeitige Aufrufe sollen dasselbe Projekt nicht doppelt öffnen.
 static OPENING: Mutex<()> = Mutex::new(());
 
-/// Richtet den Aufteilungsspeicher ein und gibt dem ersten Fenster das
-/// Projekt aus den Programmargumenten (`kredr <Ordner>`).
+/// Richtet den Aufteilungsspeicher ein und füllt die Fenster dieses Starts:
+/// nach einer Aktualisierung alle vorher offenen, sonst das Projekt aus den
+/// Programmargumenten (`kredr <Ordner>`) oder die offenen Workspaces.
 pub fn start(app: &AppHandle) -> tauri::Result<()> {
     app.manage(ArrangementStore::new(crate::data_dir(app)?));
     // Die Notiz gilt nur für diesen einen Start, auch wenn sie unbenutzt
@@ -41,37 +44,35 @@ pub fn start(app: &AppHandle) -> tauri::Result<()> {
         .collect();
     let cwd = std::env::current_dir().unwrap_or_default();
     let project = project_from_args(&args, &cwd);
-    if let Some(folder) = &project {
-        remember(app, folder);
-        restore_geometry(app, FIRST_WINDOW, folder);
-    }
+    let store = app.state::<ArrangementStore>();
+    let windows: Vec<_> = match start_windows(project, restart) {
+        StartWindows::Project(folder) => {
+            remember(app, &folder);
+            restore_geometry(app, FIRST_WINDOW, &folder);
+            app.state::<ProjectWindows>()
+                .assign(FIRST_WINDOW, WindowContent::Project { path: folder });
+            return Ok(());
+        }
+        StartWindows::Restart(restart) => restart
+            .into_iter()
+            .filter_map(|window| match window {
+                RestartWindow::Project(path) => {
+                    let path = project_folder(&path)?;
+                    let geometry = store.project_state(&path).window;
+                    Some((WindowContent::Project { path }, geometry))
+                }
+                RestartWindow::Workspace(id) => workspace_window(&store, id),
+            })
+            .collect(),
+        StartWindows::OpenWorkspaces => store
+            .open_workspaces()
+            .into_iter()
+            .filter_map(|id| workspace_window(&store, id))
+            .collect(),
+    };
     app.state::<ProjectWindows>()
-        .assign(FIRST_WINDOW, content_for(project.clone()));
-    // Ohne Projekt kommen nach einer Aktualisierung alle Fenster zurück, die
-    // vorher offen waren, sonst die Workspaces, die beim Beenden offen waren.
-    if project.is_none() {
-        let store = app.state::<ArrangementStore>();
-        let windows: Vec<_> = if restart.is_empty() {
-            store
-                .open_workspaces()
-                .into_iter()
-                .filter_map(|id| workspace_window(&store, id))
-                .collect()
-        } else {
-            restart
-                .into_iter()
-                .filter_map(|window| match window {
-                    RestartWindow::Project(path) => {
-                        let path = project_folder(&path)?;
-                        let geometry = store.project_state(&path).window;
-                        Some((WindowContent::Project { path }, geometry))
-                    }
-                    RestartWindow::Workspace(id) => workspace_window(&store, id),
-                })
-                .collect()
-        };
-        reopen(app, windows);
-    }
+        .assign(FIRST_WINDOW, WindowContent::StartPage);
+    reopen(app, windows);
     Ok(())
 }
 

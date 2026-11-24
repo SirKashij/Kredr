@@ -18,6 +18,10 @@ Single-context: ein `GLOSSARY.md` und `docs/adr/` im Hauptverzeichnis. See `docs
 
 Build-Cache, Prüfen und Warten auf CI nach jedem Merge: `docs/agents/integration.md`.
 
+### Review-Befunde
+
+Jeder Befund aus Standards- und Spec-Review steht im Abschlussbericht: behoben, oder unter „Noch offen“ mit Grund. Eine Abweichung vom Spec entscheidet die Person, nicht der Agent.
+
 ## Befehle
 
 - Alles prüfen wie CI (Formatierung, Typen, Tests, Build, Clippy, Kern-Tests): `npm run check`

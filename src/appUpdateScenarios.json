@@ -1,0 +1,85 @@
+[
+  {
+    "name": "Später in der Rückfrage kehrt zum Angebot zurück",
+    "steps": [
+      { "do": "ask", "returns": true, "phase": "confirm", "hidden": false },
+      { "do": "ask", "returns": false, "phase": "confirm", "hidden": false },
+      { "do": "cancel", "phase": "offered", "hidden": false }
+    ]
+  },
+  {
+    "name": "nach Später fragt Kredr ohne Hinweis",
+    "steps": [
+      { "do": "later", "phase": "later", "hidden": false },
+      { "do": "ask", "returns": true, "phase": "confirm", "hidden": true },
+      { "do": "cancel", "phase": "later", "hidden": false }
+    ]
+  },
+  {
+    "name": "nach Später lädt und installiert Kredr ohne Hinweis",
+    "steps": [
+      { "do": "later", "phase": "later", "hidden": false },
+      { "do": "ask", "returns": true, "phase": "confirm", "hidden": true },
+      { "do": "download", "returns": true, "phase": "confirm", "hidden": true },
+      { "do": "install", "phase": "installing", "hidden": true }
+    ]
+  },
+  {
+    "name": "Laden, Installieren, Fehlschlag, dann Später und erneut fragen",
+    "steps": [
+      { "do": "ask", "returns": true, "phase": "confirm", "hidden": false },
+      { "do": "download", "returns": true, "phase": "confirm", "hidden": false },
+      { "do": "install", "phase": "installing", "hidden": false },
+      { "do": "fail", "returns": true, "phase": "failed", "hidden": false },
+      { "do": "later", "phase": "later", "hidden": false },
+      { "do": "ask", "returns": true, "phase": "confirm", "hidden": true }
+    ]
+  },
+  {
+    "name": "ohne Rückfrage lädt, installiert und scheitert nichts",
+    "steps": [
+      { "do": "download", "returns": false, "phase": "offered", "hidden": false },
+      { "do": "install", "phase": "offered", "hidden": false },
+      { "do": "fail", "returns": false, "phase": "offered", "hidden": false }
+    ]
+  },
+  {
+    "name": "installiert wird erst nach dem Laden, geladen nur einmal",
+    "steps": [
+      { "do": "ask", "returns": true, "phase": "confirm", "hidden": false },
+      { "do": "install", "phase": "confirm", "hidden": false },
+      { "do": "download", "returns": true, "phase": "confirm", "hidden": false },
+      { "do": "download", "returns": false, "phase": "confirm", "hidden": false }
+    ]
+  },
+  {
+    "name": "Später nach dem Laden verwirft den Installer",
+    "steps": [
+      { "do": "ask", "returns": true, "phase": "confirm", "hidden": false },
+      { "do": "download", "returns": true, "phase": "confirm", "hidden": false },
+      { "do": "cancel", "phase": "offered", "hidden": false },
+      { "do": "ask", "returns": true, "phase": "confirm", "hidden": false },
+      { "do": "install", "phase": "confirm", "hidden": false }
+    ]
+  },
+  {
+    "name": "nach einem Fehlschlag in der Rückfrage kehrt Später zum Fehlschlag zurück",
+    "steps": [
+      { "do": "ask", "returns": true, "phase": "confirm", "hidden": false },
+      { "do": "download", "returns": true, "phase": "confirm", "hidden": false },
+      { "do": "fail", "returns": true, "phase": "failed", "hidden": false },
+      { "do": "ask", "returns": true, "phase": "confirm", "hidden": false },
+      { "do": "cancel", "phase": "failed", "hidden": false }
+    ]
+  },
+  {
+    "name": "Später des Hinweises ändert während Rückfrage und Installation nichts",
+    "steps": [
+      { "do": "ask", "returns": true, "phase": "confirm", "hidden": false },
+      { "do": "later", "phase": "confirm", "hidden": false },
+      { "do": "download", "returns": true, "phase": "confirm", "hidden": false },
+      { "do": "install", "phase": "installing", "hidden": false },
+      { "do": "later", "phase": "installing", "hidden": false }
+    ]
+  }
+]

@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   AppUpdate,
   checkResultText,
@@ -9,6 +9,8 @@ import {
   type AppUpdatePort,
   type AppUpdateState,
 } from "./appUpdate";
+import { simulatedAppUpdatePort } from "./appUpdatePort";
+import scenarios from "./appUpdateScenarios.json";
 import { translate, type Translate } from "./i18n/i18n";
 import {
   NO_REASONS as quiet,
@@ -35,7 +37,8 @@ const none: AppUpdateState = {
  * die Antwort der Person auf die Rückfrage. Wie der echte Kern lässt er nur
  * ein Fenster zugleich fragen und meldet die Rückfrage allen Fenstern.
  * `portFor` ist der Port eines weiteren Fensters, `whileDownloading` lässt den
- * Test während des Downloads etwas ändern.
+ * Test während des Downloads etwas ändern. Dass er dem echten Kern folgt,
+ * prüfen die gemeinsamen Abläufe aus `appUpdateScenarios.json`.
  */
 function fakeCore(
   initial: AppUpdateState,
@@ -133,6 +136,11 @@ function fakeCore(
       },
       later: async () => {
         calls.push(named("later"));
+        if (state.phase === "offered" || state.phase === "failed") {
+          announce({ ...state, phase: "later" });
+        } else if (state.phase === "downloading" && !state.hidden) {
+          announce({ ...state, hidden: true });
+        }
       },
       openUrl: (url) => calls.push(`open ${url}`),
       reasons: async () => {
@@ -168,6 +176,69 @@ function fakeCore(
 
 /** Wartet, bis alle anstehenden Antworten des Kerns angekommen sind. */
 const settled = () => new Promise((resolve) => setTimeout(resolve));
+
+/** Ein Schritt der gemeinsamen Abläufe und der Zustand danach. */
+type ScenarioStep = {
+  do: string;
+  returns?: boolean;
+  phase: string;
+  hidden: boolean;
+};
+
+/**
+ * Führt einen Schritt am Port aus. Der vorgespielte Port lädt in Schritten
+ * über Zeitgeber; seine Installation bleibt stehen, statt zum Angebot
+ * zurückzukehren, wie der Kern, der dann beendet würde.
+ */
+async function playStep(port: AppUpdatePort, action: string): Promise<boolean | void> {
+  switch (action) {
+    case "ask":
+      return port.ask();
+    case "cancel":
+      return port.cancel();
+    case "download": {
+      const done = port.download();
+      await vi.advanceTimersByTimeAsync(60_000);
+      return done;
+    }
+    case "install":
+      void port.install();
+      await vi.advanceTimersByTimeAsync(1);
+      return;
+    case "fail":
+      return port.fail("Fehler");
+    case "later":
+      return port.later();
+    default:
+      throw new Error(`unbekannter Schritt ${action}`);
+  }
+}
+
+const doubles: [string, () => AppUpdatePort][] = [
+  ["Kern der Tests", () => fakeCore({ ...none, phase: "offered", version: "0.6.0" }).port],
+  ["vorgespielter Port", () => simulatedAppUpdatePort("0.6.0", () => de)],
+];
+
+describe.each(doubles)("%s folgt den gemeinsamen Abläufen des Kerns", (_, makePort) => {
+  test.each(scenarios as { name: string; steps: ScenarioStep[] }[])("$name", async ({ steps }) => {
+    vi.useFakeTimers();
+    try {
+      const port = makePort();
+      for (const [index, step] of steps.entries()) {
+        const at = `Schritt ${index + 1} (${step.do})`;
+        const returned = await playStep(port, step.do);
+        if (step.returns !== undefined) expect(returned, at).toBe(step.returns);
+        const state = await port.current();
+        expect({ phase: state.phase, hidden: state.hidden }, at).toEqual({
+          phase: step.phase,
+          hidden: step.hidden,
+        });
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 test("erreicht „Jetzt suchen“ den Kern nicht, gilt die Suche als gescheitert", async () => {
   const core = fakeCore(none);

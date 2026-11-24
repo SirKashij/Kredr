@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use kredr_lib::arrangement_store::{ArrangementStore, RestartWindow};
+use kredr_lib::project_windows::{start_windows, StartWindows};
 
 /// Die neue Version, auf die die Aktualisierung wechselt.
 const NEW: &str = "0.6.0";
@@ -101,4 +102,33 @@ fn kaputte_oder_veraltete_notiz_ergibt_keine_fenster() {
         assert_eq!(store.take_restart_windows(NEW), Vec::new(), "{name}");
         assert!(!data.join("restart-windows.json").exists(), "{name}");
     }
+}
+
+#[test]
+fn nach_der_aktualisierung_kommen_alle_fenster_auch_mit_projektargument() {
+    // Der Updater startet Kredr mit den Argumenten des ersten Starts neu,
+    // nach `kredr <Ordner>` also wieder mit diesem Ordner.
+    let windows = vec![
+        RestartWindow::Project(PathBuf::from(r"C:\Projekte\alpha")),
+        RestartWindow::Workspace("ws-1".to_string()),
+    ];
+
+    assert_eq!(
+        start_windows(Some(PathBuf::from(r"C:\Projekte\alpha")), windows.clone()),
+        StartWindows::Restart(windows)
+    );
+}
+
+#[test]
+fn ohne_notiz_gilt_das_projektargument_sonst_die_offenen_workspaces() {
+    let folder = PathBuf::from(r"C:\Projekte\alpha");
+
+    assert_eq!(
+        start_windows(Some(folder.clone()), Vec::new()),
+        StartWindows::Project(folder)
+    );
+    assert_eq!(
+        start_windows(None, Vec::new()),
+        StartWindows::OpenWorkspaces
+    );
 }
