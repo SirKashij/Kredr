@@ -145,6 +145,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(agent_status)
         .manage(dialog_answers::DialogAnswers::from_env())
+        .manage(app_update::WindowPolls::default())
         .setup(|app| {
             let handle = app.handle().clone();
             let settings = SettingsStore::open(data_dir(app.handle())?, move |settings| {
@@ -178,6 +179,7 @@ pub fn run() {
             app_update::app_update_answer,
             app_update::app_update_cancel,
             app_update::app_update_fail,
+            app_update::poll::window_poll_answer,
             project_files_commands::project_files_list_folder,
             project_files_commands::project_files_list_all,
             project_files_commands::project_files_read,

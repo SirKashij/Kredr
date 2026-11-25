@@ -7,7 +7,7 @@
 //! Download und Installation übernimmt der Updater (`updater`); die
 //! Entwicklungsfassung spielt sie dort höchstens vor.
 
-mod poll;
+pub mod poll;
 mod reasons;
 mod updater;
 
@@ -22,7 +22,7 @@ use tokio::sync::oneshot;
 
 use crate::settings::{Settings, SettingsStore};
 
-pub use poll::{poll_windows, PollQuestion, POLL_TIMEOUT};
+pub use poll::{poll_windows, window_poll_answer, PollQuestion, WindowPolls, POLL_TIMEOUT};
 pub use reasons::UpdateReasons;
 pub use updater::{
     auto_search_with, failure_cause, Edition, Failure, FailureCause, PluginUpdater, SearchOutcome,

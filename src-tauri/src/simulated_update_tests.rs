@@ -7,9 +7,10 @@
 //! anderer Thread gerade eines sendet: Es landet in einer Warteschlange, die
 //! erst das nächste Ereignis mit Rust-Listenern leert, oft zu spät oder nie
 //! (`try_lock` in `tauri/src/event/listener.rs`, auch außerhalb der
-//! Mock-Runtime). Darum sendet in diesen Tests nur der Ablauf selbst, aus
-//! einem Thread: Die Fake-Fenster antworten auf die Rundfrage noch in seinem
-//! Thread und warten auf die Rückfrage und den Download am Zustand statt an
+//! Mock-Runtime). Die Fake-Fenster hören die Rundfrage, anders als eine
+//! Webview, in Rust. Darum sendet in diesen Tests nur der Ablauf selbst, aus
+//! einem Thread: Die Fake-Fenster antworten per Befehl wie die Oberfläche und
+//! warten auf die Rückfrage und den Download am Zustand statt an
 //! `app-update-changed`.
 
 use std::path::Path;
@@ -19,13 +20,12 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tauri::async_runtime::block_on;
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
-use tauri::{
-    App, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent,
-};
+use tauri::{App, Listener, Manager, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent};
 
 use crate::app_update::{
-    app_update_answer, app_update_cancel, app_update_check, app_update_now, AppUpdateState,
-    AppUpdates, CheckResult, FailureCause, Phase, SimulatedUpdater, UpdateReasons, Updater,
+    app_update_answer, app_update_cancel, app_update_check, app_update_now, window_poll_answer,
+    AppUpdateState, AppUpdates, CheckResult, FailureCause, Phase, SimulatedUpdater, UpdateReasons,
+    Updater, WindowPolls,
 };
 use crate::arrangement_store::ArrangementStore;
 use crate::notifications::Notifications;
@@ -63,6 +63,7 @@ fn kredr(
     let app = crate::manage_per_window(mock_builder())
         .manage(Notifications::new("kredr-test"))
         .manage(ArrangementStore::new(data))
+        .manage(WindowPolls::default())
         .manage(
             AppUpdates::new("0.5.0".into(), None, false, Updater::Simulated(updater))
                 .poll_timeout(Duration::from_millis(300)),
@@ -100,11 +101,8 @@ fn open(
     window
 }
 
-/// Antwortet wie `answerPolls` in `App.tsx`, über `window-poll` und
-/// `window-poll-answer`. Anders als eine Webview antwortet der Fake, noch
-/// während der Kern die Frage sendet, also in dessen Thread: Tauri stellt die
-/// Antwort dann gleich nach der Frage zu. Aus einem eigenen Thread ginge sie
-/// manchmal verloren, und das Fenster gälte als stumm.
+/// Antwortet wie `answerPolls` in `App.tsx` auf `window-poll` mit dem Befehl
+/// `window_poll_answer`, wie eine Webview aus einem eigenen Thread.
 fn answer_polls(
     app: &App<MockRuntime>,
     label: &str,
@@ -112,26 +110,35 @@ fn answer_polls(
     journal: &Journal,
 ) {
     let (handle, label, journal) = (app.handle().clone(), label.to_owned(), journal.clone());
-    let asked = Mutex::new(0usize);
+    let asked = Arc::new(Mutex::new(0usize));
+    let reasons = Arc::new(reasons);
     app.listen_any("window-poll", move |event| {
+        let (handle, label, journal) = (handle.clone(), label.clone(), journal.clone());
+        let (asked, reasons) = (asked.clone(), reasons.clone());
         let poll: Value = serde_json::from_str(event.payload()).unwrap();
-        let answer = match poll["question"].as_str().unwrap() {
-            "updateReasons" => {
-                let mut asked = asked.lock().unwrap();
-                let Some(now) = reasons.get((*asked).min(reasons.len().saturating_sub(1))) else {
-                    return;
-                };
-                *asked += 1;
-                serde_json::to_value(now).unwrap()
-            }
-            "saveArrangement" => {
-                journal.lock().unwrap().push(format!("Aufteilung {label}"));
-                json!(true)
-            }
-            other => panic!("unbekannte Frage {other}"),
-        };
-        let reply = json!({ "id": poll["id"], "window": label, "answer": answer });
-        handle.emit("window-poll-answer", reply).unwrap();
+        std::thread::spawn(move || {
+            let answer = match poll["question"].as_str().unwrap() {
+                "updateReasons" => {
+                    let mut asked = asked.lock().unwrap();
+                    let Some(now) = reasons.get((*asked).min(reasons.len().saturating_sub(1)))
+                    else {
+                        return;
+                    };
+                    *asked += 1;
+                    serde_json::to_value(now).unwrap()
+                }
+                "saveArrangement" => {
+                    journal.lock().unwrap().push(format!("Aufteilung {label}"));
+                    json!(true)
+                }
+                other => panic!("unbekannte Frage {other}"),
+            };
+            let Some(window) = handle.get_webview_window(&label) else {
+                return;
+            };
+            let id = poll["id"].as_str().unwrap().to_owned();
+            window_poll_answer(window, handle.state(), id, answer);
+        });
     });
 }
 

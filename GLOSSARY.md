@@ -144,5 +144,5 @@ Ein nativer Dialog (Rückfrage, Fehlermeldung, Ordnerwahl), dessen Fenster sich 
 _Vermeiden_: Popup
 
 **Rundfrage**:
-Der Kern fragt alle offenen Fenster etwas und sammelt ihre Antworten, etwa die Anlässe oder „Aufteilung gespeichert“. Ein Fenster, das nicht binnen 3 Sekunden antwortet, gilt als stumm. Im Code heißt sie `poll_windows`; die Fenster antworten mit `answerPolls`.
+Der Kern fragt alle offenen Fenster etwas und sammelt ihre Antworten, etwa die Anlässe oder „Aufteilung gespeichert“. Ein Fenster, das nicht binnen 3 Sekunden antwortet, gilt als stumm. Im Code heißt sie `poll_windows`. Die Frage geht als Ereignis an die Fenster, die Antwort per Befehl `window_poll_answer` zurück (`answerPolls`), weil Tauri ein Ereignis an den Kern unter Last verlieren kann (ADR 0008).
 _Vermeiden_: Broadcast, Umfrage

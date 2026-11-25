@@ -1,60 +1,47 @@
 import { expect, test } from "vitest";
-import { answerPolls, type EventBus } from "./windowPoll";
+import { answerPolls, type Poll, type PollChannel } from "./windowPoll";
 
-/** Ein Ereignisbus wie der von Tauri: Was gesendet wird, hören alle. */
-function fakeBus() {
-  const handlers = new Map<string, Set<(payload: unknown) => void>>();
-  const bus: EventBus = {
-    emit: async (event, payload) => {
-      // Wie bei Tauri kommt das Ereignis erst nach dem Senden an.
-      await Promise.resolve();
-      handlers.get(event)?.forEach((handler) => handler(payload));
+/** Ein Fenster am Kern: hört die Fragen und sammelt, was es antwortet. */
+function fakeChannel() {
+  const handlers = new Set<(poll: Poll) => void>();
+  const answers: { id: string; answer: unknown }[] = [];
+  let answered = () => {};
+  const channel: PollChannel = {
+    listen: async (handler) => {
+      handlers.add(handler);
+      return () => handlers.delete(handler);
     },
-    listen: async (event, handler) => {
-      const set = handlers.get(event) ?? new Set();
-      handlers.set(event, set);
-      const listener = handler as (payload: unknown) => void;
-      set.add(listener);
-      return () => set.delete(listener);
+    answer: async (id, answer) => {
+      answers.push({ id, answer });
+      answered();
     },
   };
-  return bus;
+  /** Stellt die Frage wie der Kern und wartet auf die Antwort. */
+  async function ask(question: Poll["question"]) {
+    const done = new Promise<void>((resolve) => (answered = resolve));
+    handlers.forEach((handler) => handler({ id: "kern-1", question }));
+    await done;
+    return answers;
+  }
+  return { channel, ask };
 }
 
-/** Stellt die Frage wie der Kern und sammelt die Antworten, bis `count` da sind. */
-async function askLikeTheCore(bus: EventBus, question: string, count: number) {
-  const answers: unknown[] = [];
-  const all = new Promise<void>((resolve) => {
-    void bus.listen("window-poll-answer", (answer) => {
-      answers.push(answer);
-      if (answers.length === count) resolve();
-    });
-  });
-  await bus.emit("window-poll", { id: "kern-1", question });
-  await all;
-  return answers;
-}
+test("das Fenster antwortet auf die Rundfrage des Kerns mit deren Kennung", async () => {
+  const { channel, ask } = fakeChannel();
+  await answerPolls(channel, async (question) => `${question} von main`);
 
-test("jedes Fenster antwortet auf die Rundfrage des Kerns mit Kennung und Label", async () => {
-  const bus = fakeBus();
-  await answerPolls(bus, "main", async (question) => `${question} von main`);
-  await answerPolls(bus, "window-1", async (question) => `${question} von window-1`);
+  const answers = await ask("updateReasons");
 
-  const answers = await askLikeTheCore(bus, "updateReasons", 2);
-
-  expect(answers).toEqual([
-    { id: "kern-1", window: "main", answer: "updateReasons von main" },
-    { id: "kern-1", window: "window-1", answer: "updateReasons von window-1" },
-  ]);
+  expect(answers).toEqual([{ id: "kern-1", answer: "updateReasons von main" }]);
 });
 
 test("scheitert die Antwort eines Fensters, antwortet es ohne Antwort", async () => {
-  const bus = fakeBus();
-  await answerPolls(bus, "main", async () => {
+  const { channel, ask } = fakeChannel();
+  await answerPolls(channel, async () => {
     throw new Error("kaputt");
   });
 
-  const answers = await askLikeTheCore(bus, "saveArrangement", 1);
+  const answers = await ask("saveArrangement");
 
-  expect(answers).toEqual([{ id: "kern-1", window: "main", answer: null }]);
+  expect(answers).toEqual([{ id: "kern-1", answer: null }]);
 });
