@@ -1,10 +1,12 @@
 //! Die Aktualisierung von Kredr: sucht kurz nach dem Start und danach alle
 //! drei Stunden nach einer neuen Version, solange die Einstellung es erlaubt,
 //! und auf Wunsch mit „Jetzt suchen“. Hält den Zustand für alle Fenster und
-//! meldet jede Änderung mit dem Ereignis `app-update-changed`. Die
-//! Entwicklungsfassung sucht und installiert nie.
+//! meldet jede Änderung mit dem Ereignis `app-update-changed`. Suche,
+//! Download und Installation liegen hinter dem Updater-seam (`updater`); die
+//! Entwicklungsfassung spielt sie dort höchstens vor.
 
-use std::future::Future;
+mod updater;
+
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -12,9 +14,13 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
-use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::settings::{Settings, SettingsStore};
+
+pub use updater::{
+    auto_search_with, failure_cause, Edition, Failure, FailureCause, PluginUpdater, SearchOutcome,
+    SimulatedUpdater, Step, Updater,
+};
 
 /// Meldet allen Fenstern den neuen Zustand.
 const CHANGED: &str = "app-update-changed";
@@ -75,9 +81,9 @@ pub struct AppUpdateState {
     installer_ready: bool,
 }
 
-/// Der vorgespielte Port und der Kern der Vitest-Tests bilden diese Abläufe
-/// nach; `src/appUpdateScenarios.json` hält die gemeinsamen Fälle, gegen die
-/// alle drei geprüft werden.
+/// Der Kern der Vitest-Tests bildet diese Abläufe nach;
+/// `src/appUpdateScenarios.json` hält die gemeinsamen Fälle, gegen die beide
+/// geprüft werden.
 impl AppUpdateState {
     /// `declined` ist die Version, die die Person früher auf „Später“ gestellt hat.
     pub fn new(installed: impl Into<String>, declined: Option<String>) -> Self {
@@ -274,6 +280,19 @@ impl AppUpdateState {
         starts
     }
 
+    /// Der Installer kehrte zurück, ohne Kredr zu beenden; das geschieht nur
+    /// im vorgespielten Ablauf. Das Angebot steht wieder in allen Fenstern.
+    /// Gibt zurück, ob eine Installation lief.
+    pub fn installer_returned(&mut self) -> bool {
+        let returns = self.phase == Phase::Installing;
+        if returns {
+            self.phase = Phase::Offered;
+            self.asker = None;
+            self.hidden = false;
+        }
+        returns
+    }
+
     /// Die Aktualisierung ist gescheitert; der Hinweis nennt den Grund, und
     /// sie lässt sich erneut anstoßen.
     pub fn fail(&mut self, cause: FailureCause, error: String) {
@@ -299,44 +318,6 @@ impl AppUpdateState {
             self.fail(FailureCause::Unknown, error);
         }
         leads
-    }
-}
-
-/// Warum eine Aktualisierung scheiterte, kurz genug für einen Satz.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum FailureCause {
-    /// GitHub war nicht erreichbar oder der Download brach ab.
-    Network,
-    /// Die Signatur des Installers passt nicht zum Kredr-Schlüssel.
-    Signature,
-    /// Der Installer ließ sich nicht starten.
-    Installer,
-    /// Alles andere, etwa ein Schreibfehler auf der Platte.
-    Unknown,
-}
-
-/// Der Schritt der Aktualisierung, in dem ein Fehler auftrat.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Step {
-    /// „Jetzt suchen“; eingeordnet wie der Download, denn beide fragen GitHub.
-    Check,
-    Download,
-    Install,
-}
-
-/// Ordnet einen Fehler des Updaters aus `step` einem Grund zu.
-pub fn failure_cause(error: &tauri_plugin_updater::Error, step: Step) -> FailureCause {
-    use tauri_plugin_updater::Error;
-    match error {
-        Error::Minisign(_)
-        | Error::Base64(_)
-        | Error::SignatureUtf8(_)
-        | Error::SignedVersionMismatch { .. }
-        | Error::MissingSignedVersion => FailureCause::Signature,
-        _ if step == Step::Install => FailureCause::Installer,
-        Error::Reqwest(_) | Error::Network(_) | Error::ReleaseNotFound => FailureCause::Network,
-        _ => FailureCause::Unknown,
     }
 }
 
@@ -366,41 +347,13 @@ struct DeclinedFile {
     declined: String,
 }
 
-/// Welche Fassung von Kredr läuft.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Edition {
-    /// `npm run tauri dev`: Sie fragt GitHub nie, damit sie sich nicht selbst
-    /// mit der veröffentlichten Version überschreibt.
-    Development,
-    /// Die installierte Fassung.
-    Installed,
-}
-
-impl Edition {
-    /// Die laufende Fassung.
-    pub fn current() -> Self {
-        if cfg!(debug_assertions) {
-            Self::Development
-        } else {
-            Self::Installed
-        }
-    }
-
-    /// Ob diese Fassung nach Aktualisierungen suchen und sie installieren darf.
-    pub fn may_update(self) -> bool {
-        self == Self::Installed
-    }
-}
-
-/// Der Zustand der Aktualisierung und die zuletzt gefundene neue Version.
+/// Der Zustand der Aktualisierung und der adapter, der sucht, lädt und installiert.
 pub struct AppUpdates {
-    inner: Mutex<(AppUpdateState, Option<Update>)>,
+    inner: Mutex<AppUpdateState>,
     /// Wo die abgelehnte Version liegt; ohne Benutzerdatenverzeichnis nirgends.
     dir: Option<PathBuf>,
     auto: Mutex<AutoCheck>,
-    /// Der geladene und geprüfte Installer, bis er installiert wird oder die
-    /// Rückfrage nach dem Download endet.
-    installer: Mutex<Option<Vec<u8>>>,
+    updater: Updater,
 }
 
 /// Merkt sich, ob die Suche von selbst an ist, damit Kredr beim Anschalten
@@ -426,53 +379,47 @@ impl AutoCheck {
 }
 
 impl AppUpdates {
-    pub(crate) fn new(installed: String, dir: Option<PathBuf>, auto_check: bool) -> Self {
+    pub(crate) fn new(
+        installed: String,
+        dir: Option<PathBuf>,
+        auto_check: bool,
+        updater: Updater,
+    ) -> Self {
         let declined = dir.as_deref().and_then(load_declined);
         Self {
-            inner: Mutex::new((AppUpdateState::new(installed, declined), None)),
+            inner: Mutex::new(AppUpdateState::new(installed, declined)),
             dir,
             auto: Mutex::new(AutoCheck::new(auto_check)),
-            installer: Mutex::new(None),
+            updater,
         }
     }
 
-    /// Beendet die Rückfrage von `window`, wie mit „Später“; ein geladener
-    /// Installer wird verworfen.
+    /// Beendet die Rückfrage von `window`, wie mit „Später“.
     fn cancel<R: Runtime>(&self, app: &AppHandle<R>, window: &str) {
-        let mut cancelled = false;
-        self.change(app, |state, _| {
-            cancelled = state.cancel_confirm(window);
-            cancelled
-        });
-        if cancelled {
-            self.installer.lock().unwrap().take();
-        }
+        self.change(app, |state| state.cancel_confirm(window));
     }
 
     /// Ein Aufruf in `window` ist gescheitert; der Fehlschlag gilt für alle
-    /// Fenster, wenn `window` die Aktualisierung führt. Ein geladener
-    /// Installer wird verworfen. Gibt zurück, ob der Fehlschlag gilt.
-    fn fail(&self, app: &AppHandle, window: &str, error: String) -> bool {
+    /// Fenster, wenn `window` die Aktualisierung führt. Gibt zurück, ob der
+    /// Fehlschlag gilt.
+    fn fail<R: Runtime>(&self, app: &AppHandle<R>, window: &str, error: String) -> bool {
         let mut failed = false;
-        self.change(app, |state, _| {
+        self.change(app, |state| {
             failed = state.window_failed(window, error);
             failed
         });
-        if failed {
-            self.installer.lock().unwrap().take();
-        }
         failed
     }
 
     pub(crate) fn state(&self) -> AppUpdateState {
-        self.inner.lock().unwrap().0.clone()
+        self.inner.lock().unwrap().clone()
     }
 
     /// „Später“: schließt das Angebot in allen Fenstern und merkt sich die
     /// Version im Benutzerdatenverzeichnis.
-    fn later(&self, app: &AppHandle) {
+    fn later<R: Runtime>(&self, app: &AppHandle<R>) {
         let mut declined = None;
-        self.change(app, |state, _| {
+        self.change(app, |state| {
             let closes = state.later();
             if closes {
                 declined = state.declined().map(str::to_owned);
@@ -489,11 +436,10 @@ impl AppUpdates {
     pub(crate) fn change<R: Runtime>(
         &self,
         app: &AppHandle<R>,
-        change: impl FnOnce(&mut AppUpdateState, &mut Option<Update>) -> bool,
+        change: impl FnOnce(&mut AppUpdateState) -> bool,
     ) {
-        let mut inner = self.inner.lock().unwrap();
-        let (state, update) = &mut *inner;
-        if change(state, update) {
+        let mut state = self.inner.lock().unwrap();
+        if change(&mut state) {
             // Scheitert das Senden, ist kein Fenster mehr offen.
             let _ = app.emit(CHANGED, &*state);
         }
@@ -514,51 +460,36 @@ pub enum CheckResult {
     Failed { cause: FailureCause, error: String },
 }
 
-/// Richtet die Aktualisierung ein. Nur die installierte Fassung sucht von
-/// selbst, und nur, solange die Einstellung „Nach Aktualisierungen suchen“
-/// an ist. Sie gilt bei jeder Suche neu.
+/// Richtet die Aktualisierung ein; die Fassung wählt dafür den adapter. Die
+/// installierte Fassung sucht kurz nach dem Start und danach alle drei
+/// Stunden, solange die Einstellung „Nach Aktualisierungen suchen“ an ist;
+/// sie gilt bei jeder Suche neu. Die Entwicklungsfassung bietet eine
+/// vorgespielte Version sofort an.
 pub fn start(app: &AppHandle) {
+    let edition = Edition::current();
     app.manage(AppUpdates::new(
         app.package_info().version.to_string(),
         crate::data_dir(app).ok(),
         app.state::<SettingsStore>().get().check_for_updates,
+        edition.updater(),
     ));
-    // Die Suche sperrt die Entwicklungsfassung ohnehin; sie braucht deshalb
-    // auch den Thread nicht, der alle drei Stunden aufwacht.
-    if !Edition::current().may_update() {
-        offer_simulated(app);
+    if edition == Edition::Development {
+        tauri::async_runtime::block_on(offer_found(app, false));
         return;
     }
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(FIRST_CHECK_AFTER);
         loop {
-            tauri::async_runtime::block_on(check(&app));
+            tauri::async_runtime::block_on(offer_found(&app, true));
             std::thread::sleep(CHECK_EVERY);
         }
     });
 }
 
-/// Nennt diese Variable der Entwicklungsfassung eine Version, etwa `0.6.0`,
-/// bietet der Kern sie allen Fenstern an. Ohne `Update` des Updaters lädt und
-/// installiert er nichts: „Trotzdem aktualisieren“ führt zum Angebot zurück.
-/// So lässt sich die Rückfrage über mehrere Fenster abnehmen.
-const SIMULATED_UPDATE: &str = "KREDR_SIMULATED_UPDATE";
-
-/// Bietet in der Entwicklungsfassung die Version aus `SIMULATED_UPDATE` an.
-fn offer_simulated(app: &AppHandle) {
-    if let Some(version) = std::env::var(SIMULATED_UPDATE)
-        .ok()
-        .filter(|v| !v.is_empty())
-    {
-        app.state::<AppUpdates>()
-            .change(app, |state, _| state.found(version));
-    }
-}
-
 /// Meldet der Aktualisierung neue Einstellungen. Schaltet die Person die
-/// Suche von selbst an, sucht die installierte Fassung sofort einmal; der
-/// Abstand von drei Stunden läuft unverändert weiter.
+/// Suche von selbst an, sucht Kredr sofort einmal; der Abstand von drei
+/// Stunden läuft unverändert weiter.
 pub fn settings_changed(app: &AppHandle, settings: &Settings) {
     let Some(updates) = app.try_state::<AppUpdates>() else {
         return;
@@ -570,108 +501,22 @@ pub fn settings_changed(app: &AppHandle, settings: &Settings) {
         .setting_changed(settings.check_for_updates);
     if switched_on {
         let app = app.clone();
-        tauri::async_runtime::spawn(async move { check(&app).await });
+        tauri::async_runtime::spawn(async move { offer_found(&app, true).await });
     }
 }
 
-/// Sucht von selbst einmal nach einer neuen Version, wenn die Einstellung es
-/// erlaubt. Ohne Netz oder bei einer kaputten `latest.json` bleibt es still;
-/// die nächste Suche versucht es erneut.
-async fn check(app: &AppHandle) {
-    let enabled = app.state::<SettingsStore>().get().check_for_updates;
-    let Some(SearchOutcome::Found(found)) =
-        auto_search_with(enabled, Edition::current(), || ask_github(app)).await
+/// Sucht von selbst einmal nach einer neuen Version und bietet sie an. Mit
+/// `by_setting` nur, wenn die Einstellung es erlaubt. Ohne Netz oder bei einer
+/// kaputten `latest.json` bleibt es still; die nächste Suche versucht es erneut.
+async fn offer_found(app: &AppHandle, by_setting: bool) {
+    let enabled = !by_setting || app.state::<SettingsStore>().get().check_for_updates;
+    let updates = app.state::<AppUpdates>();
+    let Some(SearchOutcome::Found(version)) =
+        auto_search_with(enabled, || updates.updater.check(app)).await
     else {
         return;
     };
-    app.state::<AppUpdates>().change(app, |state, update| {
-        let offered = state.found(found.version.clone());
-        if offered {
-            *update = Some(found);
-        }
-        offered
-    });
-}
-
-/// Was eine Suche nach einer neuen Version ergab. `T` ist die gefundene
-/// Version, im Kern das `Update` des Updaters.
-#[derive(Debug, PartialEq, Eq)]
-pub enum SearchOutcome<T> {
-    Found(T),
-    /// Kredr ist aktuell.
-    Current,
-    /// Die Suche scheiterte, mit eingeordnetem Grund und Originaltext.
-    Failed {
-        cause: FailureCause,
-        error: String,
-    },
-    /// Diese Fassung darf nicht suchen; der Updater wurde nicht gefragt.
-    Locked,
-}
-
-/// Fragt mit `ask` nach einer neuen Version, wenn `edition` es darf. Jede
-/// Suche geht hier durch, und ein `Update` zum Installieren gibt es nur aus
-/// einer Suche. So erreicht die Entwicklungsfassung den Updater auf keinem
-/// Weg.
-pub async fn search_with<T, Ask, Asking>(edition: Edition, ask: Ask) -> SearchOutcome<T>
-where
-    Ask: FnOnce() -> Asking,
-    Asking: Future<Output = Result<Option<T>, tauri_plugin_updater::Error>>,
-{
-    if !edition.may_update() {
-        return SearchOutcome::Locked;
-    }
-    match ask().await {
-        Ok(Some(found)) => SearchOutcome::Found(found),
-        Ok(None) => SearchOutcome::Current,
-        Err(error) => SearchOutcome::Failed {
-            cause: failure_cause(&error, Step::Check),
-            error: error.to_string(),
-        },
-    }
-}
-
-/// Sucht von selbst nach einer neuen Version, aber nur, solange `enabled`,
-/// die Einstellung „Nach Aktualisierungen suchen“, an ist. Sonst fragt sie
-/// den Updater nicht und ergibt `None`.
-pub async fn auto_search_with<T, Ask, Asking>(
-    enabled: bool,
-    edition: Edition,
-    ask: Ask,
-) -> Option<SearchOutcome<T>>
-where
-    Ask: FnOnce() -> Asking,
-    Asking: Future<Output = Result<Option<T>, tauri_plugin_updater::Error>>,
-{
-    if !enabled {
-        return None;
-    }
-    Some(search_with(edition, ask).await)
-}
-
-/// Sucht in der laufenden Fassung nach einer neuen Version.
-async fn search(app: &AppHandle) -> SearchOutcome<Update> {
-    search_with(Edition::current(), || ask_github(app)).await
-}
-
-/// Fragt GitHub nach einer neuen Version. Nur `search_with` ruft das auf.
-async fn ask_github(app: &AppHandle) -> Result<Option<Update>, tauri_plugin_updater::Error> {
-    let handle = app.clone();
-    // Unter Windows beendet der Updater Kredr nach dem Start des Installers
-    // mit `std::process::exit`; dabei schließt kein Fenster mehr regulär.
-    // Vorher merkt sich Kredr die offenen Fenster für den Neustart mit der
-    // Version, die gerade installiert wird, und räumt auf wie das Plugin ohne
-    // eigenen Hook.
-    let updater = app
-        .updater_builder()
-        .on_before_exit(move || {
-            if let Some(target) = handle.state::<AppUpdates>().state().version {
-                crate::projects::remember_windows_for_restart(&handle, &target);
-            }
-            handle.cleanup_before_exit();
-        })
-        .build()?;
-    updater.check().await
+    updates.change(app, |state| state.found(version));
 }
 
 #[tauri::command]
@@ -685,20 +530,13 @@ pub fn app_update_state(updates: State<'_, AppUpdates>) -> AppUpdateState {
 /// Fehlschlag kommt als Ergebnis zurück, nie als Fehler; das `Result`
 /// verlangt Tauri von asynchronen Befehlen mit `State`.
 #[tauri::command]
-pub async fn app_update_check(
-    app: AppHandle,
+pub async fn app_update_check<R: Runtime>(
+    app: AppHandle<R>,
     updates: State<'_, AppUpdates>,
 ) -> Result<CheckResult, String> {
-    Ok(match search(&app).await {
-        SearchOutcome::Found(found) => {
-            let version = found.version.clone();
-            updates.change(&app, |state, update| {
-                let offered = state.found_on_request(found.version.clone());
-                if offered {
-                    *update = Some(found);
-                }
-                offered
-            });
+    Ok(match updates.updater.check(&app).await {
+        SearchOutcome::Found(version) => {
+            updates.change(&app, |state| state.found_on_request(version.clone()));
             CheckResult::Found { version }
         }
         SearchOutcome::Current => CheckResult::Current,
@@ -711,7 +549,7 @@ pub async fn app_update_check(
 /// über einen Neustart hinaus. Während des Downloads blendet es nur den
 /// Hinweis aus.
 #[tauri::command]
-pub fn app_update_later(app: AppHandle, updates: State<'_, AppUpdates>) {
+pub fn app_update_later<R: Runtime>(app: AppHandle<R>, updates: State<'_, AppUpdates>) {
     updates.later(&app);
 }
 
@@ -719,13 +557,13 @@ pub fn app_update_later(app: AppHandle, updates: State<'_, AppUpdates>) {
 /// Fenster zeigen sie als laufend. Gibt zurück, ob das Fenster fragen darf;
 /// hält schon ein anderes die Rückfrage oder läuft die Aktualisierung, nicht.
 #[tauri::command]
-pub fn app_update_ask(
-    app: AppHandle,
-    window: tauri::Window,
+pub fn app_update_ask<R: Runtime>(
+    app: AppHandle<R>,
+    window: tauri::Window<R>,
     updates: State<'_, AppUpdates>,
 ) -> bool {
     let mut asks = false;
-    updates.change(&app, |state, _| {
+    updates.change(&app, |state| {
         asks = state.ask(window.label());
         asks
     });
@@ -735,19 +573,22 @@ pub fn app_update_ask(
 /// „Später“ in der Rückfrage: Der Zustand kehrt in allen Fenstern zur Phase
 /// davor zurück.
 #[tauri::command]
-pub fn app_update_cancel(app: AppHandle, window: tauri::Window, updates: State<'_, AppUpdates>) {
+pub fn app_update_cancel<R: Runtime>(
+    app: AppHandle<R>,
+    window: tauri::Window<R>,
+    updates: State<'_, AppUpdates>,
+) {
     updates.cancel(&app, window.label());
 }
 
 /// Ein Aufruf in einem Fenster ist während der Aktualisierung gescheitert,
 /// etwa die Rundfrage oder der Dialog der Rückfrage: Alle Fenster zeigen den
-/// Fehlschlag mit `error` als Originaltext, ein geladener Installer wird
-/// verworfen. Gibt zurück, ob der Fehlschlag gilt; nicht, wenn das Fenster
-/// die Aktualisierung gar nicht führt.
+/// Fehlschlag mit `error` als Originaltext. Gibt zurück, ob der Fehlschlag
+/// gilt; nicht, wenn das Fenster die Aktualisierung gar nicht führt.
 #[tauri::command]
-pub fn app_update_fail(
-    app: AppHandle,
-    window: tauri::Window,
+pub fn app_update_fail<R: Runtime>(
+    app: AppHandle<R>,
+    window: tauri::Window<R>,
     updates: State<'_, AppUpdates>,
     error: String,
 ) -> bool {
@@ -762,77 +603,56 @@ pub fn window_closed<R: Runtime>(window: &tauri::Window<R>) {
     }
 }
 
-/// Lädt die neue Version und prüft ihre Signatur. Den Fortschritt meldet der
-/// Zustand in ganzen Prozent. Danach hält `window` wieder die Rückfrage: Es
-/// prüft die Anlässe erneut, speichert die Aufteilungen und installiert mit
-/// `app_update_install`, oder es bricht ab. Gibt zurück, ob die Version
-/// bereitliegt. Scheitert der Download, meldet der Zustand den eingeordneten
-/// Grund und den Originaltext. Nur das Fenster, das die Rückfrage hält, kann
-/// laden. Ohne `Update` endet nur die Rückfrage; ein `Update` kommt nur aus
-/// einer Suche, die Entwicklungsfassung hat deshalb nie eins.
+/// Lädt die angebotene Version und prüft ihre Signatur. Den Fortschritt
+/// meldet der Zustand in ganzen Prozent. Danach hält `window` wieder die
+/// Rückfrage: Es prüft die Anlässe erneut, speichert die Aufteilungen und
+/// installiert mit `app_update_install`, oder es bricht ab. Gibt zurück, ob
+/// die Version bereitliegt. Scheitert der Download, meldet der Zustand den
+/// eingeordneten Grund und den Originaltext. Nur das Fenster, das die
+/// Rückfrage hält, kann laden.
 #[tauri::command]
-pub async fn app_update_download(
-    app: AppHandle,
-    window: tauri::Window,
+pub async fn app_update_download<R: Runtime>(
+    app: AppHandle<R>,
+    window: tauri::Window<R>,
     updates: State<'_, AppUpdates>,
 ) -> Result<bool, String> {
-    let label = window.label().to_owned();
     let mut pending = None;
-    updates.change(&app, |state, update| {
-        let Some(update) = update.clone() else {
-            // Ohne `Update` gibt es nichts zu laden; die Rückfrage darf nicht hängen bleiben.
-            return state.cancel_confirm(&label);
-        };
-        let starts = state.start_download(&label);
+    updates.change(&app, |state| {
+        let starts = state.start_download(window.label());
         if starts {
-            pending = Some(update);
+            pending = state.version.clone();
         }
         starts
     });
-    let Some(update) = pending else {
+    let Some(version) = pending else {
         return Ok(false);
     };
-    let mut done = 0u64;
-    let downloaded = update
-        .download(
-            |chunk, total| {
-                done += chunk as u64;
-                updates.change(&app, |state, _| state.downloaded(done, total));
-            },
-            || {},
-        )
+    let downloaded = updates
+        .updater
+        .download(&version, |done, total| {
+            updates.change(&app, |state| state.downloaded(done, total));
+        })
         .await;
-    match downloaded {
-        Ok(bytes) => {
-            let mut ready = false;
-            updates.change(&app, |state, _| {
-                let finishes = state.finish_download();
-                ready = state.installer_ready();
-                // Im selben Schritt wie die Rückfrage, damit das Fenster nie
-                // ohne Installer installieren will.
-                if ready {
-                    *updates.installer.lock().unwrap() = Some(bytes);
-                }
-                finishes
-            });
-            Ok(ready)
+    let mut ready = false;
+    updates.change(&app, |state| match downloaded {
+        Ok(()) => {
+            let finishes = state.finish_download();
+            ready = state.installer_ready();
+            finishes
         }
-        Err(error) => {
-            updates.change(&app, |state, _| {
-                state.fail(failure_cause(&error, Step::Download), error.to_string());
-                true
-            });
-            Ok(false)
+        Err(Failure { cause, error }) => {
+            state.fail(cause, error);
+            true
         }
-    }
+    });
+    Ok(ready)
 }
 
-/// Startet den geladenen Installer im Modus `passive`. Er beendet Kredr und
-/// startet es nach der Installation neu; unmittelbar davor merkt sich Kredr
-/// die offenen Fenster (`on_before_exit`). Nur das Fenster, das nach dem
-/// Download die Rückfrage hält, kann installieren. Scheitert der Start,
-/// meldet der Zustand den eingeordneten Grund und den Originaltext. Ohne
-/// `Update` endet nur die Rückfrage, wie beim Download.
+/// Startet den geladenen Installer. Nur das Fenster, das nach dem Download
+/// die Rückfrage hält, kann installieren. Scheitert der Start, meldet der
+/// Zustand den eingeordneten Grund und den Originaltext. Kehrt der Installer
+/// ohne Fehlschlag zurück, wie im vorgespielten Ablauf, steht wieder das
+/// Angebot.
 #[tauri::command]
 pub async fn app_update_install<R: Runtime>(
     app: AppHandle<R>,
@@ -840,27 +660,23 @@ pub async fn app_update_install<R: Runtime>(
     updates: State<'_, AppUpdates>,
 ) -> Result<(), String> {
     let mut pending = None;
-    updates.change(&app, |state, update| {
-        let mut installer = updates.installer.lock().unwrap();
-        if update.is_none() {
-            installer.take();
-            return state.cancel_confirm(window.label());
-        }
-        let starts = installer.is_some() && state.start_install(window.label());
+    updates.change(&app, |state| {
+        let starts = state.start_install(window.label());
         if starts {
-            pending = update.clone().zip(installer.take());
+            pending = state.version.clone();
         }
         starts
     });
-    let Some((update, bytes)) = pending else {
+    let Some(version) = pending else {
         return Ok(());
     };
-    if let Err(error) = update.install(bytes) {
-        crate::projects::forget_windows_for_restart(&app);
-        updates.change(&app, |state, _| {
-            state.fail(failure_cause(&error, Step::Install), error.to_string());
+    let installed = updates.updater.install(&app, &version).await;
+    updates.change(&app, |state| match installed {
+        Ok(()) => state.installer_returned(),
+        Err(Failure { cause, error }) => {
+            state.fail(cause, error);
             true
-        });
-    }
+        }
+    });
     Ok(())
 }

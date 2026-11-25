@@ -11,8 +11,13 @@ param(
   [switch]$OhneProjekt,
   # So viele Fenster, jedes mit einem eigenen Wegwerf-Repo (wie nach dem Neustart einer Aktualisierung).
   [int]$Fenster = 1,
-  # Version, die der Kern allen Fenstern als neu anbietet, etwa 0.6.0; geladen wird nichts.
+  # Version, die der Kern allen Fenstern als neu anbietet, etwa 0.6.0. Der vorgespielte
+  # Ablauf lädt sie zum Schein und kehrt nach „Installieren“ zum Angebot zurück.
   [string]$Aktualisierung = "",
+  # Grund, an dem der vorgespielte Ablauf scheitert: network und signature beim
+  # Download, installer bei der Installation. Nur mit -Aktualisierung.
+  [ValidateSet("", "network", "signature", "installer")]
+  [string]$Fehlschlag = "",
   [int]$Port = 9333
 )
 $ErrorActionPreference = "Stop"
@@ -85,6 +90,7 @@ Get-ChildItem Env: | Where-Object Name -like "CLAUDE_CODE_*" | ForEach-Object { 
 Remove-Item Env:CLAUDECODE -ErrorAction SilentlyContinue
 # Ordnerdialoge beantwortet Kredr selbst; ohne Angabe erscheint der Windows-Dialog.
 $env:KREDR_SIMULATED_UPDATE = $Aktualisierung
+$env:KREDR_SIMULATED_FAILURE = $Fehlschlag
 $env:KREDR_TEST_FOLDERS =($Ordner | ForEach-Object { (Resolve-Path $_).Path }) -join ";"
 # Mehrere Fenster: Ohne Projekt öffnet Kredr die Fenster aus der Notiz für den
 # Neustart nach einer Aktualisierung, sofern sie der laufenden Version gilt.

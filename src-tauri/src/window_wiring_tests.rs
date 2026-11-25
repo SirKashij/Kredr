@@ -5,7 +5,7 @@ use tauri::async_runtime::block_on;
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
 use tauri::{App, Manager, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent};
 
-use crate::app_update::{app_update_install, AppUpdates, Phase};
+use crate::app_update::{app_update_install, AppUpdates, Phase, SimulatedUpdater, Updater};
 use crate::notifications::Notifications;
 
 /// Das Fenster, in dem die Person „Jetzt aktualisieren“ klickt.
@@ -14,11 +14,16 @@ const MAIN: &str = "main";
 const OTHER: &str = "projekt-2";
 
 /// Kredr mit allem, was ein Fenster beim Schließen freigibt, wie in `run`, und einer
-/// Aktualisierung, die nie gesucht hat und deshalb kein `Update` kennt.
+/// Aktualisierung mit dem vorgespielten adapter, die nie gesucht hat.
 fn kredr() -> App<MockRuntime> {
     crate::manage_per_window(mock_builder())
         .manage(Notifications::new("kredr-test"))
-        .manage(AppUpdates::new("0.5.0".into(), None, false))
+        .manage(AppUpdates::new(
+            "0.5.0".into(),
+            None,
+            false,
+            Updater::Simulated(SimulatedUpdater::new(None, None, Default::default())),
+        ))
         .build(mock_context(noop_assets()))
         .expect("die Mock-App sollte starten")
 }
@@ -34,8 +39,8 @@ fn open(app: &App<MockRuntime>, label: &str) -> Window<MockRuntime> {
 /// Bietet 0.6.0 an und lässt `window` die Rückfrage halten.
 fn ask_in(app: &App<MockRuntime>, window: &str) {
     let updates = app.state::<AppUpdates>();
-    updates.change(app.handle(), |state, _| state.found("0.6.0".into()));
-    updates.change(app.handle(), |state, _| state.ask(window));
+    updates.change(app.handle(), |state| state.found("0.6.0".into()));
+    updates.change(app.handle(), |state| state.ask(window));
     assert_eq!(updates.state().phase, Phase::Confirm);
 }
 
@@ -67,23 +72,7 @@ fn schliesst_sich_ein_anderes_fenster_bleibt_die_rueckfrage() {
 }
 
 #[test]
-fn installieren_ohne_update_beendet_die_rueckfrage() {
-    let app = kredr();
-    let main = open(&app, MAIN);
-    ask_in(&app, MAIN);
-
-    let installed = block_on(app_update_install(
-        app.handle().clone(),
-        main,
-        app.state::<AppUpdates>(),
-    ));
-
-    assert_eq!(installed, Ok(()));
-    assert_eq!(phase(&app), Phase::Offered);
-}
-
-#[test]
-fn installieren_ohne_update_laesst_die_rueckfrage_eines_anderen_fensters() {
+fn ein_anderes_fenster_installiert_nicht_und_laesst_die_rueckfrage() {
     let app = kredr();
     let _main = open(&app, MAIN);
     let other = open(&app, OTHER);

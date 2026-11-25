@@ -1,7 +1,6 @@
 //! Spielt die gemeinsamen Abläufe aus `src/appUpdateScenarios.json` gegen den
 //! Zustand der Aktualisierung im Kern ab. Dieselben Abläufe prüfen in Vitest
-//! den vorgespielten Port und den Kern der Tests; so laufen die drei nicht
-//! auseinander.
+//! den Kern der Tests; so laufen die beiden nicht auseinander.
 
 use kredr_lib::app_update::AppUpdateState;
 use serde::Deserialize;

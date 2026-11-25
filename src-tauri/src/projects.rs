@@ -306,7 +306,7 @@ pub fn window_closed<R: Runtime>(window: &Window<R>) {
 /// vorher selbst gespeichert. Die Notiz gilt nur, wenn danach `target`, die
 /// neue Version, startet; scheitert der Installer, kennt der nächste Start sie
 /// nicht.
-pub fn remember_windows_for_restart(app: &AppHandle, target: &str) {
+pub fn remember_windows_for_restart<R: Runtime>(app: &AppHandle<R>, target: &str) {
     let windows: Vec<RestartWindow> = app
         .state::<ProjectWindows>()
         .contents()
