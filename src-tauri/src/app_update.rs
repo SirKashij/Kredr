@@ -47,8 +47,10 @@ pub enum Phase {
     None,
     Offered,
     Later,
-    /// Ein Fenster fragt vor der Aktualisierung nach den Anlässen aller
-    /// Fenster. Solange lässt sich die Aktualisierung nirgends anstoßen.
+    /// Die Rückfrage vor der Aktualisierung: Der Kern fragt alle Fenster nach
+    /// ihren Anlässen und wartet bei Bedarf auf die Antwort im Dialog des
+    /// fragenden Fensters. Solange lässt sich die Aktualisierung nirgends
+    /// anstoßen.
     Confirm,
     Downloading,
     Installing,
