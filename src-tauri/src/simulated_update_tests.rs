@@ -2,6 +2,15 @@
 //! Befehle des Kerns und die Mock-Runtime von Tauri: ohne echtes Fenster,
 //! ohne Netz und ohne Pausen. Die Fenster spielen Fakes, die wie die
 //! Oberfläche auf Rundfragen antworten und die Rückfrage beantworten.
+//!
+//! Tauri stellt Rust-Listenern ein Ereignis nicht sicher zu, wenn ein
+//! anderer Thread gerade eines sendet: Es landet in einer Warteschlange, die
+//! erst das nächste Ereignis mit Rust-Listenern leert, oft zu spät oder nie
+//! (`try_lock` in `tauri/src/event/listener.rs`, auch außerhalb der
+//! Mock-Runtime). Darum sendet in diesen Tests nur der Ablauf selbst, aus
+//! einem Thread: Die Fake-Fenster antworten auf die Rundfrage noch in seinem
+//! Thread und warten auf die Rückfrage und den Download am Zustand statt an
+//! `app-update-changed`.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -91,8 +100,11 @@ fn open(
     window
 }
 
-/// Antwortet wie `answerPolls` in `App.tsx`, aus einem eigenen Thread wie
-/// aus einer eigenen Webview.
+/// Antwortet wie `answerPolls` in `App.tsx`, über `window-poll` und
+/// `window-poll-answer`. Anders als eine Webview antwortet der Fake, noch
+/// während der Kern die Frage sendet, also in dessen Thread: Tauri stellt die
+/// Antwort dann gleich nach der Frage zu. Aus einem eigenen Thread ginge sie
+/// manchmal verloren, und das Fenster gälte als stumm.
 fn answer_polls(
     app: &App<MockRuntime>,
     label: &str,
@@ -100,7 +112,7 @@ fn answer_polls(
     journal: &Journal,
 ) {
     let (handle, label, journal) = (app.handle().clone(), label.to_owned(), journal.clone());
-    let asked = Arc::new(Mutex::new(0usize));
+    let asked = Mutex::new(0usize);
     app.listen_any("window-poll", move |event| {
         let poll: Value = serde_json::from_str(event.payload()).unwrap();
         let answer = match poll["question"].as_str().unwrap() {
@@ -118,11 +130,8 @@ fn answer_polls(
             }
             other => panic!("unbekannte Frage {other}"),
         };
-        let (handle, label) = (handle.clone(), label.clone());
-        std::thread::spawn(move || {
-            let reply = json!({ "id": poll["id"], "window": label, "answer": answer });
-            handle.emit("window-poll-answer", reply).unwrap();
-        });
+        let reply = json!({ "id": poll["id"], "window": label, "answer": answer });
+        handle.emit("window-poll-answer", reply).unwrap();
     });
 }
 
@@ -147,28 +156,47 @@ fn answer_confirm(
     person: Person,
     journal: &Journal,
 ) {
-    let (handle, window, journal) = (app.handle().clone(), window.clone(), journal.clone());
-    app.listen_any("app-update-changed", move |event| {
-        let state: Value = serde_json::from_str(event.payload()).unwrap();
-        let asks_here = state["phase"] == "confirm"
-            && state["asker"] == window.label()
-            && !state["reasons"].is_null();
-        if !asks_here {
+    let (handle, window) = (app.handle().clone(), window.clone());
+    // Bis der Kern die Antwort verarbeitet, steht dieselbe Rückfrage im Zustand.
+    let mut shown: Option<AppUpdateState> = None;
+    watch(app, journal, move |state, journal| {
+        let asks_here = state.phase == Phase::Confirm
+            && state.asker.as_deref() == Some(window.label())
+            && state.reasons.is_some();
+        if !asks_here || shown.as_ref() == Some(state) {
             return;
         }
-        let reasons: UpdateReasons = serde_json::from_value(state["reasons"].clone()).unwrap();
+        shown = Some(state.clone());
+        let reasons = state.reasons.unwrap();
         journal.lock().unwrap().push(format!(
             "Rückfrage {} {}",
             window.label(),
             describe(&reasons)
         ));
-        let (handle, window) = (handle.clone(), window.clone());
-        std::thread::spawn(move || match person {
-            Person::Proceeds => app_update_answer(window, handle.state(), true),
-            Person::Later => app_update_answer(window, handle.state(), false),
+        match person {
+            Person::Proceeds => app_update_answer(window.clone(), handle.state(), true),
+            Person::Later => app_update_answer(window.clone(), handle.state(), false),
             Person::ClosesWindow => crate::on_window_event(&window, &WindowEvent::Destroyed),
             Person::Waits => {}
-        });
+        }
+    });
+}
+
+/// Zeigt `watcher` aus einem eigenen Thread immer wieder den Zustand des
+/// Kerns, wie ihn ein Fenster mit `app_update_state` liest, bis der Test
+/// endet und `journal` fällt.
+fn watch(
+    app: &App<MockRuntime>,
+    journal: &Journal,
+    mut watcher: impl FnMut(&AppUpdateState, &Journal) + Send + 'static,
+) {
+    let (handle, journal) = (app.handle().clone(), Arc::downgrade(journal));
+    std::thread::spawn(move || {
+        while let Some(journal) = journal.upgrade() {
+            watcher(&handle.state::<AppUpdates>().state(), &journal);
+            drop(journal);
+            std::thread::sleep(Duration::from_millis(1));
+        }
     });
 }
 
@@ -397,8 +425,7 @@ fn schliesst_sich_das_fragende_fenster_vor_dem_download_endet_der_ablauf_wie_mit
 
 /// Lädt `window` neu, `delay` nachdem es die Rückfrage übernommen hat, also
 /// während der Kern die Rundfrage abschließt und die Rückfrage stellt. Wartet
-/// am Zustand statt an einem Ereignis: Die Mock-Runtime stellt ein Ereignis,
-/// das während eines anderen ankommt, nur verzögert oder gar nicht zu.
+/// dazu am Zustand, genauer als mit `watch`.
 fn reload_after(app: &App<MockRuntime>, window: &Window<MockRuntime>, delay: Duration) {
     let (handle, window) = (app.handle().clone(), window.clone());
     std::thread::spawn(move || {
@@ -448,17 +475,18 @@ fn laedt_das_fragende_fenster_neu_waehrend_der_kern_die_rueckfrage_stellt_endet_
     }
 }
 
-/// Schließt `window`, sobald der Kern den Download meldet.
-fn close_while_downloading(app: &App<MockRuntime>, window: &Window<MockRuntime>) {
+/// Schließt `window`, sobald der Zustand den Download zeigt.
+fn close_while_downloading(
+    app: &App<MockRuntime>,
+    window: &Window<MockRuntime>,
+    journal: &Journal,
+) {
     let window = window.clone();
-    let closed = Arc::new(Mutex::new(false));
-    app.listen_any("app-update-changed", move |event| {
-        let state: Value = serde_json::from_str(event.payload()).unwrap();
-        let mut closed = closed.lock().unwrap();
-        if state["phase"] == "downloading" && !*closed {
-            *closed = true;
-            let window = window.clone();
-            std::thread::spawn(move || crate::on_window_event(&window, &WindowEvent::Destroyed));
+    let mut closed = false;
+    watch(app, journal, move |state, _| {
+        if state.phase == Phase::Downloading && !closed {
+            closed = true;
+            crate::on_window_event(&window, &WindowEvent::Destroyed);
         }
     });
 }
@@ -483,7 +511,7 @@ fn schliesst_sich_das_fragende_fenster_waehrend_des_downloads_endet_der_ablauf_m
         &journal,
     );
     let progress = record_progress(&app);
-    close_while_downloading(&app, &main);
+    close_while_downloading(&app, &main, &journal);
 
     update_now(&app, &main);
 
@@ -567,7 +595,8 @@ fn scheitert_der_installer_zeigen_alle_fenster_den_fehlschlag_und_die_notiz_ist_
     assert!(store.take_restart_windows("0.6.0").is_empty());
 }
 
-/// Jeder Fortschritt, den der Kern allen Fenstern meldet, in Prozent.
+/// Jeder Fortschritt, den der Kern allen Fenstern meldet, in Prozent. Er
+/// kommt vollständig und in Reihenfolge an, weil nur der Ablauf sendet.
 fn record_progress(app: &App<MockRuntime>) -> Arc<Mutex<Vec<u8>>> {
     let progress = Arc::new(Mutex::new(Vec::new()));
     let recorded = progress.clone();
