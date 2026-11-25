@@ -1,14 +1,14 @@
 /**
- * Die Rundfrage über alle Fenster: Ein Fenster stellt allen offenen Fenstern
- * eine Frage und sammelt ihre Antworten, etwa vor einer Aktualisierung, die
- * alle Fenster beendet. Jedes Fenster läuft in einer eigenen Webview; sie
- * sprechen über die Ereignisse von Tauri miteinander.
+ * Die Antwortseite der Rundfrage: Der Kern stellt allen offenen Fenstern eine
+ * Frage und sammelt ihre Antworten, etwa vor einer Aktualisierung, die alle
+ * Fenster beendet. Jedes Fenster läuft in einer eigenen Webview und antwortet
+ * über die Ereignisse von Tauri. Wer nach drei Sekunden nicht geantwortet
+ * hat, gilt im Kern als stumm.
  */
 
 import { emit, listen } from "@tauri-apps/api/event";
-import { getAllWebviewWindows } from "@tauri-apps/api/webviewWindow";
 
-/** Die Fragen, die Fenster einander stellen. */
+/** Die Fragen des Kerns an die Fenster. */
 export type PollQuestion =
   /** Was beim Beenden des Fensters verloren ginge oder abbräche (`UpdateReasons`). */
   | "updateReasons"
@@ -17,19 +17,16 @@ export type PollQuestion =
 
 /** Die Ereignisse von Tauri, soweit die Rundfrage sie braucht. */
 export interface EventBus {
-  /** Sendet ein Ereignis an alle Fenster, auch an das eigene. */
+  /** Sendet ein Ereignis an alle Fenster und den Kern. */
   emit(event: string, payload: unknown): Promise<void>;
-  /** Hört auf ein Ereignis aus allen Fenstern; gibt das Abmelden zurück. */
+  /** Hört auf ein Ereignis aus allen Fenstern und dem Kern; gibt das Abmelden zurück. */
   listen<T>(event: string, handler: (payload: T) => void): Promise<() => void>;
 }
 
-/** Fragt alle Fenster. */
+/** Der Kern fragt alle Fenster. */
 const QUESTION = "window-poll";
 /** Die Antwort eines Fensters. */
 const ANSWER = "window-poll-answer";
-
-/** So lange wartet die Rundfrage höchstens auf ein Fenster, das nicht antwortet. */
-export const POLL_TIMEOUT = 3000;
 
 interface Question {
   id: string;
@@ -41,43 +38,6 @@ interface Answer {
   window: string;
   /** `null`, wenn das Fenster keine Antwort fand. */
   answer: unknown;
-}
-
-/**
- * Stellt den Fenstern `windows` die Frage `question` und gibt ihre Antworten
- * zurück, in der Reihenfolge von `windows`. Ein Fenster, dessen Antwort
- * scheitert oder nach `timeout` ms nicht da ist, antwortet `null`: Ein
- * stummes Fenster hält nichts dauerhaft auf.
- */
-export async function pollWindows<A>(
-  bus: EventBus,
-  windows: readonly string[],
-  question: PollQuestion,
-  timeout = POLL_TIMEOUT,
-): Promise<(A | null)[]> {
-  const id = crypto.randomUUID();
-  const waiting = new Set(windows);
-  const answers = new Map<string, A>();
-  let done = () => {};
-  const finished = new Promise<void>((resolve) => {
-    done = resolve;
-  });
-  const unlisten = await bus.listen<Answer>(ANSWER, (payload) => {
-    if (payload.id !== id || !waiting.delete(payload.window)) return;
-    if (payload.answer !== null) answers.set(payload.window, payload.answer as A);
-    if (waiting.size === 0) done();
-  });
-  const timer = setTimeout(done, timeout);
-  try {
-    if (waiting.size > 0) {
-      await bus.emit(QUESTION, { id, question } satisfies Question);
-      await finished;
-    }
-  } finally {
-    clearTimeout(timer);
-    unlisten();
-  }
-  return windows.map((window) => answers.get(window) ?? null);
 }
 
 /**
@@ -103,9 +63,3 @@ export const tauriEventBus: EventBus = {
   listen: <T>(event: string, handler: (payload: T) => void) =>
     listen<T>(event, ({ payload }) => handler(payload)),
 };
-
-/** Stellt allen offenen Fenstern von Kredr die Frage `question`. */
-export async function pollAllWindows<A>(question: PollQuestion): Promise<(A | null)[]> {
-  const windows = (await getAllWebviewWindows()).map((window) => window.label);
-  return pollWindows<A>(tauriEventBus, windows, question);
-}

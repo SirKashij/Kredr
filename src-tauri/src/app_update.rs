@@ -1,10 +1,14 @@
 //! Die Aktualisierung von Kredr: sucht kurz nach dem Start und danach alle
 //! drei Stunden nach einer neuen Version, solange die Einstellung es erlaubt,
 //! und auf Wunsch mit „Jetzt suchen“. Hält den Zustand für alle Fenster und
-//! meldet jede Änderung mit dem Ereignis `app-update-changed`. Suche,
+//! meldet jede Änderung mit dem Ereignis `app-update-changed`. Den Ablauf von
+//! „Jetzt aktualisieren“ führt der Kern selbst, mit Rundfrage und Rückfrage;
+//! nur den Dialog der Rückfrage zeigt das fragende Fenster (ADR 0008). Suche,
 //! Download und Installation liegen hinter dem Updater-seam (`updater`); die
 //! Entwicklungsfassung spielt sie dort höchstens vor.
 
+mod poll;
+mod reasons;
 mod updater;
 
 use std::io;
@@ -14,9 +18,12 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
+use tokio::sync::oneshot;
 
 use crate::settings::{Settings, SettingsStore};
 
+pub use poll::{poll_windows, PollQuestion, POLL_TIMEOUT};
+pub use reasons::UpdateReasons;
 pub use updater::{
     auto_search_with, failure_cause, Edition, Failure, FailureCause, PluginUpdater, SearchOutcome,
     SimulatedUpdater, Step, Updater,
@@ -70,9 +77,16 @@ pub struct AppUpdateState {
     /// sich nicht wieder als Hinweis an, auch nach einem Neustart nicht.
     #[serde(skip)]
     declined: Option<String>,
-    /// Das Fenster, das während `Confirm` die Rückfrage zeigt.
+    /// Das fragende Fenster: Es hat „Jetzt aktualisieren“ ausgelöst und zeigt
+    /// während `Confirm` den Dialog der Rückfrage.
+    pub asker: Option<String>,
+    /// Die Anlässe aller Fenster zusammengezählt, solange der Kern auf die
+    /// Antwort der Person wartet. Dann zeigt das fragende Fenster den Dialog.
+    pub reasons: Option<UpdateReasons>,
+    /// Zählt die Rückfragen, damit ein Ablauf nach dem Neuladen des fragenden
+    /// Fensters nicht eine neue Rückfrage desselben Fensters fortsetzt.
     #[serde(skip)]
-    asker: Option<String>,
+    attempt: u64,
     /// Die Phase vor der Rückfrage; „Später“ in der Rückfrage kehrt zu ihr zurück.
     #[serde(skip)]
     before_confirm: Phase,
@@ -81,9 +95,6 @@ pub struct AppUpdateState {
     installer_ready: bool,
 }
 
-/// Der Kern der Vitest-Tests bildet diese Abläufe nach;
-/// `src/appUpdateScenarios.json` hält die gemeinsamen Fälle, gegen die beide
-/// geprüft werden.
 impl AppUpdateState {
     /// `declined` ist die Version, die die Person früher auf „Später“ gestellt hat.
     pub fn new(installed: impl Into<String>, declined: Option<String>) -> Self {
@@ -97,6 +108,8 @@ impl AppUpdateState {
             error: None,
             declined,
             asker: None,
+            reasons: None,
+            attempt: 0,
             before_confirm: Phase::None,
             installer_ready: false,
         }
@@ -183,8 +196,41 @@ impl AppUpdateState {
             self.hidden = self.phase == Phase::Later;
             self.phase = Phase::Confirm;
             self.asker = Some(window.to_owned());
+            self.attempt += 1;
         }
         asks
+    }
+
+    /// Die Nummer der laufenden Rückfrage, gezählt von `ask`.
+    pub fn attempt(&self) -> u64 {
+        self.attempt
+    }
+
+    /// Ob `window` die Rückfrage `attempt` noch hält. Ein Ablauf führt nur
+    /// so lange fort.
+    pub fn leads(&self, window: &str, attempt: u64) -> bool {
+        self.asks_in(window) && self.attempt == attempt
+    }
+
+    /// Der Kern fragt die Person mit den Anlässen `reasons` aller Fenster; das
+    /// fragende Fenster `window` zeigt dazu den Dialog. Gibt zurück, ob
+    /// `window` die Rückfrage hält.
+    pub fn question(&mut self, window: &str, reasons: UpdateReasons) -> bool {
+        let asks = self.asks_in(window);
+        if asks {
+            self.reasons = Some(reasons);
+        }
+        asks
+    }
+
+    /// „Trotzdem aktualisieren“ im Dialog von `window`: Der Dialog ist zu,
+    /// die Aktualisierung geht weiter. Gibt zurück, ob ein Dialog offen war.
+    pub fn answered(&mut self, window: &str) -> bool {
+        let answers = self.asks_in(window) && self.reasons.is_some();
+        if answers {
+            self.reasons = None;
+        }
+        answers
     }
 
     /// „Später“ in der Rückfrage von `window`, oder `window` schließt sich
@@ -203,6 +249,7 @@ impl AppUpdateState {
             self.phase = self.before_confirm;
             self.hidden = false;
             self.asker = None;
+            self.reasons = None;
             self.installer_ready = false;
         }
         cancels
@@ -221,6 +268,7 @@ impl AppUpdateState {
         let starts = self.asks_in(window) && !self.installer_ready;
         if starts {
             self.phase = Phase::Downloading;
+            self.reasons = None;
             self.progress = Some(0);
             self.cause = None;
             self.error = None;
@@ -262,11 +310,6 @@ impl AppUpdateState {
         finishes
     }
 
-    /// Ob der geladene Installer darauf wartet, dass das fragende Fenster installiert.
-    pub fn installer_ready(&self) -> bool {
-        self.installer_ready
-    }
-
     /// `window` hält die Rückfrage nach dem Download und installiert: Der
     /// Installer startet. `window` bleibt das fragende Fenster, damit nur es
     /// einen Fehlschlag dabei meldet. Gibt zurück, ob `window` das darf.
@@ -274,6 +317,7 @@ impl AppUpdateState {
         let starts = self.asks_in(window) && self.installer_ready;
         if starts {
             self.phase = Phase::Installing;
+            self.reasons = None;
             self.progress = None;
             self.installer_ready = false;
         }
@@ -298,6 +342,7 @@ impl AppUpdateState {
     pub fn fail(&mut self, cause: FailureCause, error: String) {
         self.installer_ready = false;
         self.asker = None;
+        self.reasons = None;
         self.phase = Phase::Failed;
         self.progress = None;
         self.hidden = false;
@@ -306,7 +351,7 @@ impl AppUpdateState {
     }
 
     /// Ein Aufruf in `window` ist während der Aktualisierung gescheitert,
-    /// etwa die Rundfrage nach den Anlässen: Der Fehlschlag gilt für alle
+    /// etwa der Dialog der Rückfrage: Der Fehlschlag gilt für alle
     /// Fenster. Das zählt nur, solange `window` die Rückfrage hält oder den
     /// Installer startet. Während des Downloads meldet der Kern einen
     /// Fehlschlag selbst, sonst liefe der Download weiter. Gibt zurück, ob
@@ -354,6 +399,18 @@ pub struct AppUpdates {
     dir: Option<PathBuf>,
     auto: Mutex<AutoCheck>,
     updater: Updater,
+    /// Die Antwort auf die Rückfrage, auf die der Ablauf gerade wartet.
+    /// Gesperrt wird es nur innerhalb von `inner` oder allein.
+    pending: Mutex<Option<PendingAnswer>>,
+    /// So lange wartet die Rundfrage auf ein Fenster.
+    poll_timeout: Duration,
+}
+
+/// Der Ablauf wartet auf die Antwort des Dialogs in `window`. Endet die
+/// Rückfrage ohne Antwort, verfällt `answer`, und der Ablauf endet.
+struct PendingAnswer {
+    window: String,
+    answer: oneshot::Sender<bool>,
 }
 
 /// Merkt sich, ob die Suche von selbst an ist, damit Kredr beim Anschalten
@@ -391,24 +448,85 @@ impl AppUpdates {
             dir,
             auto: Mutex::new(AutoCheck::new(auto_check)),
             updater,
+            pending: Mutex::new(None),
+            poll_timeout: POLL_TIMEOUT,
         }
+    }
+
+    /// Die Rundfrage wartet `timeout` auf ein Fenster statt drei Sekunden.
+    #[cfg(test)]
+    pub(crate) fn poll_timeout(mut self, timeout: Duration) -> Self {
+        self.poll_timeout = timeout;
+        self
     }
 
     /// Beendet die Rückfrage von `window`, wie mit „Später“.
     fn cancel<R: Runtime>(&self, app: &AppHandle<R>, window: &str) {
+        self.drop_answer(window);
         self.change(app, |state| state.cancel_confirm(window));
     }
 
-    /// Ein Aufruf in `window` ist gescheitert; der Fehlschlag gilt für alle
-    /// Fenster, wenn `window` die Aktualisierung führt. Gibt zurück, ob der
-    /// Fehlschlag gilt.
+    /// Der Dialog in `window` wartet auf keine Antwort mehr.
+    fn drop_answer(&self, window: &str) {
+        let mut pending = self.pending.lock().unwrap();
+        if pending.as_ref().is_some_and(|p| p.window == window) {
+            pending.take();
+        }
+    }
+
+    /// Die Antwort der Person auf den Dialog in `window`: `proceed` heißt
+    /// „Trotzdem aktualisieren“. Ein anderes Fenster antwortet nicht.
+    fn answer(&self, window: &str, proceed: bool) {
+        let pending = {
+            let mut pending = self.pending.lock().unwrap();
+            match pending.as_ref() {
+                Some(p) if p.window == window => pending.take(),
+                _ => None,
+            }
+        };
+        if let Some(pending) = pending {
+            // Endete der Ablauf inzwischen, wartet niemand mehr.
+            let _ = pending.answer.send(proceed);
+        }
+    }
+
+    /// Ein Aufruf in `window` ist gescheitert, etwa der Dialog; der
+    /// Fehlschlag gilt für alle Fenster, wenn `window` die Aktualisierung
+    /// führt. Gibt zurück, ob der Fehlschlag gilt.
     fn fail<R: Runtime>(&self, app: &AppHandle<R>, window: &str, error: String) -> bool {
         let mut failed = false;
         self.change(app, |state| {
             failed = state.window_failed(window, error);
             failed
         });
+        if failed {
+            self.drop_answer(window);
+        }
         failed
+    }
+
+    /// „Jetzt aktualisieren“ in `window`: Der Kern führt den ganzen Ablauf
+    /// und kehrt zurück, wenn er endet. Läuft schon eine Aktualisierung oder
+    /// Rückfrage, geschieht nichts.
+    async fn update_now<R: Runtime>(&self, app: &AppHandle<R>, window: &str) {
+        let mut attempt = None;
+        self.change(app, |state| {
+            let asks = state.ask(window);
+            if asks {
+                attempt = Some(state.attempt());
+            }
+            asks
+        });
+        if let Some(attempt) = attempt {
+            Flow {
+                updates: self,
+                app,
+                window,
+                attempt,
+            }
+            .run()
+            .await;
+        }
     }
 
     pub(crate) fn state(&self) -> AppUpdateState {
@@ -443,6 +561,184 @@ impl AppUpdates {
             // Scheitert das Senden, ist kein Fenster mehr offen.
             let _ = app.emit(CHANGED, &*state);
         }
+    }
+}
+
+/// Ein Ablauf von „Jetzt aktualisieren“, solange `window` die Rückfrage
+/// `attempt` hält: Rundfrage nach den Anlässen, bei einem Anlass die
+/// Rückfrage, Download, erneute Rundfrage, bei einem neuen Anlass die
+/// Rückfrage noch einmal, Rundfrage „Aufteilung speichern“, Installer. Endet
+/// die Rückfrage, weil sich das Fenster schließt oder neu lädt, endet er.
+struct Flow<'a, R: Runtime> {
+    updates: &'a AppUpdates,
+    app: &'a AppHandle<R>,
+    window: &'a str,
+    attempt: u64,
+}
+
+impl<R: Runtime> Flow<'_, R> {
+    async fn run(&self) {
+        let Some(before) = self.reasons().await else {
+            return;
+        };
+        if before.any() && !self.confirmed(before).await {
+            return;
+        }
+        if !self.download().await {
+            return;
+        }
+        let Some(after) = self.reasons().await else {
+            return;
+        };
+        if after.has_new_since(&before) && !self.confirmed(after).await {
+            return;
+        }
+        // Die Aufteilung ist Komfort; an ihr scheitert die Aktualisierung nicht.
+        let _ = poll_windows(
+            self.app,
+            PollQuestion::SaveArrangement,
+            self.updates.poll_timeout,
+        )
+        .await;
+        self.install().await;
+    }
+
+    /// Ob `window` die Rückfrage noch hält.
+    fn leads(&self) -> bool {
+        self.updates
+            .inner
+            .lock()
+            .unwrap()
+            .leads(self.window, self.attempt)
+    }
+
+    /// Die Anlässe aller Fenster aus der Rundfrage, zusammengezählt; ein
+    /// stummes Fenster als `SILENT_WINDOW`. Keine, wenn der Ablauf endet.
+    async fn reasons(&self) -> Option<UpdateReasons> {
+        let polled = poll_windows(
+            self.app,
+            PollQuestion::UpdateReasons,
+            self.updates.poll_timeout,
+        )
+        .await;
+        let answers = match polled {
+            Ok(answers) => answers,
+            Err(error) => {
+                self.updates.change(self.app, |state| {
+                    let leads = state.leads(self.window, self.attempt);
+                    if leads {
+                        state.fail(FailureCause::Unknown, error);
+                    }
+                    leads
+                });
+                return None;
+            }
+        };
+        let windows: Vec<UpdateReasons> = answers
+            .into_iter()
+            .map(|answer| {
+                answer
+                    .and_then(|reasons| serde_json::from_value(reasons).ok())
+                    .unwrap_or(UpdateReasons::SILENT_WINDOW)
+            })
+            .collect();
+        self.leads().then(|| UpdateReasons::sum(&windows))
+    }
+
+    /// Fragt die Person mit den Anlässen `reasons`; den Dialog zeigt das
+    /// fragende Fenster. Gibt zurück, ob die Aktualisierung weitergeht.
+    /// „Später“ beendet die Rückfrage.
+    async fn confirmed(&self, reasons: UpdateReasons) -> bool {
+        let (answer, answered) = oneshot::channel();
+        let mut asks = false;
+        self.updates.change(self.app, |state| {
+            asks = state.leads(self.window, self.attempt) && state.question(self.window, reasons);
+            if asks {
+                *self.updates.pending.lock().unwrap() = Some(PendingAnswer {
+                    window: self.window.to_owned(),
+                    answer,
+                });
+            }
+            asks
+        });
+        if !asks {
+            return false;
+        }
+        match answered.await {
+            Ok(true) => {
+                self.updates
+                    .change(self.app, |state| state.answered(self.window));
+                self.leads()
+            }
+            Ok(false) => {
+                self.updates
+                    .change(self.app, |state| state.cancel_confirm(self.window));
+                false
+            }
+            // Die Rückfrage endete ohne Antwort; den Zustand dazu kennt der Kern schon.
+            Err(_) => false,
+        }
+    }
+
+    /// Lädt die angebotene Version und prüft ihre Signatur; den Fortschritt
+    /// meldet der Zustand in ganzen Prozent. Gibt zurück, ob sie bereitliegt
+    /// und `window` danach wieder die Rückfrage hält. Scheitert der Download,
+    /// meldet der Zustand den eingeordneten Grund und den Originaltext.
+    async fn download(&self) -> bool {
+        let mut pending = None;
+        self.updates.change(self.app, |state| {
+            let starts =
+                state.leads(self.window, self.attempt) && state.start_download(self.window);
+            if starts {
+                pending = state.version.clone();
+            }
+            starts
+        });
+        let Some(version) = pending else {
+            return false;
+        };
+        let downloaded = self
+            .updates
+            .updater
+            .download(&version, |done, total| {
+                self.updates
+                    .change(self.app, |state| state.downloaded(done, total));
+            })
+            .await;
+        self.updates.change(self.app, |state| match downloaded {
+            Ok(()) => state.finish_download(),
+            Err(Failure { cause, error }) => {
+                state.fail(cause, error);
+                true
+            }
+        });
+        self.leads()
+    }
+
+    /// Startet den geladenen Installer. Scheitert der Start, meldet der
+    /// Zustand den eingeordneten Grund und den Originaltext. Kehrt der
+    /// Installer ohne Fehlschlag zurück, wie im vorgespielten Ablauf, steht
+    /// wieder das Angebot.
+    async fn install(&self) {
+        let mut pending = None;
+        self.updates.change(self.app, |state| {
+            let starts = state.leads(self.window, self.attempt) && state.start_install(self.window);
+            if starts {
+                pending = state.version.clone();
+            }
+            starts
+        });
+        let Some(version) = pending else {
+            return;
+        };
+        let installed = self.updates.updater.install(self.app, &version).await;
+        self.updates.change(self.app, |state| match installed {
+            Ok(()) => state.installer_returned(),
+            Err(Failure { cause, error }) => {
+                state.fail(cause, error);
+                true
+            }
+        });
     }
 }
 
@@ -553,25 +849,35 @@ pub fn app_update_later<R: Runtime>(app: AppHandle<R>, updates: State<'_, AppUpd
     updates.later(&app);
 }
 
-/// „Jetzt aktualisieren“ in einem Fenster: Es bekommt die Rückfrage, alle
-/// Fenster zeigen sie als laufend. Gibt zurück, ob das Fenster fragen darf;
-/// hält schon ein anderes die Rückfrage oder läuft die Aktualisierung, nicht.
+/// „Jetzt aktualisieren“ in einem Fenster: Der Kern führt den ganzen Ablauf
+/// und kehrt zurück, wenn er endet. Alle Fenster zeigen ihn über den
+/// Zustand; braucht er eine Antwort, zeigt dieses Fenster den Dialog der
+/// Rückfrage. Hält schon ein anderes die Rückfrage oder läuft die
+/// Aktualisierung, geschieht nichts. Ein Fehlschlag steht im Zustand, nie im
+/// Ergebnis; das `Result` verlangt Tauri von asynchronen Befehlen mit `State`.
 #[tauri::command]
-pub fn app_update_ask<R: Runtime>(
+pub async fn app_update_now<R: Runtime>(
     app: AppHandle<R>,
     window: tauri::Window<R>,
     updates: State<'_, AppUpdates>,
-) -> bool {
-    let mut asks = false;
-    updates.change(&app, |state| {
-        asks = state.ask(window.label());
-        asks
-    });
-    asks
+) -> Result<(), String> {
+    updates.update_now(&app, window.label()).await;
+    Ok(())
 }
 
-/// „Später“ in der Rückfrage: Der Zustand kehrt in allen Fenstern zur Phase
-/// davor zurück.
+/// Die Antwort der Person auf den Dialog der Rückfrage im fragenden
+/// Fenster: `proceed` heißt „Trotzdem aktualisieren“, sonst „Später“.
+#[tauri::command]
+pub fn app_update_answer<R: Runtime>(
+    window: tauri::Window<R>,
+    updates: State<'_, AppUpdates>,
+    proceed: bool,
+) {
+    updates.answer(window.label(), proceed);
+}
+
+/// Das Fenster gibt seine Rückfrage auf, etwa nach dem Neuladen: Der Zustand
+/// kehrt in allen Fenstern zur Phase davor zurück, wie mit „Später“.
 #[tauri::command]
 pub fn app_update_cancel<R: Runtime>(
     app: AppHandle<R>,
@@ -581,10 +887,10 @@ pub fn app_update_cancel<R: Runtime>(
     updates.cancel(&app, window.label());
 }
 
-/// Ein Aufruf in einem Fenster ist während der Aktualisierung gescheitert,
-/// etwa die Rundfrage oder der Dialog der Rückfrage: Alle Fenster zeigen den
-/// Fehlschlag mit `error` als Originaltext. Gibt zurück, ob der Fehlschlag
-/// gilt; nicht, wenn das Fenster die Aktualisierung gar nicht führt.
+/// Der Dialog der Rückfrage ist im fragenden Fenster gescheitert: Alle
+/// Fenster zeigen den Fehlschlag mit `error` als Originaltext. Gibt zurück,
+/// ob der Fehlschlag gilt; nicht, wenn das Fenster die Aktualisierung gar
+/// nicht führt.
 #[tauri::command]
 pub fn app_update_fail<R: Runtime>(
     app: AppHandle<R>,
@@ -596,87 +902,10 @@ pub fn app_update_fail<R: Runtime>(
 }
 
 /// Ein Fenster hat sich geschlossen. Hielt es die Rückfrage, endet sie wie
-/// mit „Später“, damit kein Fenster in ihr hängen bleibt.
+/// mit „Später“, damit kein Fenster in ihr hängen bleibt; während des
+/// Downloads spätestens mit dessen Ende.
 pub fn window_closed<R: Runtime>(window: &tauri::Window<R>) {
     if let Some(updates) = window.try_state::<AppUpdates>() {
         updates.cancel(window.app_handle(), window.label());
     }
-}
-
-/// Lädt die angebotene Version und prüft ihre Signatur. Den Fortschritt
-/// meldet der Zustand in ganzen Prozent. Danach hält `window` wieder die
-/// Rückfrage: Es prüft die Anlässe erneut, speichert die Aufteilungen und
-/// installiert mit `app_update_install`, oder es bricht ab. Gibt zurück, ob
-/// die Version bereitliegt. Scheitert der Download, meldet der Zustand den
-/// eingeordneten Grund und den Originaltext. Nur das Fenster, das die
-/// Rückfrage hält, kann laden.
-#[tauri::command]
-pub async fn app_update_download<R: Runtime>(
-    app: AppHandle<R>,
-    window: tauri::Window<R>,
-    updates: State<'_, AppUpdates>,
-) -> Result<bool, String> {
-    let mut pending = None;
-    updates.change(&app, |state| {
-        let starts = state.start_download(window.label());
-        if starts {
-            pending = state.version.clone();
-        }
-        starts
-    });
-    let Some(version) = pending else {
-        return Ok(false);
-    };
-    let downloaded = updates
-        .updater
-        .download(&version, |done, total| {
-            updates.change(&app, |state| state.downloaded(done, total));
-        })
-        .await;
-    let mut ready = false;
-    updates.change(&app, |state| match downloaded {
-        Ok(()) => {
-            let finishes = state.finish_download();
-            ready = state.installer_ready();
-            finishes
-        }
-        Err(Failure { cause, error }) => {
-            state.fail(cause, error);
-            true
-        }
-    });
-    Ok(ready)
-}
-
-/// Startet den geladenen Installer. Nur das Fenster, das nach dem Download
-/// die Rückfrage hält, kann installieren. Scheitert der Start, meldet der
-/// Zustand den eingeordneten Grund und den Originaltext. Kehrt der Installer
-/// ohne Fehlschlag zurück, wie im vorgespielten Ablauf, steht wieder das
-/// Angebot.
-#[tauri::command]
-pub async fn app_update_install<R: Runtime>(
-    app: AppHandle<R>,
-    window: tauri::Window<R>,
-    updates: State<'_, AppUpdates>,
-) -> Result<(), String> {
-    let mut pending = None;
-    updates.change(&app, |state| {
-        let starts = state.start_install(window.label());
-        if starts {
-            pending = state.version.clone();
-        }
-        starts
-    });
-    let Some(version) = pending else {
-        return Ok(());
-    };
-    let installed = updates.updater.install(&app, &version).await;
-    updates.change(&app, |state| match installed {
-        Ok(()) => state.installer_returned(),
-        Err(Failure { cause, error }) => {
-            state.fail(cause, error);
-            true
-        }
-    });
-    Ok(())
 }

@@ -5,7 +5,7 @@ use tauri::async_runtime::block_on;
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
 use tauri::{App, Manager, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent};
 
-use crate::app_update::{app_update_install, AppUpdates, Phase, SimulatedUpdater, Updater};
+use crate::app_update::{app_update_now, AppUpdates, Phase, SimulatedUpdater, Updater};
 use crate::notifications::Notifications;
 
 /// Das Fenster, in dem die Person „Jetzt aktualisieren“ klickt.
@@ -72,18 +72,20 @@ fn schliesst_sich_ein_anderes_fenster_bleibt_die_rueckfrage() {
 }
 
 #[test]
-fn ein_anderes_fenster_installiert_nicht_und_laesst_die_rueckfrage() {
+fn jetzt_aktualisieren_in_einem_anderen_fenster_laesst_die_rueckfrage() {
     let app = kredr();
     let _main = open(&app, MAIN);
     let other = open(&app, OTHER);
     ask_in(&app, MAIN);
 
-    let installed = block_on(app_update_install(
+    let updated = block_on(app_update_now(
         app.handle().clone(),
         other,
         app.state::<AppUpdates>(),
     ));
 
-    assert_eq!(installed, Ok(()));
-    assert_eq!(phase(&app), Phase::Confirm);
+    assert_eq!(updated, Ok(()));
+    let state = app.state::<AppUpdates>().state();
+    assert_eq!(state.phase, Phase::Confirm);
+    assert_eq!(state.asker.as_deref(), Some(MAIN));
 }

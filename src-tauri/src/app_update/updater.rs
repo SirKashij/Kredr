@@ -305,6 +305,9 @@ pub struct SimulatedUpdater {
     failure: Option<FailureCause>,
     /// So lange braucht ein Zehntel des Downloads.
     pace: Duration,
+    /// Läuft, wo der echte Installer starten würde: nach der Notiz für den
+    /// Neustart, bevor der adapter sie verwirft.
+    installer: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 impl SimulatedUpdater {
@@ -315,7 +318,15 @@ impl SimulatedUpdater {
             version,
             failure,
             pace,
+            installer: None,
         }
+    }
+
+    /// Lässt `installer` laufen, wo der echte Installer starten würde; so
+    /// sieht ein Test, was dann bereitliegt.
+    pub fn on_installer(mut self, installer: impl Fn() + Send + Sync + 'static) -> Self {
+        self.installer = Some(Box::new(installer));
+        self
     }
 
     /// Liest Version und Grund aus den Umgebungsvariablen.
@@ -355,6 +366,9 @@ impl SimulatedUpdater {
     async fn install<R: Runtime>(&self, app: &AppHandle<R>, version: &str) -> Result<(), Failure> {
         tokio::time::sleep(self.pace * SIMULATED_INSTALL_STEPS).await;
         crate::projects::remember_windows_for_restart(app, version);
+        if let Some(installer) = &self.installer {
+            installer();
+        }
         crate::projects::forget_windows_for_restart(app);
         match self.failure {
             Some(FailureCause::Installer) => Err(simulated_failure(FailureCause::Installer)),
