@@ -23,13 +23,19 @@ pub struct UpdateReasons {
 }
 
 impl UpdateReasons {
-    /// Ein Fenster, das nicht geantwortet hat.
-    pub const SILENT_WINDOW: Self = Self {
+    /// Kein Anlass.
+    pub const NONE: Self = Self {
         unsaved_files: 0,
         running_processes: 0,
         working_agents: 0,
         background_agents: 0,
+        silent_windows: 0,
+    };
+
+    /// Ein Fenster, das nicht geantwortet hat.
+    pub const SILENT_WINDOW: Self = Self {
         silent_windows: 1,
+        ..Self::NONE
     };
 
     /// Die Anlässe mehrerer Fenster zusammengezählt.

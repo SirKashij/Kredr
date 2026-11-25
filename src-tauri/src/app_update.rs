@@ -341,28 +341,28 @@ impl AppUpdateState {
 
     /// Die Aktualisierung ist gescheitert; der Hinweis nennt den Grund, und
     /// sie lässt sich erneut anstoßen.
-    pub fn fail(&mut self, cause: FailureCause, error: String) {
+    pub fn fail(&mut self, failure: Failure) {
         self.installer_ready = false;
         self.asker = None;
         self.reasons = None;
         self.phase = Phase::Failed;
         self.progress = None;
         self.hidden = false;
-        self.cause = Some(cause);
-        self.error = Some(error);
+        self.cause = Some(failure.cause);
+        self.error = Some(failure.error);
     }
 
-    /// Ein Aufruf in `window` ist während der Aktualisierung gescheitert,
-    /// etwa der Dialog der Rückfrage: Der Fehlschlag gilt für alle
-    /// Fenster. Das zählt nur, solange `window` die Rückfrage hält oder den
-    /// Installer startet. Während des Downloads meldet der Kern einen
-    /// Fehlschlag selbst, sonst liefe der Download weiter. Gibt zurück, ob
-    /// der Fehlschlag gilt.
+    /// Ein Schritt, den `window` führt, ist gescheitert, etwa der Dialog der
+    /// Rückfrage oder die Rundfrage: Der Fehlschlag gilt für alle Fenster.
+    /// Das zählt nur, solange `window` die Rückfrage hält oder den Installer
+    /// startet. Während des Downloads meldet der Kern einen Fehlschlag
+    /// selbst, sonst liefe der Download weiter. Gibt zurück, ob der
+    /// Fehlschlag gilt.
     pub fn window_failed(&mut self, window: &str, error: String) -> bool {
         let leads = matches!(self.phase, Phase::Confirm | Phase::Installing)
             && self.asker.as_deref() == Some(window);
         if leads {
-            self.fail(FailureCause::Unknown, error);
+            self.fail(Failure::new(FailureCause::Unknown, error));
         }
         leads
     }
@@ -633,11 +633,8 @@ impl<R: Runtime> Flow<'_, R> {
             Ok(answers) => answers,
             Err(error) => {
                 self.updates.change(self.app, |state| {
-                    let leads = state.leads(self.window, self.attempt);
-                    if leads {
-                        state.fail(FailureCause::Unknown, error);
-                    }
-                    leads
+                    state.leads(self.window, self.attempt)
+                        && state.window_failed(self.window, error)
                 });
                 return None;
             }
@@ -693,16 +690,7 @@ impl<R: Runtime> Flow<'_, R> {
     /// und `window` danach wieder die Rückfrage hält. Scheitert der Download,
     /// meldet der Zustand den eingeordneten Grund und den Originaltext.
     async fn download(&self) -> bool {
-        let mut pending = None;
-        self.updates.change(self.app, |state| {
-            let starts =
-                state.leads(self.window, self.attempt) && state.start_download(self.window);
-            if starts {
-                pending = state.version.clone();
-            }
-            starts
-        });
-        let Some(version) = pending else {
+        let Some(version) = self.begin(AppUpdateState::start_download) else {
             return false;
         };
         let downloaded = self
@@ -713,13 +701,7 @@ impl<R: Runtime> Flow<'_, R> {
                     .change(self.app, |state| state.downloaded(done, total));
             })
             .await;
-        self.updates.change(self.app, |state| match downloaded {
-            Ok(()) => state.finish_download(),
-            Err(Failure { cause, error }) => {
-                state.fail(cause, error);
-                true
-            }
-        });
+        self.end(downloaded, AppUpdateState::finish_download);
         self.leads()
     }
 
@@ -728,22 +710,34 @@ impl<R: Runtime> Flow<'_, R> {
     /// Installer ohne Fehlschlag zurück, wie im vorgespielten Ablauf, steht
     /// wieder das Angebot.
     async fn install(&self) {
-        let mut pending = None;
-        self.updates.change(self.app, |state| {
-            let starts = state.leads(self.window, self.attempt) && state.start_install(self.window);
-            if starts {
-                pending = state.version.clone();
-            }
-            starts
-        });
-        let Some(version) = pending else {
+        let Some(version) = self.begin(AppUpdateState::start_install) else {
             return;
         };
         let installed = self.updates.updater.install(self.app, &version).await;
-        self.updates.change(self.app, |state| match installed {
-            Ok(()) => state.installer_returned(),
-            Err(Failure { cause, error }) => {
-                state.fail(cause, error);
+        self.end(installed, AppUpdateState::installer_returned);
+    }
+
+    /// Beginnt einen Schritt mit `start`, solange `window` die Rückfrage
+    /// hält. Gibt die Version zurück, für die er beginnt; keine, wenn nicht.
+    fn begin(&self, start: impl FnOnce(&mut AppUpdateState, &str) -> bool) -> Option<String> {
+        let mut version = None;
+        self.updates.change(self.app, |state| {
+            let starts = state.leads(self.window, self.attempt) && start(state, self.window);
+            if starts {
+                version = state.version.clone();
+            }
+            starts
+        });
+        version
+    }
+
+    /// Hält das Ergebnis eines Schritts im Zustand fest: geglückt mit `done`,
+    /// sonst den Fehlschlag mit eingeordnetem Grund und Originaltext.
+    fn end(&self, result: Result<(), Failure>, done: impl FnOnce(&mut AppUpdateState) -> bool) {
+        self.updates.change(self.app, |state| match result {
+            Ok(()) => done(state),
+            Err(failure) => {
+                state.fail(failure);
                 true
             }
         });
@@ -761,7 +755,7 @@ pub enum CheckResult {
     /// Die Entwicklungsfassung sucht nicht.
     Development,
     /// Die Suche scheiterte, mit eingeordnetem Grund und Originaltext.
-    Failed { cause: FailureCause, error: String },
+    Failed(Failure),
 }
 
 /// Richtet die Aktualisierung ein; die Fassung wählt dafür den Updater. Die
@@ -844,8 +838,8 @@ pub async fn app_update_check<R: Runtime>(
             CheckResult::Found { version }
         }
         SearchOutcome::Current => CheckResult::Current,
-        SearchOutcome::Failed { cause, error } => CheckResult::Failed { cause, error },
-        SearchOutcome::Locked => CheckResult::Development,
+        SearchOutcome::Failed(failure) => CheckResult::Failed(failure),
+        SearchOutcome::Development => CheckResult::Development,
     })
 }
 

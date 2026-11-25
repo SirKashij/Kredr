@@ -188,14 +188,6 @@ fn describe(reasons: &UpdateReasons) -> String {
         .join(" ")
 }
 
-const QUIET: UpdateReasons = UpdateReasons {
-    unsaved_files: 0,
-    running_processes: 0,
-    working_agents: 0,
-    background_agents: 0,
-    silent_windows: 0,
-};
-
 fn state(app: &App<MockRuntime>) -> AppUpdateState {
     app.state::<AppUpdates>().state()
 }
@@ -219,7 +211,13 @@ fn ohne_anlass_laeuft_jetzt_aktualisieren_ohne_rueckfrage_bis_zum_installer() {
     let data = tempfile::tempdir().unwrap();
     let journal = Journal::default();
     let app = kredr(None, Duration::ZERO, data.path(), &journal);
-    let main = open(&app, MAIN, vec![QUIET], Person::Proceeds, &journal);
+    let main = open(
+        &app,
+        MAIN,
+        vec![UpdateReasons::NONE],
+        Person::Proceeds,
+        &journal,
+    );
 
     update_now(&app, &main);
 
@@ -241,11 +239,17 @@ fn die_anlaesse_mehrerer_fenster_kommen_zusammen_in_die_rueckfrage_des_fragenden
     let data = tempfile::tempdir().unwrap();
     let journal = Journal::default();
     let app = kredr(None, Duration::ZERO, data.path(), &journal);
-    let main = open(&app, MAIN, vec![QUIET], Person::Proceeds, &journal);
+    let main = open(
+        &app,
+        MAIN,
+        vec![UpdateReasons::NONE],
+        Person::Proceeds,
+        &journal,
+    );
     let busy = UpdateReasons {
         working_agents: 2,
         unsaved_files: 1,
-        ..QUIET
+        ..UpdateReasons::NONE
     };
     let _other = open(&app, OTHER, vec![busy], Person::Proceeds, &journal);
 
@@ -272,7 +276,7 @@ fn spaeter_in_der_rueckfrage_bricht_ab_und_fuehrt_zum_angebot_zurueck() {
     let app = kredr(None, Duration::ZERO, data.path(), &journal);
     let busy = UpdateReasons {
         running_processes: 1,
-        ..QUIET
+        ..UpdateReasons::NONE
     };
     let main = open(&app, MAIN, vec![busy], Person::Later, &journal);
 
@@ -290,7 +294,13 @@ fn ein_stummes_fenster_verlangt_die_rueckfrage() {
     let data = tempfile::tempdir().unwrap();
     let journal = Journal::default();
     let app = kredr(None, Duration::ZERO, data.path(), &journal);
-    let main = open(&app, MAIN, vec![QUIET], Person::Later, &journal);
+    let main = open(
+        &app,
+        MAIN,
+        vec![UpdateReasons::NONE],
+        Person::Later,
+        &journal,
+    );
     let _silent = open(&app, OTHER, vec![], Person::Proceeds, &journal);
 
     update_now(&app, &main);
@@ -302,15 +312,21 @@ fn ein_neuer_anlass_waehrend_des_downloads_fragt_vor_der_installation_erneut() {
     let data = tempfile::tempdir().unwrap();
     let journal = Journal::default();
     let app = kredr(None, Duration::ZERO, data.path(), &journal);
-    let main = open(&app, MAIN, vec![QUIET], Person::Proceeds, &journal);
+    let main = open(
+        &app,
+        MAIN,
+        vec![UpdateReasons::NONE],
+        Person::Proceeds,
+        &journal,
+    );
     let working = UpdateReasons {
         working_agents: 1,
-        ..QUIET
+        ..UpdateReasons::NONE
     };
     let _other = open(
         &app,
         OTHER,
-        vec![QUIET, working],
+        vec![UpdateReasons::NONE, working],
         Person::Proceeds,
         &journal,
     );
@@ -332,7 +348,7 @@ fn weniger_anlaesse_nach_dem_download_fragen_nicht_erneut() {
     let busy = UpdateReasons {
         working_agents: 2,
         unsaved_files: 1,
-        ..QUIET
+        ..UpdateReasons::NONE
     };
     // Ein Agent ist während des Downloads fertig geworden; das ist weniger, nicht neu.
     let calmer = UpdateReasons {
@@ -358,10 +374,16 @@ fn schliesst_sich_das_fragende_fenster_vor_dem_download_endet_der_ablauf_wie_mit
     let data = tempfile::tempdir().unwrap();
     let journal = Journal::default();
     let app = kredr(None, Duration::ZERO, data.path(), &journal);
-    let main = open(&app, MAIN, vec![QUIET], Person::ClosesWindow, &journal);
+    let main = open(
+        &app,
+        MAIN,
+        vec![UpdateReasons::NONE],
+        Person::ClosesWindow,
+        &journal,
+    );
     let busy = UpdateReasons {
         unsaved_files: 1,
-        ..QUIET
+        ..UpdateReasons::NONE
     };
     let _other = open(&app, OTHER, vec![busy], Person::Proceeds, &journal);
 
@@ -408,7 +430,7 @@ fn laedt_das_fragende_fenster_neu_waehrend_der_kern_die_rueckfrage_stellt_endet_
     let app = kredr(None, Duration::ZERO, data.path(), &journal);
     let busy = UpdateReasons {
         unsaved_files: 1,
-        ..QUIET
+        ..UpdateReasons::NONE
     };
     let main = open(&app, MAIN, vec![busy], Person::Waits, &journal);
     reload_while_asking(&app, &main);
@@ -450,8 +472,20 @@ fn schliesst_sich_das_fragende_fenster_waehrend_des_downloads_endet_der_ablauf_m
     let data = tempfile::tempdir().unwrap();
     let journal = Journal::default();
     let app = kredr(None, Duration::from_millis(30), data.path(), &journal);
-    let main = open(&app, MAIN, vec![QUIET], Person::Proceeds, &journal);
-    let _other = open(&app, OTHER, vec![QUIET], Person::Proceeds, &journal);
+    let main = open(
+        &app,
+        MAIN,
+        vec![UpdateReasons::NONE],
+        Person::Proceeds,
+        &journal,
+    );
+    let _other = open(
+        &app,
+        OTHER,
+        vec![UpdateReasons::NONE],
+        Person::Proceeds,
+        &journal,
+    );
     let progress = record_progress(&app);
     close_while_downloading(&app, &main);
 
@@ -476,8 +510,20 @@ fn erst_speichern_alle_fenster_ihre_aufteilung_dann_folgen_notiz_und_installer()
     let data = tempfile::tempdir().unwrap();
     let journal = Journal::default();
     let app = kredr(None, Duration::ZERO, data.path(), &journal);
-    let main = open(&app, MAIN, vec![QUIET], Person::Proceeds, &journal);
-    let _other = open(&app, OTHER, vec![QUIET], Person::Proceeds, &journal);
+    let main = open(
+        &app,
+        MAIN,
+        vec![UpdateReasons::NONE],
+        Person::Proceeds,
+        &journal,
+    );
+    let _other = open(
+        &app,
+        OTHER,
+        vec![UpdateReasons::NONE],
+        Person::Proceeds,
+        &journal,
+    );
 
     update_now(&app, &main);
 
@@ -504,7 +550,13 @@ fn scheitert_der_installer_zeigen_alle_fenster_den_fehlschlag_und_die_notiz_ist_
         data.path(),
         &journal,
     );
-    let main = open(&app, MAIN, vec![QUIET], Person::Proceeds, &journal);
+    let main = open(
+        &app,
+        MAIN,
+        vec![UpdateReasons::NONE],
+        Person::Proceeds,
+        &journal,
+    );
 
     update_now(&app, &main);
 
@@ -537,7 +589,13 @@ fn der_vorgespielte_download_meldet_fortschritt_in_zehn_schritten() {
     let data = tempfile::tempdir().unwrap();
     let journal = Journal::default();
     let app = kredr(None, Duration::ZERO, data.path(), &journal);
-    let main = open(&app, MAIN, vec![QUIET], Person::Proceeds, &journal);
+    let main = open(
+        &app,
+        MAIN,
+        vec![UpdateReasons::NONE],
+        Person::Proceeds,
+        &journal,
+    );
     let progress = record_progress(&app);
 
     update_now(&app, &main);
@@ -558,7 +616,13 @@ fn der_vorgespielte_download_scheitert_im_netz_und_an_der_signatur() {
         let data = tempfile::tempdir().unwrap();
         let journal = Journal::default();
         let app = kredr(Some(cause), Duration::ZERO, data.path(), &journal);
-        let main = open(&app, MAIN, vec![QUIET], Person::Proceeds, &journal);
+        let main = open(
+            &app,
+            MAIN,
+            vec![UpdateReasons::NONE],
+            Person::Proceeds,
+            &journal,
+        );
         let progress = record_progress(&app);
 
         update_now(&app, &main);

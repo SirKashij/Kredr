@@ -30,11 +30,21 @@ pub enum FailureCause {
     Unknown,
 }
 
-/// Ein Fehlschlag des Updaters: eingeordnet und mit dem Originaltext.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Ein Fehlschlag oder eine gescheiterte Suche: eingeordnet und mit dem
+/// Originaltext.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Failure {
     pub cause: FailureCause,
     pub error: String,
+}
+
+impl Failure {
+    pub fn new(cause: FailureCause, error: impl Into<String>) -> Self {
+        Self {
+            cause,
+            error: error.into(),
+        }
+    }
 }
 
 /// Was eine Suche nach einer neuen Version ergab.
@@ -45,9 +55,9 @@ pub enum SearchOutcome {
     /// Kredr ist aktuell.
     Current,
     /// Die Suche scheiterte, mit eingeordnetem Grund und Originaltext.
-    Failed { cause: FailureCause, error: String },
+    Failed(Failure),
     /// Die Entwicklungsfassung sucht nie; GitHub wurde nicht gefragt.
-    Locked,
+    Development,
 }
 
 /// Sucht von selbst mit `search` nach einer neuen Version, aber nur, solange
@@ -169,10 +179,7 @@ pub fn failure_cause(error: &tauri_plugin_updater::Error, step: Step) -> Failure
 impl Failure {
     /// Ein Fehler des Updaters aus `step`, eingeordnet.
     fn of_plugin(error: tauri_plugin_updater::Error, step: Step) -> Self {
-        Self {
-            cause: failure_cause(&error, step),
-            error: error.to_string(),
-        }
+        Self::new(failure_cause(&error, step), error.to_string())
     }
 }
 
@@ -208,10 +215,7 @@ impl PluginUpdater {
                 SearchOutcome::Found(version)
             }
             Ok(None) => SearchOutcome::Current,
-            Err(error) => {
-                let Failure { cause, error } = Failure::of_plugin(error, Step::Check);
-                SearchOutcome::Failed { cause, error }
-            }
+            Err(error) => SearchOutcome::Failed(Failure::of_plugin(error, Step::Check)),
         }
     }
 
@@ -222,10 +226,10 @@ impl PluginUpdater {
     ) -> Result<(), Failure> {
         let update = self.held.lock().unwrap().found.get(version).cloned();
         let Some(update) = update else {
-            return Err(Failure {
-                cause: FailureCause::Unknown,
-                error: format!("Version {version} wurde nicht gefunden"),
-            });
+            return Err(Failure::new(
+                FailureCause::Unknown,
+                format!("Version {version} wurde nicht gefunden"),
+            ));
         };
         let mut done = 0u64;
         let bytes = update
@@ -249,10 +253,10 @@ impl PluginUpdater {
     fn install<R: Runtime>(&self, app: &AppHandle<R>) -> Result<(), Failure> {
         let installer = self.held.lock().unwrap().installer.take();
         let Some((update, bytes)) = installer.map(|installer| *installer) else {
-            return Err(Failure {
-                cause: FailureCause::Installer,
-                error: "Kein Installer geladen".into(),
-            });
+            return Err(Failure::new(
+                FailureCause::Installer,
+                "Kein Installer geladen",
+            ));
         };
         update.install(bytes).map_err(|error| {
             crate::projects::forget_windows_for_restart(app);
@@ -339,7 +343,7 @@ impl SimulatedUpdater {
     fn check(&self) -> SearchOutcome {
         match &self.version {
             Some(version) => SearchOutcome::Found(version.clone()),
-            None => SearchOutcome::Locked,
+            None => SearchOutcome::Development,
         }
     }
 
@@ -395,8 +399,5 @@ fn simulated_failure(cause: FailureCause) -> Failure {
         FailureCause::Installer => "Das System kann die angegebene Datei nicht finden. (os error 2)",
         FailureCause::Unknown => "Failed to format date",
     };
-    Failure {
-        cause,
-        error: error.into(),
-    }
+    Failure::new(cause, error)
 }
