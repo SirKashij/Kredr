@@ -36,11 +36,16 @@ const quiet: UpdateReasons = {
 
 /**
  * Die Ports der Fenster zu einem Kern ohne eigenen Ablauf: `announce` meldet
- * allen Fenstern einen neuen Zustand, wie es der Kern tut. `portFor` ist der Port des Fensters `window`; was die
- * Fenster aufrufen, steht in `calls`, und `answer` ist die Antwort der
- * Person im Dialog der Rückfrage.
+ * allen Fenstern einen neuen Zustand, wie es der Kern tut. `portFor` ist der
+ * Port des Fensters `window`; was die Fenster aufrufen, steht in `calls`.
+ * `answer` ist die Antwort der Person im Dialog der Rückfrage, `failed` die
+ * Antwort des Kerns auf einen gemeldeten Fehlschlag.
  */
-function fakePorts(initial: AppUpdateState, answer: () => Promise<boolean> = async () => true) {
+function fakePorts(
+  initial: AppUpdateState,
+  answer: () => Promise<boolean> = async () => true,
+  failed: () => Promise<boolean> = async () => true,
+) {
   const listeners = new Set<(state: AppUpdateState) => void>();
   const calls: string[] = [];
   let state = initial;
@@ -75,7 +80,7 @@ function fakePorts(initial: AppUpdateState, answer: () => Promise<boolean> = asy
       },
       fail: async (error) => {
         calls.push(named(`fail ${error}`));
-        return true;
+        return failed();
       },
       later: async () => {
         calls.push(named("later"));
@@ -332,6 +337,33 @@ test("scheitert der Dialog, meldet das fragende Fenster den Fehlschlag", async (
 
   expect(core.calls.at(-1)).toBe("fail Error: Dialog kaputt");
 });
+
+test.each([
+  ["nicht erreicht", () => Promise.reject(new Error("Kern nicht erreichbar"))],
+  ["nicht annimmt", async () => false],
+])(
+  "scheitert der Dialog und der Kern %s, gibt das Fenster die Rückfrage auf und zeigt den Fehlschlag selbst",
+  async (_, failed) => {
+    const core = fakePorts(offered, () => Promise.reject(new Error("Dialog kaputt")), failed);
+    const update = await windowOf(core, "main");
+
+    core.announce({
+      ...offered,
+      phase: "confirm",
+      asker: "main",
+      reasons: { ...quiet, unsavedFiles: 1 },
+    });
+    await settled();
+
+    expect(core.calls.slice(-2)).toEqual(["fail Error: Dialog kaputt", "cancel"]);
+    expect(update.snapshot()).toMatchObject({
+      phase: "failed",
+      cause: "unknown",
+      error: "Error: Dialog kaputt",
+    });
+    expect(showsNotice(update.snapshot())).toBe(true);
+  },
+);
 
 test("lädt ein Fenster neu, gibt es seine Rückfrage im Kern auf", async () => {
   const core = fakePorts({ ...offered, phase: "confirm", asker: "main" });

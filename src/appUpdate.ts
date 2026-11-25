@@ -15,7 +15,7 @@ export type Phase =
   | "none"
   | "offered"
   | "later"
-  /** Ein Fenster fragt nach den Anlässen; alle anderen zeigen das nur. */
+  /** Der Kern führt die Rückfrage; den Dialog zeigt nur das fragende Fenster. */
   | "confirm"
   | "downloading"
   | "installing"
@@ -80,6 +80,7 @@ export interface AppUpdatePort {
   /**
    * Der Dialog ist gescheitert; der Kern meldet allen Fenstern den
    * Fehlschlag mit `error` als Originaltext und beendet die Rückfrage.
+   * `false` heißt: Dieses Fenster führt die Aktualisierung nicht.
    */
   fail(error: string): Promise<boolean>;
   /** Schließt das Angebot in allen Fenstern. */
@@ -228,16 +229,7 @@ export class AppUpdate {
    */
   async updateNow(): Promise<void> {
     if (!offersActions(this.state)) return;
-    await this.port.updateNow().catch((reason) => {
-      this.set({
-        ...this.state,
-        phase: "failed",
-        progress: null,
-        hidden: false,
-        cause: "unknown",
-        error: String(reason),
-      });
-    });
+    await this.port.updateNow().catch((reason) => this.showFailure(String(reason)));
   }
 
   /**
@@ -253,11 +245,38 @@ export class AppUpdate {
     this.port
       .confirm(reasons)
       .then((proceed) => this.port.answer(proceed))
-      .catch((reason) => this.port.fail(String(reason)))
-      .catch(() => {})
+      .catch((reason) => this.dialogFailed(String(reason)))
       .finally(() => {
         this.asking = false;
       });
+  }
+
+  /**
+   * Der Dialog der Rückfrage ist gescheitert: Der Kern zeigt den Fehlschlag
+   * in allen Fenstern. Erreicht ihn die Meldung nicht oder nimmt er sie nicht
+   * an, darf die Rückfrage im Kern trotzdem nicht hängen bleiben; dann gibt
+   * das Fenster sie auf und zeigt den Fehlschlag wenigstens selbst.
+   */
+  private async dialogFailed(error: string): Promise<void> {
+    if (await this.port.fail(error).catch(() => false)) return;
+    await this.port.cancel().catch(() => {});
+    this.showFailure(error);
+  }
+
+  /**
+   * Zeigt einen Fehlschlag mit `error` als Originaltext nur in diesem
+   * Fenster, wenn der Kern ihn nicht melden kann, weil ihn ein Aufruf nicht
+   * erreicht. Den Zustand dazu hält sonst der Kern.
+   */
+  private showFailure(error: string) {
+    this.set({
+      ...this.state,
+      phase: "failed",
+      progress: null,
+      hidden: false,
+      cause: "unknown",
+      error,
+    });
   }
 
   /**
