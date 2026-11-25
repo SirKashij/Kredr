@@ -33,3 +33,9 @@ Was mit einem Begriff gespeichert wird, passt zu dessen Definition im Glossar. Z
 Ein Test ruft die exportierte Funktion auf, die auch die Oberfläche benutzt. Eine Kopie der Logik im Test, etwa eine eigene Beschriftungsfunktion, lässt die Verdrahtung ungeprüft.
 
 _Warum:_ In #60 prüften die Tests ein testeigenes `labelOfTab` statt `contentTabLabel` und `terminalTabLabel`.
+
+## Ein Test wartet mit Grenze
+
+Wartet ein Test auf ein Ereignis, eine Antwort oder einen Zustand, dann mit Zeitgrenze (etwa `recv_timeout` statt `recv`), und bei Ablauf scheitert er mit dem, worauf er wartete. Ein `.await` oder `recv()` ohne Grenze ist ein Befund.
+
+_Warum:_ In #110 hingen Tests der Aktualisierung, weil Tauri Ereignisse an Rust-Listener verlor (ADR 0008). Der Check stand ohne Meldung still, statt zu sagen, welcher Test auf was wartete.

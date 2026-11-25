@@ -1,0 +1,10 @@
+# Tauri stellt Ereignisse an Rust-Listener nicht sicher zu: Sendet ein anderer Thread gerade,
+# landet das Ereignis per `try_lock` in einer Warteschlange, die erst das nächste Ereignis an
+# einen Rust-Listener leert. Antworten der Fenster an den Kern gehen deshalb per Befehl.
+# Siehe docs/adr/0008-kern-fuehrt-die-aktualisierung.md.
+disallowed-methods = [
+  { path = "tauri::Listener::listen", reason = "Rust-Listener verlieren Ereignisse; Fenster antworten per Befehl (ADR 0008)" },
+  { path = "tauri::Listener::listen_any", reason = "Rust-Listener verlieren Ereignisse; Fenster antworten per Befehl (ADR 0008)" },
+  { path = "tauri::Listener::once", reason = "Rust-Listener verlieren Ereignisse; Fenster antworten per Befehl (ADR 0008)" },
+  { path = "tauri::Listener::once_any", reason = "Rust-Listener verlieren Ereignisse; Fenster antworten per Befehl (ADR 0008)" },
+]

@@ -160,6 +160,8 @@ mod tests {
         // Das Fenster antwortet wie eine Webview aus einem eigenen Thread,
         // während der Kern andere Ereignisse sendet. Als Ereignis ginge die
         // Antwort dabei manchmal verloren (siehe Modulkopf).
+        // Fake-Fenster: Ein Test hört wie eine Webview mit; nur der Ablauf sendet (Modulkopf).
+        #[allow(clippy::disallowed_methods)]
         app.listen_any(QUESTION, move |event| {
             let poll: Value = serde_json::from_str(event.payload()).unwrap();
             let (handle, quiet) = (handle.clone(), quiet.clone());
