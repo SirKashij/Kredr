@@ -1,19 +1,21 @@
 /**
- * Der Ablauf der Aktualisierung in einem Fenster. Den Zustand hält der Kern,
- * weil alle Fenster in einem Prozess laufen: Er sucht nach einer neuen Version
- * und meldet jede Änderung an alle Fenster. Eine Aktion in einem Fenster gilt
- * daher für alle.
+ * Die Aktualisierung in einem Fenster. Zustand und Ablauf hält der Kern, weil
+ * alle Fenster in einem Prozess laufen: Er sucht nach einer neuen Version,
+ * führt „Jetzt aktualisieren“ mit Rundfrage und Rückfrage und meldet jede
+ * Änderung an alle Fenster. Eine Aktion in einem Fenster gilt daher für alle.
+ * Das Fenster zeigt nur den Zustand und, wenn es fragt, den Dialog der
+ * Rückfrage in seiner Sprache.
  */
 
 import type { MessageKey, Translate } from "./i18n/translate";
-import { hasNewReasons, hasReasons, sumReasons, type UpdateReasons } from "./updateReasons";
+import type { UpdateReasons } from "./updateReasons";
 
 /** Wie weit die Aktualisierung ist. */
 export type Phase =
   | "none"
   | "offered"
   | "later"
-  /** Ein Fenster fragt nach den Anlässen; alle anderen zeigen das nur. */
+  /** Der Kern führt die Rückfrage; den Dialog zeigt nur das fragende Fenster. */
   | "confirm"
   | "downloading"
   | "installing"
@@ -37,6 +39,13 @@ export interface AppUpdateState {
   cause: FailureCause | null;
   /** Der Originaltext des letzten Fehlschlags. */
   error: string | null;
+  /** Das Fenster, das „Jetzt aktualisieren“ ausgelöst hat und die Rückfrage zeigt. */
+  asker: string | null;
+  /**
+   * Die Anlässe aller Fenster, solange der Kern auf die Antwort der Person
+   * wartet; dann zeigt das fragende Fenster den Dialog.
+   */
+  reasons: UpdateReasons | null;
 }
 
 /** Was „Jetzt suchen“ ergab. */
@@ -47,8 +56,10 @@ export type CheckResult =
   | { outcome: "development" }
   | { outcome: "failed"; cause: FailureCause; error: string };
 
-/** Was der Ablauf vom Kern und vom Rechner braucht. */
+/** Was ein Fenster vom Kern und vom Rechner braucht. */
 export interface AppUpdatePort {
+  /** Das Label dieses Fensters. */
+  window(): string;
   /** Der Zustand, den der Kern gerade hält. */
   current(): Promise<AppUpdateState>;
   /**
@@ -58,38 +69,20 @@ export interface AppUpdatePort {
   check(): Promise<CheckResult>;
   /** Meldet jeden neuen Zustand des Kerns, solange das Fenster lebt. */
   onChange(listener: (state: AppUpdateState) => void): void;
-  /**
-   * Beginnt die Rückfrage in diesem Fenster; der Kern meldet sie allen
-   * Fenstern. `false` heißt: Ein anderes Fenster fragt schon, oder die
-   * Aktualisierung läuft.
-   */
-  ask(): Promise<boolean>;
+  /** „Jetzt aktualisieren“ aus diesem Fenster; der Kern führt den Ablauf. */
+  updateNow(): Promise<void>;
+  /** Der Dialog der Rückfrage mit den Anlässen aller Fenster; `true` heißt: trotzdem aktualisieren. */
+  confirm(reasons: UpdateReasons): Promise<boolean>;
+  /** Schickt die Antwort auf den Dialog an den Kern. */
+  answer(proceed: boolean): Promise<void>;
   /** Beendet die Rückfrage dieses Fensters; der Kern kehrt zur Phase davor zurück. */
   cancel(): Promise<void>;
   /**
-   * Ein Aufruf in diesem Fenster ist gescheitert; der Kern meldet allen
-   * Fenstern den Fehlschlag mit `error` als Originaltext und beendet die
-   * Rückfrage. `false` heißt: Dieses Fenster führt die Aktualisierung nicht.
+   * Der Dialog ist gescheitert; der Kern meldet allen Fenstern den
+   * Fehlschlag mit `error` als Originaltext und beendet die Rückfrage.
+   * `false` heißt: Dieses Fenster führt die Aktualisierung nicht.
    */
   fail(error: string): Promise<boolean>;
-  /**
-   * Lädt die neue Version und prüft ihre Signatur. Nur aus der Rückfrage
-   * dieses Fensters heraus. `true` heißt: Sie liegt bereit, und das Fenster
-   * hält wieder die Rückfrage, bis es installiert oder abbricht. Bei `false`
-   * meldet der Kern den Fehlschlag, oder es gab nichts zu laden.
-   */
-  download(): Promise<boolean>;
-  /**
-   * Installiert die geladene Version und startet Kredr neu; der Kern merkt
-   * sich dabei die offenen Fenster. Nur nach `download` in diesem Fenster.
-   */
-  install(): Promise<void>;
-  /** Die Anlässe jedes offenen Fensters; ein Fenster ohne Antwort als `SILENT_WINDOW`. */
-  reasons(): Promise<UpdateReasons[]>;
-  /** Die Rückfrage mit den Anlässen aller Fenster; `true` heißt: trotzdem aktualisieren. */
-  confirm(reasons: UpdateReasons): Promise<boolean>;
-  /** Jedes offene Fenster speichert seine Aufteilung. */
-  saveArrangements(): Promise<void>;
   /** Schließt das Angebot in allen Fenstern. */
   later(): Promise<void>;
   /** Öffnet eine Web-Adresse im Standardbrowser. */
@@ -185,19 +178,28 @@ const UNKNOWN: AppUpdateState = {
   hidden: false,
   cause: null,
   error: null,
+  asker: null,
+  reasons: null,
 };
 
-/** Der Ablauf der Aktualisierung für ein Fenster, als Store für `useSyncExternalStore`. */
+/**
+ * Die Aktualisierung in einem Fenster, als Store für `useSyncExternalStore`.
+ * Den Ablauf führt der Kern; das Fenster zeigt seinen Zustand und, wenn es
+ * fragt, den Dialog der Rückfrage.
+ */
 export class AppUpdate {
   private state = UNKNOWN;
   private readonly listeners = new Set<() => void>();
   /** Ob schon eine Meldung des Kerns kam; die erste Antwort ist dann veraltet. */
   private heard = false;
+  /** Ob dieses Fenster gerade den Dialog der Rückfrage zeigt. */
+  private asking = false;
 
   constructor(private readonly port: AppUpdatePort) {
     port.onChange((state) => {
       this.heard = true;
       this.set(state);
+      this.askIfAsker(state);
     });
     // Nach dem Neuladen ist die Rückfrage dieses Fensters verloren; im Kern
     // darf sie nicht hängen bleiben. Hält das Fenster keine, ändert das nichts.
@@ -220,49 +222,53 @@ export class AppUpdate {
   snapshot = () => this.state;
 
   /**
-   * „Jetzt aktualisieren“: lädt die neue Version und installiert sie; Kredr
-   * beendet dabei alle Fenster und startet neu. Gibt es in einem Fenster etwas,
-   * das verloren ginge oder abbräche, fasst eine Rückfrage die Anlässe aller
-   * Fenster zusammen; „Später“ bricht ab. Nach dem Download prüft Kredr die
-   * Anlässe erneut, denn er kann dauern: Ist ein neuer dazugekommen, kommt die
-   * Rückfrage noch einmal. Erst unmittelbar vor der Installation speichert
-   * jedes Fenster seine Aufteilung; gleich danach merkt sich der Kern beim
-   * Start des Installers die offenen Fenster. Den Fortschritt melden die Phasen des Kerns.
-   * Solange die Rückfrage offen ist, meldet der Kern sie allen Fenstern als
-   * `confirm` und lässt kein zweites Fenster fragen. Läuft schon eine
-   * Aktualisierung oder Rückfrage, geschieht nichts.
+   * „Jetzt aktualisieren“: Der Kern lädt die neue Version und installiert
+   * sie; Kredr beendet dabei alle Fenster und startet neu. Läuft schon eine
+   * Aktualisierung oder Rückfrage, geschieht nichts. Erreicht der Auftrag den
+   * Kern nicht, zeigt wenigstens dieses Fenster den Fehlschlag.
    */
   async updateNow(): Promise<void> {
     if (!offersActions(this.state)) return;
-    let asking = false;
-    try {
-      if (!(await this.port.ask())) return;
-      asking = true;
-      const before = sumReasons(await this.port.reasons());
-      if (!(await this.confirmed(before, hasReasons(before)))) return;
-      asking = false;
-      if (!(await this.port.download())) return;
-      asking = true;
-      const after = sumReasons(await this.port.reasons());
-      if (!(await this.confirmed(after, hasNewReasons(after, before)))) return;
-      // Die Aufteilung ist Komfort; an ihr scheitert die Aktualisierung nicht.
-      await this.port.saveArrangements().catch(() => {});
-      asking = false;
-      await this.port.install();
-    } catch (reason) {
-      await this.failed(String(reason), asking);
-    }
+    await this.port.updateNow().catch((reason) => this.showFailure(String(reason)));
   }
 
   /**
-   * Ein Aufruf ist mit `error` gescheitert. Der Kern meldet den Fehlschlag
-   * allen Fenstern und beendet dabei die Rückfrage. Erreicht ihn die Meldung
-   * nicht, zeigt nur dieses Fenster den Fehlschlag; eine Rückfrage, die es
-   * hält (`asking`), darf im Kern trotzdem nicht hängen bleiben.
+   * Verlangt der Kern die Rückfrage von diesem Fenster, zeigt es den Dialog
+   * mit den Anlässen aller Fenster und schickt die Antwort zurück. Scheitert
+   * der Dialog, zeigen alle Fenster den Fehlschlag.
    */
-  private async failed(error: string, asking: boolean): Promise<void> {
+  private askIfAsker(state: AppUpdateState) {
+    const reasons = state.reasons;
+    if (state.phase !== "confirm" || !reasons || this.asking) return;
+    if (state.asker !== this.port.window()) return;
+    this.asking = true;
+    this.port
+      .confirm(reasons)
+      .then((proceed) => this.port.answer(proceed))
+      .catch((reason) => this.dialogFailed(String(reason)))
+      .finally(() => {
+        this.asking = false;
+      });
+  }
+
+  /**
+   * Der Dialog der Rückfrage ist gescheitert: Der Kern zeigt den Fehlschlag
+   * in allen Fenstern. Erreicht ihn die Meldung nicht oder nimmt er sie nicht
+   * an, darf die Rückfrage im Kern trotzdem nicht hängen bleiben; dann gibt
+   * das Fenster sie auf und zeigt den Fehlschlag wenigstens selbst.
+   */
+  private async dialogFailed(error: string): Promise<void> {
     if (await this.port.fail(error).catch(() => false)) return;
-    if (asking) await this.port.cancel().catch(() => {});
+    await this.port.cancel().catch(() => {});
+    this.showFailure(error);
+  }
+
+  /**
+   * Zeigt einen Fehlschlag mit `error` als Originaltext nur in diesem
+   * Fenster, wenn der Kern ihn nicht melden kann, weil ihn ein Aufruf nicht
+   * erreicht. Den Zustand dazu hält sonst der Kern.
+   */
+  private showFailure(error: string) {
     this.set({
       ...this.state,
       phase: "failed",
@@ -271,16 +277,6 @@ export class AppUpdate {
       cause: "unknown",
       error,
     });
-  }
-
-  /**
-   * Fragt mit den Anlässen `reasons` nach, wenn `ask` es verlangt. „Später“
-   * beendet die Rückfrage im Kern. Gibt zurück, ob die Aktualisierung weitergeht.
-   */
-  private async confirmed(reasons: UpdateReasons, ask: boolean): Promise<boolean> {
-    if (!ask || (await this.port.confirm(reasons))) return true;
-    await this.port.cancel();
-    return false;
   }
 
   /**

@@ -93,7 +93,7 @@ Eine kurze Meldung unten rechts im Fenster. Ein gewöhnlicher Hinweis verschwind
 _Vermeiden_: Toast, Popup, Benachrichtigung (das ist die Meldung von Windows)
 
 **Aktualisierung**:
-Der Wechsel der installierten Kredr-Fassung auf eine neue Version. Kredr bietet sie an, die Person löst sie aus, danach startet Kredr neu.
+Der Wechsel der installierten Kredr-Fassung auf eine neue Version. Kredr bietet sie an, die Person löst sie aus, danach startet Kredr neu. Den **Ablauf** von „Jetzt aktualisieren“ bis zum Start des Installers (Rundfrage, Rückfrage, Download, erneute Rundfrage und Rückfrage, Aufteilungen speichern) führt der Kern; im Code heißt er `Flow`.
 _Vermeiden_: Update, Upgrade, Patch
 
 **Fenster für den Neustart**:
@@ -112,8 +112,12 @@ _Vermeiden_: Changelog, Release Notes, Patchnotes
 Die Frage an GitHub, ob es eine neue Version gibt. Von selbst sucht Kredr kurz nach dem Start, sofort beim Anschalten und danach alle 3 Stunden, solange die Einstellung „Nach Aktualisierungen suchen“ an ist; eine gescheiterte Suche von selbst bleibt stumm. „Jetzt suchen“ in den Einstellungen sucht immer und nennt das Ergebnis: neue Version, aktuell oder gescheitert mit Grund. Eine gescheiterte Suche ist kein Fehlschlag. Die Entwicklungsfassung sucht nie; „Jetzt suchen“ sagt ihr das.
 
 **Entwicklungsfassung**:
-Kredr aus `npm run tauri dev`, im Gegensatz zur installierten Fassung. Sie sucht nie nach einer neuen Version und installiert keine, damit sie sich nicht selbst überschreibt; eine Aktualisierung spielt sie höchstens vor. Im **vorgespielten Ablauf** bietet sie eine Version an, die nur zum Abnehmen der Oberfläche existiert, genannt in der Umgebungsvariable `KREDR_SIMULATED_UPDATE`. Er läuft im Kern für alle Fenster wie echt, mit Rundfrage, Rückfrage und vorgespieltem Download, bis kurz vor den Installer: Die Fenster speichern ihre Aufteilungen, der Kern schreibt die Notiz für den Neustart, verwirft sie gleich wieder und bietet die Version erneut an, ohne Neustart. Auf Wunsch scheitert er an einem Grund aus `KREDR_SIMULATED_FAILURE` (`network`, `signature`, `installer`). Ohne Version findet die Entwicklungsfassung nie etwas. Im Code heißt die laufende Fassung `Edition`; sie wählt beim Start den adapter für Suche, Download und Installation.
+Kredr aus `npm run tauri dev`, im Gegensatz zur installierten Fassung. Sie sucht nie nach einer neuen Version und installiert keine, damit sie sich nicht selbst überschreibt; eine Aktualisierung spielt sie höchstens vor. Im **vorgespielten Ablauf** bietet sie eine Version an, die nur zum Abnehmen der Oberfläche existiert, genannt in der Umgebungsvariable `KREDR_SIMULATED_UPDATE`. Er läuft im Kern für alle Fenster wie echt, mit Rundfrage, Rückfrage und vorgespieltem Download, bis kurz vor den Installer: Die Fenster speichern ihre Aufteilungen, der Kern schreibt die Notiz für den Neustart, verwirft sie gleich wieder und bietet die Version erneut an, ohne Neustart. Auf Wunsch scheitert er an einem Grund aus `KREDR_SIMULATED_FAILURE` (`network`, `signature`, `installer`). Ohne Version findet die Entwicklungsfassung nie etwas. Im Code heißt die laufende Fassung `Edition`; sie wählt beim Start den Updater.
 _Vermeiden_: Dev-Build, Debug-Version
+
+**Updater**:
+Der Teil des Kerns, der nach einer neuen Version sucht, sie herunterlädt, ihre Signatur prüft und den Installer startet; seine Fehler kommen schon mit eingeordnetem Grund heraus. Die Fassung wählt ihn beim Start: Die installierte Fassung nimmt den **Plugin-Updater** mit `tauri-plugin-updater`, die Entwicklungsfassung den **vorgespielten Updater**, der den vorgespielten Ablauf liefert. Im Code heißen sie `Updater`, `PluginUpdater` und `SimulatedUpdater`.
+_Vermeiden_: seam, adapter
 
 **Abgelehnte Version**:
 Die neue Version, die die Person mit „Später“ aufgeschoben hat. Kredr merkt sie sich im Benutzerdatenverzeichnis und bietet sie nicht wieder als Hinweis an, auch nach einem Neustart nicht; eine andere neue Version schon. Sucht die Person selbst mit „Jetzt suchen“ in den Einstellungen, bietet Kredr auch die abgelehnte Version wieder an. Im Code heißt sie `declined`.
@@ -124,7 +128,7 @@ Der Pfeil nach oben mit Punkt unmittelbar über dem Zahnrad der Aktivitätsleist
 _Vermeiden_: Badge, Update-Icon
 
 **Fehlschlag**:
-Eine von der Person ausgelöste Aktualisierung, die beim Herunterladen, bei der Signaturprüfung oder beim Start des Installers scheiterte, oder an einem Schritt im fragenden Fenster, etwa an der Rundfrage. Den Fehlschlag hält der Kern; er erscheint in allen Fenstern. Ein Hinweis bietet „Erneut versuchen“ und nennt unter „Mehr Infos“ den Grund in einem Satz, den Originaltext zum Aufklappen. Eine gescheiterte automatische Suche ist kein Fehlschlag; sie bleibt stumm. Im Code heißt der eingeordnete Grund `FailureCause`.
+Eine von der Person ausgelöste Aktualisierung, die beim Herunterladen, bei der Signaturprüfung oder beim Start des Installers scheiterte, oder an einem anderen Schritt des Ablaufs, etwa an der Rundfrage des Kerns oder am Dialog der Rückfrage im fragenden Fenster. Den Fehlschlag hält der Kern; er erscheint in allen Fenstern. Erreicht die Meldung den Kern nicht, zeigt ihn nur das Fenster, das sie schicken wollte. Ein Hinweis bietet „Erneut versuchen“ und nennt unter „Mehr Infos“ den Grund in einem Satz, den Originaltext zum Aufklappen. Eine gescheiterte automatische Suche ist kein Fehlschlag; sie bleibt stumm. Im Code heißt der eingeordnete Grund `FailureCause`.
 _Vermeiden_: Update-Fehler, Crash
 
 **Anlass**:
@@ -132,7 +136,7 @@ Etwas, das beim Beenden eines Fensters verloren ginge oder abbräche: eine unges
 _Vermeiden_: Grund, Blocker, Warnung
 
 **Rückfrage vor der Aktualisierung**:
-Der Dialog, der vor einer Aktualisierung die Anlässe aller Fenster zusammengezählt nennt, mit „Später“ (bricht ab) und „Trotzdem aktualisieren“. Ohne Anlass entfällt er. Nach dem Download prüft das fragende Fenster die Anlässe erneut. Gibt es einen **neuen Anlass** (eine Art mit mehr Fällen als vorher), kommt der Dialog ein zweites Mal. Erst danach speichern alle Fenster ihre Aufteilung, und der Installer startet. Der Kern führt die Rückfrage als Phase `confirm`, sobald ein Fenster „Jetzt aktualisieren“ auslöst, auch wenn der Dialog dann entfällt, und nach dem Download noch einmal, bis installiert wird. Nur dieses **fragende Fenster** darf sie beenden, den Download beginnen oder installieren, alle anderen zeigen sie ohne Aktionen. Schließt sich das fragende Fenster oder lädt es neu, endet sie wie mit „Später“, während des Downloads spätestens mit dessen Ende.
+Der Dialog, der vor einer Aktualisierung die Anlässe aller Fenster zusammengezählt nennt, mit „Später“ (bricht ab) und „Trotzdem aktualisieren“. Ohne Anlass entfällt er. Den Ablauf führt der Kern: Nach dem Download prüft er die Anlässe erneut. Gibt es einen **neuen Anlass** (eine Art mit mehr Fällen als vorher), kommt der Dialog ein zweites Mal. Erst danach speichern alle Fenster ihre Aufteilung, und der Installer startet. Der Kern führt die Rückfrage als Phase `confirm`, sobald ein Fenster „Jetzt aktualisieren“ auslöst, auch wenn der Dialog dann entfällt, und nach dem Download noch einmal, bis installiert wird. Braucht er eine Antwort, stehen die zusammengezählten Anlässe im Zustand. Den Dialog zeigt dann nur das **fragende Fenster**, in seiner Sprache und als sein eigener Dialog, und schickt die Antwort an den Kern; alle anderen zeigen die Rückfrage ohne Aktionen. Schließt sich das fragende Fenster oder lädt es neu, endet sie wie mit „Später“, während des Downloads spätestens mit dessen Ende.
 _Vermeiden_: Warnung, Popup
 
 **Verwaister Dialog**:
@@ -140,5 +144,5 @@ Ein nativer Dialog (Rückfrage, Fehlermeldung, Ordnerwahl), dessen Fenster sich 
 _Vermeiden_: Popup
 
 **Rundfrage**:
-Ein Fenster fragt alle offenen Fenster etwas und sammelt ihre Antworten, etwa die Anlässe oder „Aufteilung gespeichert“. Ein Fenster, das nicht rechtzeitig antwortet, gilt als stumm. Im Code heißt sie `pollWindows`.
+Der Kern fragt alle offenen Fenster etwas und sammelt ihre Antworten, etwa die Anlässe oder „Aufteilung gespeichert“. Ein Fenster, das nicht binnen 3 Sekunden antwortet, gilt als stumm. Im Code heißt sie `poll_windows`. Die Frage geht als Ereignis an die Fenster, die Antwort per Befehl `window_poll_answer` zurück (`answerPolls`), weil Tauri ein Ereignis an den Kern unter Last verlieren kann (ADR 0008).
 _Vermeiden_: Broadcast, Umfrage

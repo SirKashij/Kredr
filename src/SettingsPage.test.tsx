@@ -18,6 +18,8 @@ const none: AppUpdateState = {
   hidden: false,
   cause: null,
   error: null,
+  asker: null,
+  reasons: null,
 };
 
 /** Was der Kern auf „Jetzt suchen“ antwortet, und wie oft er gefragt wurde. */

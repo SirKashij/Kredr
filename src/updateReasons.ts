@@ -1,6 +1,7 @@
 /**
- * Die Anlässe der Rückfrage vor der Aktualisierung: was beim Beenden aller
- * Fenster verloren ginge oder abbräche, gezählt und als Text für den Dialog.
+ * Die Anlässe der Rückfrage vor der Aktualisierung als Text für den Dialog.
+ * Gezählt und zusammengezählt werden sie im Kern (`UpdateReasons` in
+ * `app_update/reasons.rs`); jedes Fenster nennt nur seine eigenen.
  */
 
 import { plural, type MessageKey, type Translate } from "./i18n/translate";
@@ -20,40 +21,6 @@ export interface UpdateReasons {
    * haben, deshalb fragt Kredr lieber nach.
    */
   silentWindows: number;
-}
-
-/** Ein Fenster ohne Anlass. */
-export const NO_REASONS: UpdateReasons = {
-  unsavedFiles: 0,
-  runningProcesses: 0,
-  workingAgents: 0,
-  backgroundAgents: 0,
-  silentWindows: 0,
-};
-
-/** Ein Fenster, das nicht geantwortet hat. */
-export const SILENT_WINDOW: UpdateReasons = { ...NO_REASONS, silentWindows: 1 };
-
-const KINDS = Object.keys(NO_REASONS) as (keyof UpdateReasons)[];
-
-/** Die Anlässe mehrerer Fenster zusammengezählt. */
-export function sumReasons(windows: readonly UpdateReasons[]): UpdateReasons {
-  const sum = { ...NO_REASONS };
-  for (const window of windows) for (const kind of KINDS) sum[kind] += window[kind] ?? 0;
-  return sum;
-}
-
-/** Ob es überhaupt einen Anlass gibt. */
-export function hasReasons(reasons: UpdateReasons): boolean {
-  return KINDS.some((kind) => reasons[kind] > 0);
-}
-
-/**
- * Ob `now` einen Anlass hat, den `before` nicht hatte: eine Art mit mehr
- * Fällen als zuvor. Weniger Fälle sind kein neuer Anlass.
- */
-export function hasNewReasons(now: UpdateReasons, before: UpdateReasons): boolean {
-  return KINDS.some((kind) => now[kind] > before[kind]);
 }
 
 /** Die Texte zu jedem Anlass, in der Reihenfolge der Rückfrage. */

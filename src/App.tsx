@@ -72,7 +72,7 @@ import {
 import { Notice, type NoticeContent } from "./Notice";
 import { AppUpdateNotice } from "./AppUpdateNotice";
 import type { UpdateReasons } from "./updateReasons";
-import { answerPolls, tauriEventBus } from "./windowPoll";
+import { answerPolls, tauriPollChannel } from "./windowPoll";
 import { ProjectPicker } from "./ProjectPicker";
 
 /** Eine Datei, die als Dateiansicht geöffnet werden soll. */
@@ -346,7 +346,7 @@ export function App() {
   // Vor einer Aktualisierung, die alle Fenster beendet, nennt jedes Fenster
   // seine Anlässe zur Rückfrage und speichert danach seine Aufteilung.
   useEffect(() => {
-    const unlisten = answerPolls(tauriEventBus, getCurrentWindow().label, async (question) => {
+    const unlisten = answerPolls(tauriPollChannel, async (question) => {
       if (question === "saveArrangement") return store.flush().then(() => true);
       const { arrangement } = store.snapshot();
       // Agenten, die nach dem Neustart zurückkommen, zählen nicht als laufender Prozess.

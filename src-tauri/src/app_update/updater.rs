@@ -1,8 +1,8 @@
-//! Der Updater-seam: Suche, Download mit Fortschritt und Installation einer
-//! neuen Version. Ihn erfüllen zwei adapters, und die Fassung wählt einen
-//! beim Start: die installierte Fassung `tauri-plugin-updater`, die
-//! Entwicklungsfassung den vorgespielten adapter. Fehler kommen schon
-//! eingeordnet heraus. Den geladenen Installer hält der adapter; ob er
+//! Der Updater: Suche, Download mit Fortschritt und Installation einer
+//! neuen Version. Die Fassung wählt ihn beim Start: die installierte
+//! Fassung den Plugin-Updater mit `tauri-plugin-updater`, die
+//! Entwicklungsfassung den vorgespielten Updater. Fehler kommen schon
+//! eingeordnet heraus. Den geladenen Installer hält der Updater; ob er
 //! bereitliegt, weiß nur der Zustand der Aktualisierung.
 
 use std::collections::HashMap;
@@ -30,11 +30,21 @@ pub enum FailureCause {
     Unknown,
 }
 
-/// Ein Fehlschlag des Updaters: eingeordnet und mit dem Originaltext.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Ein Fehlschlag oder eine gescheiterte Suche: eingeordnet und mit dem
+/// Originaltext.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Failure {
     pub cause: FailureCause,
     pub error: String,
+}
+
+impl Failure {
+    pub fn new(cause: FailureCause, error: impl Into<String>) -> Self {
+        Self {
+            cause,
+            error: error.into(),
+        }
+    }
 }
 
 /// Was eine Suche nach einer neuen Version ergab.
@@ -45,9 +55,9 @@ pub enum SearchOutcome {
     /// Kredr ist aktuell.
     Current,
     /// Die Suche scheiterte, mit eingeordnetem Grund und Originaltext.
-    Failed { cause: FailureCause, error: String },
+    Failed(Failure),
     /// Die Entwicklungsfassung sucht nie; GitHub wurde nicht gefragt.
-    Locked,
+    Development,
 }
 
 /// Sucht von selbst mit `search` nach einer neuen Version, aber nur, solange
@@ -88,7 +98,7 @@ impl Edition {
         }
     }
 
-    /// Der adapter dieser Fassung; die Entwicklungsfassung liest dafür die
+    /// Der Updater dieser Fassung; die Entwicklungsfassung liest dafür die
     /// Umgebungsvariablen des vorgespielten Ablaufs.
     pub fn updater(self) -> Updater {
         match self {
@@ -98,7 +108,7 @@ impl Edition {
     }
 }
 
-/// Der seam mit seinen zwei adapters.
+/// Der Updater, wie ihn die Fassung gewählt hat.
 pub enum Updater {
     Plugin(PluginUpdater),
     Simulated(SimulatedUpdater),
@@ -114,7 +124,7 @@ impl Updater {
     }
 
     /// Lädt `version` und prüft sie. `progress` erfährt, wie viele Bytes da
-    /// sind, und von wie vielen, falls bekannt. Danach hält der adapter den
+    /// sind, und von wie vielen, falls bekannt. Danach hält der Updater den
     /// Installer bis zur Installation.
     pub async fn download(
         &self,
@@ -169,21 +179,18 @@ pub fn failure_cause(error: &tauri_plugin_updater::Error, step: Step) -> Failure
 impl Failure {
     /// Ein Fehler des Updaters aus `step`, eingeordnet.
     fn of_plugin(error: tauri_plugin_updater::Error, step: Step) -> Self {
-        Self {
-            cause: failure_cause(&error, step),
-            error: error.to_string(),
-        }
+        Self::new(failure_cause(&error, step), error.to_string())
     }
 }
 
-/// Der adapter für `tauri-plugin-updater`: fragt GitHub, lädt den signierten
+/// Der Plugin-Updater mit `tauri-plugin-updater`: fragt GitHub, lädt den signierten
 /// Installer und startet ihn.
 #[derive(Default)]
 pub struct PluginUpdater {
     held: Mutex<Held>,
 }
 
-/// Was der Plugin-adapter zwischen den Schritten hält.
+/// Was der Plugin-Updater zwischen den Schritten hält.
 #[derive(Default)]
 struct Held {
     /// Je gefundener Version das `Update` der letzten Suche, die sie fand.
@@ -191,7 +198,7 @@ struct Held {
     /// Zustand gerade anbietet oder lädt.
     found: HashMap<String, Update>,
     /// Der zuletzt geladene und geprüfte Installer mit seinem `Update`.
-    /// Geschachtelt, damit der adapter klein bleibt.
+    /// Geschachtelt, damit der Plugin-Updater klein bleibt.
     installer: Option<Box<(Update, Vec<u8>)>>,
 }
 
@@ -208,10 +215,7 @@ impl PluginUpdater {
                 SearchOutcome::Found(version)
             }
             Ok(None) => SearchOutcome::Current,
-            Err(error) => {
-                let Failure { cause, error } = Failure::of_plugin(error, Step::Check);
-                SearchOutcome::Failed { cause, error }
-            }
+            Err(error) => SearchOutcome::Failed(Failure::of_plugin(error, Step::Check)),
         }
     }
 
@@ -222,10 +226,10 @@ impl PluginUpdater {
     ) -> Result<(), Failure> {
         let update = self.held.lock().unwrap().found.get(version).cloned();
         let Some(update) = update else {
-            return Err(Failure {
-                cause: FailureCause::Unknown,
-                error: format!("Version {version} wurde nicht gefunden"),
-            });
+            return Err(Failure::new(
+                FailureCause::Unknown,
+                format!("Version {version} wurde nicht gefunden"),
+            ));
         };
         let mut done = 0u64;
         let bytes = update
@@ -249,10 +253,10 @@ impl PluginUpdater {
     fn install<R: Runtime>(&self, app: &AppHandle<R>) -> Result<(), Failure> {
         let installer = self.held.lock().unwrap().installer.take();
         let Some((update, bytes)) = installer.map(|installer| *installer) else {
-            return Err(Failure {
-                cause: FailureCause::Installer,
-                error: "Kein Installer geladen".into(),
-            });
+            return Err(Failure::new(
+                FailureCause::Installer,
+                "Kein Installer geladen",
+            ));
         };
         update.install(bytes).map_err(|error| {
             crate::projects::forget_windows_for_restart(app);
@@ -284,7 +288,7 @@ async fn ask_github<R: Runtime>(
 }
 
 /// Nennt diese Variable der Entwicklungsfassung eine Version, etwa `0.6.0`,
-/// bietet der vorgespielte adapter sie an.
+/// bietet der vorgespielte Updater sie an.
 const SIMULATED_UPDATE: &str = "KREDR_SIMULATED_UPDATE";
 /// Nennt diese Variable einen Grund (`network`, `signature`, `installer`),
 /// scheitert der vorgespielte Ablauf daran: die ersten beiden beim Download,
@@ -295,7 +299,7 @@ const SIMULATED_PACE: Duration = Duration::from_millis(400);
 /// So viele Schritte des Downloads braucht die vorgespielte Installation.
 const SIMULATED_INSTALL_STEPS: u32 = 4;
 
-/// Der vorgespielte adapter der Entwicklungsfassung: Er bietet eine Version
+/// Der vorgespielte Updater der Entwicklungsfassung: Er bietet eine Version
 /// an, die nur zum Abnehmen der Oberfläche existiert, lädt sie vorgespielt
 /// und läuft bei der Installation bis kurz vor den Installer. Dann verwirft
 /// er die Notiz für den Neustart und kehrt zurück, ohne Neustart. Ohne
@@ -305,6 +309,9 @@ pub struct SimulatedUpdater {
     failure: Option<FailureCause>,
     /// So lange braucht ein Zehntel des Downloads.
     pace: Duration,
+    /// Läuft, wo der echte Installer starten würde: nach der Notiz für den
+    /// Neustart, bevor der Updater sie verwirft.
+    installer: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 impl SimulatedUpdater {
@@ -315,7 +322,15 @@ impl SimulatedUpdater {
             version,
             failure,
             pace,
+            installer: None,
         }
+    }
+
+    /// Lässt `installer` laufen, wo der echte Installer starten würde; so
+    /// sieht ein Test, was dann bereitliegt.
+    pub fn on_installer(mut self, installer: impl Fn() + Send + Sync + 'static) -> Self {
+        self.installer = Some(Box::new(installer));
+        self
     }
 
     /// Liest Version und Grund aus den Umgebungsvariablen.
@@ -328,7 +343,7 @@ impl SimulatedUpdater {
     fn check(&self) -> SearchOutcome {
         match &self.version {
             Some(version) => SearchOutcome::Found(version.clone()),
-            None => SearchOutcome::Locked,
+            None => SearchOutcome::Development,
         }
     }
 
@@ -355,6 +370,9 @@ impl SimulatedUpdater {
     async fn install<R: Runtime>(&self, app: &AppHandle<R>, version: &str) -> Result<(), Failure> {
         tokio::time::sleep(self.pace * SIMULATED_INSTALL_STEPS).await;
         crate::projects::remember_windows_for_restart(app, version);
+        if let Some(installer) = &self.installer {
+            installer();
+        }
         crate::projects::forget_windows_for_restart(app);
         match self.failure {
             Some(FailureCause::Installer) => Err(simulated_failure(FailureCause::Installer)),
@@ -381,8 +399,5 @@ fn simulated_failure(cause: FailureCause) -> Failure {
         FailureCause::Installer => "Das System kann die angegebene Datei nicht finden. (os error 2)",
         FailureCause::Unknown => "Failed to format date",
     };
-    Failure {
-        cause,
-        error: error.into(),
-    }
+    Failure::new(cause, error)
 }

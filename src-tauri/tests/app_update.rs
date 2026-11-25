@@ -2,7 +2,7 @@ use std::path::Path;
 
 use kredr_lib::app_update::{
     auto_search_with, failure_cause, load_declined, save_declined, AppUpdateState, AutoCheck,
-    Edition, FailureCause, Phase, SearchOutcome, Step, Updater,
+    CheckResult, Edition, Failure, FailureCause, Phase, SearchOutcome, Step, Updater,
 };
 use tauri::async_runtime::block_on;
 
@@ -100,7 +100,7 @@ fn nach_einem_fehlschlag_kehrt_die_rueckfrage_zum_fehlschlag_zurueck() {
     let mut state = state();
     state.found("0.6.0".into());
     update_now(&mut state);
-    state.fail(FailureCause::Network, "timeout".into());
+    state.fail(Failure::new(FailureCause::Network, "timeout"));
     state.ask(MAIN);
 
     state.cancel_confirm(MAIN);
@@ -214,7 +214,7 @@ fn jetzt_suchen_bietet_nach_einem_fehlschlag_dieselbe_version_wieder_an() {
     let mut state = state();
     state.found("0.6.0".into());
     update_now(&mut state);
-    state.fail(FailureCause::Network, "keine Verbindung".into());
+    state.fail(Failure::new(FailureCause::Network, "keine Verbindung"));
 
     assert!(state.found_on_request("0.6.0".into()));
     assert_eq!(state.phase, Phase::Offered);
@@ -301,7 +301,7 @@ fn scheitert_die_aktualisierung_laesst_sie_sich_erneut_anstossen() {
     state.found("0.6.0".into());
     update_now(&mut state);
 
-    state.fail(FailureCause::Signature, "Signatur ungültig".into());
+    state.fail(Failure::new(FailureCause::Signature, "Signatur ungültig"));
 
     assert_eq!(state.phase, Phase::Failed);
     assert_eq!(state.cause, Some(FailureCause::Signature));
@@ -399,7 +399,7 @@ fn ein_download_endet_nur_einmal() {
     assert!(!state.finish_download(), "ohne laufenden Download");
 
     state.start_download(MAIN);
-    state.fail(FailureCause::Network, "timeout".into());
+    state.fail(Failure::new(FailureCause::Network, "timeout"));
     assert!(!state.finish_download(), "nach einem Fehlschlag");
     assert_eq!(state.phase, Phase::Failed);
 }
@@ -418,7 +418,7 @@ fn ein_weggeklickter_download_zeigt_nur_das_symbol() {
     // Die Version gilt dadurch nicht als abgelehnt.
     assert_eq!(state.declined(), None);
     // Ein Fehlschlag zeigt den Hinweis wieder.
-    state.fail(FailureCause::Network, "timeout".into());
+    state.fail(Failure::new(FailureCause::Network, "timeout"));
     assert!(!state.hidden);
 }
 
@@ -532,4 +532,14 @@ fn ein_fremdes_fenster_meldet_keinen_fehlschlag() {
     assert!(!state.window_failed(OTHER, "zu spät".into()));
     assert_eq!(state.phase, Phase::Confirm);
     assert_eq!(state.error, None);
+}
+
+#[test]
+fn eine_gescheiterte_suche_kommt_mit_grund_und_originaltext_an_die_oberflaeche() {
+    let failed = CheckResult::Failed(Failure::new(FailureCause::Network, "timeout"));
+
+    assert_eq!(
+        serde_json::to_value(failed).unwrap(),
+        serde_json::json!({ "outcome": "failed", "cause": "network", "error": "timeout" })
+    );
 }
