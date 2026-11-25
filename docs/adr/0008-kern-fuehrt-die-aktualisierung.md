@@ -11,7 +11,7 @@ Braucht der Kern eine Entscheidung der Person, steht er in der Phase `confirm` m
 
 ## Folgen
 
-- Die Reihenfolge des Ablaufs und die Regeln für Anlässe (Summe, stummes Fenster, neuer Anlass) stehen nur in Rust. Die Abläufe prüfen Rust-Tests mit dem vorgespielten adapter und Fake-Fenstern über die Mock-Runtime; TypeScript prüft nur die Darstellung.
+- Die Reihenfolge des Ablaufs und die Regeln für Anlässe (Summe, stummes Fenster, neuer Anlass) stehen nur in Rust. Die Abläufe prüfen Rust-Tests mit dem vorgespielten Updater und Fake-Fenstern über die Mock-Runtime; TypeScript prüft nur die Darstellung.
 - Die Rundfrage stellt der Kern mit demselben Protokoll wie zuvor ein Fenster (`window-poll` / `window-poll-answer`, 3 s, danach stumm). Die Antwortseite der Fenster blieb unverändert.
 - Schließt sich das fragende Fenster oder lädt es neu, endet die Rückfrage wie mit „Später“; wartet der Kern gerade auf den Dialog, verfällt die Antwort, und der Ablauf endet. Während des Downloads endet er spätestens mit dessen Ende.
 - Scheitert der Dialog im Fenster, meldet das Fenster den Fehlschlag (`app_update_fail`); er gilt für alle Fenster.

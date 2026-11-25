@@ -14,7 +14,7 @@ const MAIN: &str = "main";
 const OTHER: &str = "projekt-2";
 
 /// Kredr mit allem, was ein Fenster beim Schließen freigibt, wie in `run`, und einer
-/// Aktualisierung mit dem vorgespielten adapter, die nie gesucht hat.
+/// Aktualisierung mit dem vorgespielten Updater, die nie gesucht hat.
 fn kredr() -> App<MockRuntime> {
     crate::manage_per_window(mock_builder())
         .manage(Notifications::new("kredr-test"))

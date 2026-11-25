@@ -4,7 +4,7 @@
 //! meldet jede Änderung mit dem Ereignis `app-update-changed`. Den Ablauf von
 //! „Jetzt aktualisieren“ führt der Kern selbst, mit Rundfrage und Rückfrage;
 //! nur den Dialog der Rückfrage zeigt das fragende Fenster (ADR 0008). Suche,
-//! Download und Installation liegen hinter dem Updater-seam (`updater`); die
+//! Download und Installation übernimmt der Updater (`updater`); die
 //! Entwicklungsfassung spielt sie dort höchstens vor.
 
 mod poll;
@@ -394,7 +394,7 @@ struct DeclinedFile {
     declined: String,
 }
 
-/// Der Zustand der Aktualisierung und der adapter, der sucht, lädt und installiert.
+/// Der Zustand der Aktualisierung und der Updater, der sucht, lädt und installiert.
 pub struct AppUpdates {
     inner: Mutex<AppUpdateState>,
     /// Wo die abgelehnte Version liegt; ohne Benutzerdatenverzeichnis nirgends.
@@ -764,7 +764,7 @@ pub enum CheckResult {
     Failed { cause: FailureCause, error: String },
 }
 
-/// Richtet die Aktualisierung ein; die Fassung wählt dafür den adapter. Die
+/// Richtet die Aktualisierung ein; die Fassung wählt dafür den Updater. Die
 /// installierte Fassung sucht kurz nach dem Start und danach alle drei
 /// Stunden, solange die Einstellung „Nach Aktualisierungen suchen“ an ist;
 /// sie gilt bei jeder Suche neu. Die Entwicklungsfassung bietet eine

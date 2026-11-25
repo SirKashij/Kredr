@@ -1,4 +1,4 @@
-//! Der Ablauf der Aktualisierung mit dem vorgespielten adapter, über die
+//! Der Ablauf der Aktualisierung mit dem vorgespielten Updater, über die
 //! Befehle des Kerns und die Mock-Runtime von Tauri: ohne echtes Fenster,
 //! ohne Netz und ohne Pausen. Die Fenster spielen Fakes, die wie die
 //! Oberfläche auf Rundfragen antworten und die Rückfrage beantworten.
@@ -30,10 +30,10 @@ const OTHER: &str = "window-1";
 /// Was in den Fenstern und am Installer geschah, in Reihenfolge.
 type Journal = Arc<Mutex<Vec<String>>>;
 
-/// Kredr mit dem vorgespielten adapter, der 0.6.0 anbietet und an `failure`
+/// Kredr mit dem vorgespielten Updater, der 0.6.0 anbietet und an `failure`
 /// scheitert; ein Zehntel des Downloads dauert `pace`. Die Aufteilungen und
 /// die Notiz für den Neustart liegen in `data`. Wo der Installer starten
-/// würde, schreibt der adapter ins `journal`, ob die Notiz dann bereitliegt.
+/// würde, schreibt der Updater ins `journal`, ob die Notiz dann bereitliegt.
 fn kredr(
     failure: Option<FailureCause>,
     pace: Duration,

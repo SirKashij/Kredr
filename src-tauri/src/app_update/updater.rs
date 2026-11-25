@@ -1,8 +1,8 @@
-//! Der Updater-seam: Suche, Download mit Fortschritt und Installation einer
-//! neuen Version. Ihn erfüllen zwei adapters, und die Fassung wählt einen
-//! beim Start: die installierte Fassung `tauri-plugin-updater`, die
-//! Entwicklungsfassung den vorgespielten adapter. Fehler kommen schon
-//! eingeordnet heraus. Den geladenen Installer hält der adapter; ob er
+//! Der Updater: Suche, Download mit Fortschritt und Installation einer
+//! neuen Version. Die Fassung wählt ihn beim Start: die installierte
+//! Fassung den Plugin-Updater mit `tauri-plugin-updater`, die
+//! Entwicklungsfassung den vorgespielten Updater. Fehler kommen schon
+//! eingeordnet heraus. Den geladenen Installer hält der Updater; ob er
 //! bereitliegt, weiß nur der Zustand der Aktualisierung.
 
 use std::collections::HashMap;
@@ -88,7 +88,7 @@ impl Edition {
         }
     }
 
-    /// Der adapter dieser Fassung; die Entwicklungsfassung liest dafür die
+    /// Der Updater dieser Fassung; die Entwicklungsfassung liest dafür die
     /// Umgebungsvariablen des vorgespielten Ablaufs.
     pub fn updater(self) -> Updater {
         match self {
@@ -98,7 +98,7 @@ impl Edition {
     }
 }
 
-/// Der seam mit seinen zwei adapters.
+/// Der Updater, wie ihn die Fassung gewählt hat.
 pub enum Updater {
     Plugin(PluginUpdater),
     Simulated(SimulatedUpdater),
@@ -114,7 +114,7 @@ impl Updater {
     }
 
     /// Lädt `version` und prüft sie. `progress` erfährt, wie viele Bytes da
-    /// sind, und von wie vielen, falls bekannt. Danach hält der adapter den
+    /// sind, und von wie vielen, falls bekannt. Danach hält der Updater den
     /// Installer bis zur Installation.
     pub async fn download(
         &self,
@@ -176,14 +176,14 @@ impl Failure {
     }
 }
 
-/// Der adapter für `tauri-plugin-updater`: fragt GitHub, lädt den signierten
+/// Der Plugin-Updater mit `tauri-plugin-updater`: fragt GitHub, lädt den signierten
 /// Installer und startet ihn.
 #[derive(Default)]
 pub struct PluginUpdater {
     held: Mutex<Held>,
 }
 
-/// Was der Plugin-adapter zwischen den Schritten hält.
+/// Was der Plugin-Updater zwischen den Schritten hält.
 #[derive(Default)]
 struct Held {
     /// Je gefundener Version das `Update` der letzten Suche, die sie fand.
@@ -191,7 +191,7 @@ struct Held {
     /// Zustand gerade anbietet oder lädt.
     found: HashMap<String, Update>,
     /// Der zuletzt geladene und geprüfte Installer mit seinem `Update`.
-    /// Geschachtelt, damit der adapter klein bleibt.
+    /// Geschachtelt, damit der Plugin-Updater klein bleibt.
     installer: Option<Box<(Update, Vec<u8>)>>,
 }
 
@@ -284,7 +284,7 @@ async fn ask_github<R: Runtime>(
 }
 
 /// Nennt diese Variable der Entwicklungsfassung eine Version, etwa `0.6.0`,
-/// bietet der vorgespielte adapter sie an.
+/// bietet der vorgespielte Updater sie an.
 const SIMULATED_UPDATE: &str = "KREDR_SIMULATED_UPDATE";
 /// Nennt diese Variable einen Grund (`network`, `signature`, `installer`),
 /// scheitert der vorgespielte Ablauf daran: die ersten beiden beim Download,
@@ -295,7 +295,7 @@ const SIMULATED_PACE: Duration = Duration::from_millis(400);
 /// So viele Schritte des Downloads braucht die vorgespielte Installation.
 const SIMULATED_INSTALL_STEPS: u32 = 4;
 
-/// Der vorgespielte adapter der Entwicklungsfassung: Er bietet eine Version
+/// Der vorgespielte Updater der Entwicklungsfassung: Er bietet eine Version
 /// an, die nur zum Abnehmen der Oberfläche existiert, lädt sie vorgespielt
 /// und läuft bei der Installation bis kurz vor den Installer. Dann verwirft
 /// er die Notiz für den Neustart und kehrt zurück, ohne Neustart. Ohne
@@ -306,7 +306,7 @@ pub struct SimulatedUpdater {
     /// So lange braucht ein Zehntel des Downloads.
     pace: Duration,
     /// Läuft, wo der echte Installer starten würde: nach der Notiz für den
-    /// Neustart, bevor der adapter sie verwirft.
+    /// Neustart, bevor der Updater sie verwirft.
     installer: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
