@@ -112,6 +112,8 @@ fn answer_polls(
     let (handle, label, journal) = (app.handle().clone(), label.to_owned(), journal.clone());
     let asked = Arc::new(Mutex::new(0usize));
     let reasons = Arc::new(reasons);
+    // Fake-Fenster: Ein Test hört wie eine Webview mit; nur der Ablauf sendet (Modulkopf).
+    #[allow(clippy::disallowed_methods)]
     app.listen_any("window-poll", move |event| {
         let (handle, label, journal) = (handle.clone(), label.clone(), journal.clone());
         let (asked, reasons) = (asked.clone(), reasons.clone());
@@ -607,6 +609,8 @@ fn scheitert_der_installer_zeigen_alle_fenster_den_fehlschlag_und_die_notiz_ist_
 fn record_progress(app: &App<MockRuntime>) -> Arc<Mutex<Vec<u8>>> {
     let progress = Arc::new(Mutex::new(Vec::new()));
     let recorded = progress.clone();
+    // Fake-Fenster: Ein Test hört wie eine Webview mit; nur der Ablauf sendet (Modulkopf).
+    #[allow(clippy::disallowed_methods)]
     app.listen_any("app-update-changed", move |event| {
         let state: Value = serde_json::from_str(event.payload()).unwrap();
         if let Some(percent) = state["progress"].as_u64() {
