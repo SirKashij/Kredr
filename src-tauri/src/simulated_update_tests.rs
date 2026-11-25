@@ -395,31 +395,25 @@ fn schliesst_sich_das_fragende_fenster_vor_dem_download_endet_der_ablauf_wie_mit
     assert_eq!(offered.reasons, None);
 }
 
-/// Lädt `window` neu, sobald der Kern nach den Anlässen fragt, also während
-/// er die Rundfrage abschließt und die Rückfrage stellt. Der Zeitpunkt
-/// wandert von Rundfrage zu Rundfrage, damit das Neuladen mal vor, mal
-/// mitten in und mal nach dem Stellen der Rückfrage ankommt.
-fn reload_while_asking(app: &App<MockRuntime>, window: &Window<MockRuntime>) {
+/// Lädt `window` neu, `delay` nachdem es die Rückfrage übernommen hat, also
+/// während der Kern die Rundfrage abschließt und die Rückfrage stellt. Wartet
+/// am Zustand statt an einem Ereignis: Die Mock-Runtime stellt ein Ereignis,
+/// das während eines anderen ankommt, nur verzögert oder gar nicht zu.
+fn reload_after(app: &App<MockRuntime>, window: &Window<MockRuntime>, delay: Duration) {
     let (handle, window) = (app.handle().clone(), window.clone());
-    let rounds = Arc::new(Mutex::new(0u64));
-    app.listen_any("window-poll", move |event| {
-        let poll: Value = serde_json::from_str(event.payload()).unwrap();
-        if poll["question"] != "updateReasons" {
-            return;
-        }
-        let delay = {
-            let mut rounds = rounds.lock().unwrap();
-            *rounds += 1;
-            Duration::from_micros(*rounds % 60 * 5)
+    std::thread::spawn(move || {
+        let asks = || {
+            let state = handle.state::<AppUpdates>().state();
+            state.phase == Phase::Confirm && state.asker.as_deref() == Some(window.label())
         };
-        let (handle, window) = (handle.clone(), window.clone());
-        std::thread::spawn(move || {
-            let until = std::time::Instant::now() + delay;
-            while std::time::Instant::now() < until {
-                std::hint::spin_loop();
-            }
-            app_update_cancel(handle.clone(), window, handle.state());
-        });
+        while !asks() {
+            std::thread::yield_now();
+        }
+        let until = std::time::Instant::now() + delay;
+        while std::time::Instant::now() < until {
+            std::hint::spin_loop();
+        }
+        app_update_cancel(handle.clone(), window, handle.state());
     });
 }
 
@@ -433,9 +427,11 @@ fn laedt_das_fragende_fenster_neu_waehrend_der_kern_die_rueckfrage_stellt_endet_
         ..UpdateReasons::NONE
     };
     let main = open(&app, MAIN, vec![busy], Person::Waits, &journal);
-    reload_while_asking(&app, &main);
 
-    for round in 0..300 {
+    // Der Zeitpunkt wandert von Runde zu Runde, damit das Neuladen mal vor,
+    // mal mitten in und mal nach dem Stellen der Rückfrage ankommt.
+    for round in 0..1000u64 {
+        reload_after(&app, &main, Duration::from_micros(round % 250 * 2));
         let (handle, window) = (app.handle().clone(), main.clone());
         let (ended, ends) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
