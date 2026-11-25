@@ -15,8 +15,8 @@ use tauri::{
 };
 
 use crate::app_update::{
-    app_update_answer, app_update_check, app_update_now, AppUpdateState, AppUpdates, CheckResult,
-    FailureCause, Phase, SimulatedUpdater, UpdateReasons, Updater,
+    app_update_answer, app_update_cancel, app_update_check, app_update_now, AppUpdateState,
+    AppUpdates, CheckResult, FailureCause, Phase, SimulatedUpdater, UpdateReasons, Updater,
 };
 use crate::arrangement_store::ArrangementStore;
 use crate::notifications::Notifications;
@@ -135,6 +135,8 @@ enum Person {
     Later,
     /// Sie schließt das fragende Fenster, statt zu antworten.
     ClosesWindow,
+    /// Sie antwortet nicht.
+    Waits,
 }
 
 /// Zeigt die Rückfrage, wenn der Kern sie in `window` verlangt, und antwortet
@@ -165,6 +167,7 @@ fn answer_confirm(
             Person::Proceeds => app_update_answer(window, handle.state(), true),
             Person::Later => app_update_answer(window, handle.state(), false),
             Person::ClosesWindow => crate::on_window_event(&window, &WindowEvent::Destroyed),
+            Person::Waits => {}
         });
     });
 }
@@ -368,6 +371,63 @@ fn schliesst_sich_das_fragende_fenster_vor_dem_download_endet_der_ablauf_wie_mit
     let offered = state(&app);
     assert_eq!(offered.phase, Phase::Offered);
     assert_eq!(offered.reasons, None);
+}
+
+/// Lädt `window` neu, sobald der Kern nach den Anlässen fragt, also während
+/// er die Rundfrage abschließt und die Rückfrage stellt. Der Zeitpunkt
+/// wandert von Rundfrage zu Rundfrage, damit das Neuladen mal vor, mal
+/// mitten in und mal nach dem Stellen der Rückfrage ankommt.
+fn reload_while_asking(app: &App<MockRuntime>, window: &Window<MockRuntime>) {
+    let (handle, window) = (app.handle().clone(), window.clone());
+    let rounds = Arc::new(Mutex::new(0u64));
+    app.listen_any("window-poll", move |event| {
+        let poll: Value = serde_json::from_str(event.payload()).unwrap();
+        if poll["question"] != "updateReasons" {
+            return;
+        }
+        let delay = {
+            let mut rounds = rounds.lock().unwrap();
+            *rounds += 1;
+            Duration::from_micros(*rounds % 60 * 5)
+        };
+        let (handle, window) = (handle.clone(), window.clone());
+        std::thread::spawn(move || {
+            let until = std::time::Instant::now() + delay;
+            while std::time::Instant::now() < until {
+                std::hint::spin_loop();
+            }
+            app_update_cancel(handle.clone(), window, handle.state());
+        });
+    });
+}
+
+#[test]
+fn laedt_das_fragende_fenster_neu_waehrend_der_kern_die_rueckfrage_stellt_endet_der_ablauf() {
+    let data = tempfile::tempdir().unwrap();
+    let journal = Journal::default();
+    let app = kredr(None, Duration::ZERO, data.path(), &journal);
+    let busy = UpdateReasons {
+        unsaved_files: 1,
+        ..QUIET
+    };
+    let main = open(&app, MAIN, vec![busy], Person::Waits, &journal);
+    reload_while_asking(&app, &main);
+
+    for round in 0..300 {
+        let (handle, window) = (app.handle().clone(), main.clone());
+        let (ended, ends) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            block_on(app_update_now(handle.clone(), window, handle.state())).unwrap();
+            let _ = ended.send(());
+        });
+
+        // Bliebe die Antwort nach dem Neuladen liegen, wartete der Ablauf ewig.
+        ends.recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|_| panic!("der Ablauf hängt in Runde {round}"));
+        let offered = state(&app);
+        assert_eq!(offered.phase, Phase::Offered, "Runde {round}");
+        assert_eq!(offered.asker, None, "Runde {round}");
+    }
 }
 
 /// Schließt `window`, sobald der Kern den Download meldet.

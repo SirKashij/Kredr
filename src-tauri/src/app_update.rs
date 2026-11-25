@@ -399,8 +399,9 @@ pub struct AppUpdates {
     dir: Option<PathBuf>,
     auto: Mutex<AutoCheck>,
     updater: Updater,
-    /// Die Antwort auf die Rückfrage, auf die der Ablauf gerade wartet.
-    /// Gesperrt wird es nur innerhalb von `inner` oder allein.
+    /// Die Antwort auf die Rückfrage, auf die der Ablauf gerade wartet. Sie
+    /// entsteht und verfällt nur innerhalb von `inner`, zusammen mit dem
+    /// Zustand; allein gesperrt wird sie nur zum Antworten.
     pending: Mutex<Option<PendingAnswer>>,
     /// So lange wartet die Rundfrage auf ein Fenster.
     poll_timeout: Duration,
@@ -460,13 +461,18 @@ impl AppUpdates {
         self
     }
 
-    /// Beendet die Rückfrage von `window`, wie mit „Später“.
+    /// Beendet die Rückfrage von `window`, wie mit „Später“. Die wartende
+    /// Antwort verfällt unter derselben Sperre wie der Zustand; sonst könnte
+    /// der Ablauf dazwischen eine Antwort erwarten, die nie kommt.
     fn cancel<R: Runtime>(&self, app: &AppHandle<R>, window: &str) {
-        self.drop_answer(window);
-        self.change(app, |state| state.cancel_confirm(window));
+        self.change(app, |state| {
+            self.drop_answer(window);
+            state.cancel_confirm(window)
+        });
     }
 
-    /// Der Dialog in `window` wartet auf keine Antwort mehr.
+    /// Der Dialog in `window` wartet auf keine Antwort mehr. Nur innerhalb
+    /// von `change` aufrufen, damit Zustand und Antwort zusammen wechseln.
     fn drop_answer(&self, window: &str) {
         let mut pending = self.pending.lock().unwrap();
         if pending.as_ref().is_some_and(|p| p.window == window) {
@@ -497,11 +503,11 @@ impl AppUpdates {
         let mut failed = false;
         self.change(app, |state| {
             failed = state.window_failed(window, error);
+            if failed {
+                self.drop_answer(window);
+            }
             failed
         });
-        if failed {
-            self.drop_answer(window);
-        }
         failed
     }
 
