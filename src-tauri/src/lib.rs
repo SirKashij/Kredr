@@ -15,6 +15,8 @@ mod projects;
 pub mod search;
 mod search_commands;
 pub mod settings;
+#[cfg(test)]
+mod simulated_update_tests;
 pub mod terminal;
 mod terminal_commands;
 pub mod version_control;

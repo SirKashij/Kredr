@@ -11,7 +11,7 @@ import {
   type AppUpdateState,
   type CheckResult,
 } from "./appUpdate";
-import { appUpdatePort } from "./appUpdatePort";
+import { coreAppUpdatePort } from "./appUpdatePort";
 import { ContextMenu } from "./ContextMenu";
 import { translate, useT, type Translate } from "./i18n/i18n";
 import { PinnedNotice } from "./Notice";
@@ -22,7 +22,7 @@ let windowTranslate: Translate = (key, values) => translate("en", key, values);
 
 /** Der Ablauf dieses Fensters; er hört dem Kern zu, solange das Fenster lebt. */
 function windowAppUpdate(): AppUpdate {
-  forThisWindow ??= new AppUpdate(appUpdatePort(() => windowTranslate));
+  forThisWindow ??= new AppUpdate(coreAppUpdatePort(() => windowTranslate));
   return forThisWindow;
 }
 

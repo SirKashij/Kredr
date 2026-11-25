@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
   AppUpdate,
   checkResultText,
@@ -9,7 +9,6 @@ import {
   type AppUpdatePort,
   type AppUpdateState,
 } from "./appUpdate";
-import { simulatedAppUpdatePort } from "./appUpdatePort";
 import scenarios from "./appUpdateScenarios.json";
 import { translate, type Translate } from "./i18n/i18n";
 import {
@@ -185,26 +184,17 @@ type ScenarioStep = {
   hidden: boolean;
 };
 
-/**
- * Führt einen Schritt am Port aus. Der vorgespielte Port lädt in Schritten
- * über Zeitgeber; seine Installation bleibt stehen, statt zum Angebot
- * zurückzukehren, wie der Kern, der dann beendet würde.
- */
+/** Führt einen Schritt am Port aus. */
 async function playStep(port: AppUpdatePort, action: string): Promise<boolean | void> {
   switch (action) {
     case "ask":
       return port.ask();
     case "cancel":
       return port.cancel();
-    case "download": {
-      const done = port.download();
-      await vi.advanceTimersByTimeAsync(60_000);
-      return done;
-    }
+    case "download":
+      return port.download();
     case "install":
-      void port.install();
-      await vi.advanceTimersByTimeAsync(1);
-      return;
+      return port.install();
     case "fail":
       return port.fail("Fehler");
     case "later":
@@ -214,28 +204,18 @@ async function playStep(port: AppUpdatePort, action: string): Promise<boolean | 
   }
 }
 
-const doubles: [string, () => AppUpdatePort][] = [
-  ["Kern der Tests", () => fakeCore({ ...none, phase: "offered", version: "0.6.0" }).port],
-  ["vorgespielter Port", () => simulatedAppUpdatePort("0.6.0", () => de)],
-];
-
-describe.each(doubles)("%s folgt den gemeinsamen Abläufen des Kerns", (_, makePort) => {
+describe("der Kern der Tests folgt den gemeinsamen Abläufen des Kerns", () => {
   test.each(scenarios as { name: string; steps: ScenarioStep[] }[])("$name", async ({ steps }) => {
-    vi.useFakeTimers();
-    try {
-      const port = makePort();
-      for (const [index, step] of steps.entries()) {
-        const at = `Schritt ${index + 1} (${step.do})`;
-        const returned = await playStep(port, step.do);
-        if (step.returns !== undefined) expect(returned, at).toBe(step.returns);
-        const state = await port.current();
-        expect({ phase: state.phase, hidden: state.hidden }, at).toEqual({
-          phase: step.phase,
-          hidden: step.hidden,
-        });
-      }
-    } finally {
-      vi.useRealTimers();
+    const port = fakeCore({ ...none, phase: "offered", version: "0.6.0" }).port;
+    for (const [index, step] of steps.entries()) {
+      const at = `Schritt ${index + 1} (${step.do})`;
+      const returned = await playStep(port, step.do);
+      if (step.returns !== undefined) expect(returned, at).toBe(step.returns);
+      const state = await port.current();
+      expect({ phase: state.phase, hidden: state.hidden }, at).toEqual({
+        phase: step.phase,
+        hidden: step.hidden,
+      });
     }
   });
 });

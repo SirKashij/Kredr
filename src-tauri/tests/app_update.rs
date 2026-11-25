@@ -1,15 +1,14 @@
 use std::path::Path;
 
 use kredr_lib::app_update::{
-    auto_search_with, failure_cause, load_declined, save_declined, search_with, AppUpdateState,
-    AutoCheck, Edition, FailureCause, Phase, SearchOutcome, Step,
+    auto_search_with, failure_cause, load_declined, save_declined, AppUpdateState, AutoCheck,
+    Edition, FailureCause, Phase, SearchOutcome, Step, Updater,
 };
 use tauri::async_runtime::block_on;
-use tauri_plugin_updater::Error;
 
-/// Eine Suche bei GitHub, die nie gefragt werden darf.
-async fn never_asked() -> Result<Option<String>, Error> {
-    panic!("die Entwicklungsfassung hat den Updater gefragt")
+/// Eine Suche, die nie stattfinden darf.
+async fn never_searched() -> SearchOutcome {
+    panic!("die abgeschaltete Suche hat gesucht")
 }
 
 fn state() -> AppUpdateState {
@@ -231,33 +230,13 @@ fn jetzt_suchen_ordnet_den_fehler_wie_beim_download_ein() {
 }
 
 #[test]
-fn die_entwicklungsfassung_fragt_den_updater_nie() {
-    let outcome = block_on(search_with(Edition::Development, never_asked));
-
-    assert_eq!(outcome, SearchOutcome::Locked);
-}
-
-#[test]
-fn die_installierte_fassung_fragt_den_updater() {
-    let found = block_on(search_with(Edition::Installed, || async {
-        Ok(Some("0.6.0".to_owned()))
-    }));
-    let current = block_on(search_with(Edition::Installed, || async {
-        Ok(None::<String>)
-    }));
-    let failed = block_on(search_with(Edition::Installed, || async {
-        Err::<Option<String>, _>(Error::ReleaseNotFound)
-    }));
-
-    assert_eq!(found, SearchOutcome::Found("0.6.0".to_owned()));
-    assert_eq!(current, SearchOutcome::Current);
+fn die_fassung_waehlt_den_adapter() {
+    // Die Entwicklungsfassung erreicht GitHub auf keinem Weg.
     assert!(matches!(
-        failed,
-        SearchOutcome::Failed {
-            cause: FailureCause::Network,
-            ..
-        }
+        Edition::Development.updater(),
+        Updater::Simulated(_)
     ));
+    assert!(matches!(Edition::Installed.updater(), Updater::Plugin(_)));
 }
 
 /// Ohne Optimierung gebaut läuft die Entwicklungsfassung, wie bei
@@ -493,9 +472,9 @@ fn der_grund_eines_fehlschlags_wird_eingeordnet() {
 
 #[test]
 fn abgeschaltete_suche_fragt_den_updater_von_selbst_nie() {
-    let off = block_on(auto_search_with(false, Edition::Installed, never_asked));
-    let on = block_on(auto_search_with(true, Edition::Installed, || async {
-        Ok(Some("0.6.0".to_owned()))
+    let off = block_on(auto_search_with(false, never_searched));
+    let on = block_on(auto_search_with(true, || async {
+        SearchOutcome::Found("0.6.0".to_owned())
     }));
 
     assert_eq!(off, None);
